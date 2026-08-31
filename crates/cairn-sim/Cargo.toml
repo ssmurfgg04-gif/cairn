@@ -3,10 +3,32 @@ name = "cairn-sim"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Cairn cairn-sim"
+description = "Cairn deterministic simulation: seeded schedules, crash/partition/fold faults, I2 assertions"
 
 [dependencies]
 cairn-core = { path = "../cairn-core" }
+cairn-store = { path = "../cairn-store" }
+cairn-sync = { path = "../cairn-sync" }
+cairn-server = { path = "../cairn-server" }
+cairn-proto = { path = "../cairn-proto" }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+rand = { workspace = true }
+tracing = { workspace = true }
+sha2 = { workspace = true }
+tempfile = { workspace = true }
+sqlx = { workspace = true }
 
 [lints.rust]
 unsafe_code = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+doc_markdown = "allow"

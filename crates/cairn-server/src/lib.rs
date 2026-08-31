@@ -7,6 +7,7 @@
 pub mod auth;
 pub mod db;
 pub mod error_map;
+pub mod fold;
 pub mod journal;
 pub mod leases;
 pub mod run;

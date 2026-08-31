@@ -365,7 +365,18 @@ dependencies = [
 name = "cairn-sim"
 version = "4.0.0"
 dependencies = [
+ "async-trait",
  "cairn-core",
+ "cairn-proto",
+ "cairn-server",
+ "cairn-store",
+ "cairn-sync",
+ "rand 0.8.8",
+ "sha2",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -386,7 +397,20 @@ dependencies = [
 name = "cairn-sync"
 version = "4.0.0"
 dependencies = [
+ "async-trait",
  "cairn-core",
+ "cairn-proto",
+ "cairn-store",
+ "hex",
+ "proptest",
+ "prost",
+ "rand 0.8.8",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.20",
+ "tokio",
+ "tonic",
+ "tracing",
 ]
 
 [[package]]

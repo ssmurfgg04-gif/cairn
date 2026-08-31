@@ -18,4 +18,5 @@ pub mod state;
 pub use cas::Cas;
 pub use db::Store;
 pub use headers::HeaderCache;
+pub use db::FileRow;
 pub use outbox::{Outbox, OutboxEntry};
