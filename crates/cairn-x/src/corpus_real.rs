@@ -49,7 +49,11 @@ pub fn run(dir: &str, out_json: &str, mutation_file: Option<String>) -> anyhow::
         let sh = StreamHash::compute(&bytes);
         let dt = t.elapsed().as_secs_f64().max(1e-9);
         let chunks = sh.chunk_hashes.len();
-        let uniq: HashSet<String> = sh.chunk_hashes.iter().map(|h| h.hex().to_string()).collect();
+        let uniq: HashSet<String> = sh
+            .chunk_hashes
+            .iter()
+            .map(|h| h.hex().to_string())
+            .collect();
         let shared_before = all_hashes.len();
         all_hashes.extend(uniq.iter().cloned());
         let shared_new = all_hashes.len() - shared_before;
@@ -57,7 +61,11 @@ pub fn run(dir: &str, out_json: &str, mutation_file: Option<String>) -> anyhow::
             path: p.display().to_string(),
             bytes: bytes.len() as u64,
             chunks,
-            avg_chunk: if chunks > 0 { bytes.len() as u64 / chunks as u64 } else { 0 },
+            avg_chunk: if chunks > 0 {
+                bytes.len() as u64 / chunks as u64
+            } else {
+                0
+            },
             ingest_mib_s: (bytes.len() as f64 / (1024.0 * 1024.0)) / dt,
             unique_chunks: uniq.len(),
             shared_with_others: if chunks > 0 && shared_before > 0 {
@@ -141,7 +149,11 @@ fn mutation_reuse(path: &std::path::Path) -> anyhow::Result<(f64, usize)> {
     }
     v2.extend_from_slice(&vec![0xA5u8; 65536]);
     let sh2 = StreamHash::compute(&v2);
-    let h1: HashSet<String> = sh1.chunk_hashes.iter().map(|h| h.hex().to_string()).collect();
+    let h1: HashSet<String> = sh1
+        .chunk_hashes
+        .iter()
+        .map(|h| h.hex().to_string())
+        .collect();
     let shared = sh2
         .chunk_hashes
         .iter()

@@ -53,6 +53,10 @@ pub fn is_syncable(path: &str) -> bool {
     !cairn_core::pathutil::is_ignored(path)
 }
 
+// WO2 CfAPI walking skeleton — real bindings, Windows-only, design in docs/cfapi-design.md.
+#[cfg(windows)]
+pub mod cfapi;
+
 #[cfg(test)]
 mod tests {
     use super::*;
