@@ -19,6 +19,17 @@ Legend: ✅ implemented + tests green · 🟨 implemented, platform-gated / hard
 | M7 | fuzz targets; flags flip w/o restart; audit log; SLO metrics; runbooks; ctl-api frozen | ✅ / fuzz execution on nightly CI (targets build locally) |
 | M8 | onboarding e2e; doctor; THIRD_PARTY complete; beta runbook | ✅ (docs/runbook-beta.md; onboarding e2e) |
 
+## Post-M8 hardening round (2026-08-31)
+
+| Item | Status | Evidence |
+|---|---|---|
+| Stack smoke test (server + daemon + dashboard + doctor) | ✅ | all four ports listen (ctl :17777, UI :17778, gRPC :7443, objects :7444); `/api/v1/status` real aggregates; `cairn doctor` HEALTHY (7 checks incl. new `s3_config`) |
+| 1,000-schedule sim sweep (I2 gate, full CI scale, locally executed) | ✅ | seeds 1..=1000 × 12 ticks green in 27.8s (release). Found + fixed a HARNESS bug: vacuous schedules (fault script allows zero progress, e.g. seed 786) were scored as violations; now classified inconclusive with aggregate gates — vacuous ≤ 20% of sweep AND ≥ 1 append acked across the sweep, so a dead engine still fails |
+| Real-cred SigV4 bucket backend (ADR-0005) | ✅ | `S3ObjectStore` wired from `CAIRN_S3_ENDPOINT/BUCKET/REGION/ACCESS_KEY_ID/SECRET_ACCESS_KEY` (all-or-nothing; partial config fails doctor `s3_config`); header-auth PUT/GET/HEAD/DELETE for server-side paths; presigned PUT/GET for client paths. Signing math proven against the AWS-published known-answer vector (IAM example, byte-exact); S3 presign shape + determinism tests. Backend selection: env → S3, else dev local-fs (logged) |
+| Golden corpus ingest started (§15.3) | ✅ seed | deterministic generator (`cairn-x corpus-gen`, seed 20260901) → 2 sequences × 8 saves × 128 MiB synthetic NLE autosaves; min consecutive-save reuse **0.856 / 0.879** vs >0.70 gate; `manifest.json` (BLAKE3 per file) committed, bytes git-ignored + reproducible; `just corpus-gen` / `just corpus-verify`. Real studio corpora remain LFS-gated per runbook |
+| SOTA benchmarks | ✅ | docs/BENCHMARKS.md — FastCDC 1,254 MiB/s · BLAKE3 5,029 MiB/s · ingest pipeline 859 MiB/s (incl. fsync) · I1 header first-byte p50 3µs / p99 3.2ms (gate 50ms) · bloom probe 110ns · journal append 5.8µs · manifest 100k 2.7ms. Host caveat documented |
+| `just run-server` recipe bug | ✅ fixed | recipe used nonexistent `--http-objects` flag; now `--grpc-addr/--objects-addr/--dev-insecure` |
+
 ## Platform matrix (honest)
 
 | Component | Linux (this build) | Windows | macOS |

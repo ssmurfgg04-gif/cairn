@@ -32,16 +32,28 @@ pub async fn build_state(
     let auth =
         crate::auth::Authenticator::load_or_create(&cfg.data_dir.join("keys"), clock.clone())?;
     let signing_key = read_or_create_object_key(&cfg.data_dir)?;
-    let store = LocalFsStore::open(
-        &cfg.data_dir.join("objects"),
-        &signing_key,
-        &format!("http://{}/", cfg.objects_addr),
-    )?;
+    // Backend selection (ADR-0005): a complete `CAIRN_S3_*` environment wires the
+    // real SigV4 bucket backend; otherwise the dev LocalFs store serves. No
+    // half-wired states — an incomplete S3 env must not silently mix backends.
+    let store: Arc<dyn crate::storage::ObjectStore> =
+        match crate::storage::S3ObjectStore::from_env() {
+            Some(s3) => {
+                tracing::info!(backend = "s3", "object store: real SigV4 bucket backend");
+                Arc::new(s3)
+            }
+            None => {
+                tracing::info!(backend = "local-fs", "object store: dev local filesystem");
+                Arc::new(LocalFsStore::open(
+                    &cfg.data_dir.join("objects"),
+                    &signing_key,
+                    &format!("http://{}/", cfg.objects_addr),
+                )?)
+            }
+        };
     let state = ServerState {
         db,
         auth,
-        store: Arc::new(store),
-        s3: None,
+        store,
         bloom: tokio::sync::RwLock::new(Bloom::with_fpp(100_000, 0.01)),
         clock,
         dev_insecure: cfg.dev_insecure,

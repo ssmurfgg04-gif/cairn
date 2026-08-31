@@ -180,6 +180,54 @@ pub fn collect(home: &Path) -> Report {
         t.elapsed().as_secs_f64() * 1000.0,
     );
 
+    // S3 backend configuration (data-plane; ADR-0005). All-or-nothing: a
+    // PARTIAL CAIRN_S3_* env is a misconfiguration worth failing doctor on —
+    // the server would silently fall back to the dev local-fs backend.
+    {
+        let keys = [
+            "CAIRN_S3_ENDPOINT",
+            "CAIRN_S3_BUCKET",
+            "CAIRN_S3_REGION",
+            "CAIRN_S3_ACCESS_KEY_ID",
+            "CAIRN_S3_SECRET_ACCESS_KEY",
+        ];
+        let set: Vec<&str> = keys
+            .iter()
+            .copied()
+            .filter(|k| {
+                std::env::var(k)
+                    .map(|v| !v.trim().is_empty())
+                    .unwrap_or(false)
+            })
+            .collect();
+        let detail = match set.len() {
+            0 => "not configured (dev local-fs backend active)".to_string(),
+            5 => format!(
+                "configured: bucket={} region={} endpoint={}",
+                std::env::var("CAIRN_S3_BUCKET").unwrap_or_default(),
+                std::env::var("CAIRN_S3_REGION").unwrap_or_default(),
+                std::env::var("CAIRN_S3_ENDPOINT").unwrap_or_default(),
+            ),
+            n => format!(
+                "PARTIAL config: {n}/5 set (missing: {})",
+                keys.iter()
+                    .copied()
+                    .filter(|k| !set.contains(k))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        };
+        rep.push(
+            "s3_config",
+            if set.is_empty() || set.len() == 5 {
+                Ok(detail)
+            } else {
+                Err(detail)
+            },
+            t.elapsed().as_secs_f64() * 1000.0,
+        );
+    }
+
     rep
 }
 

@@ -63,7 +63,10 @@ impl LocalState {
     /// Allowed transition table (SPEC §7.3). Exhaustive match — compiler-enforced.
     #[must_use]
     pub const fn can_transition_to(self, next: LocalState) -> bool {
-        use LocalState::{Clean, Dirty, Placeholder, Pinned, Hashing, UploadPending, OutboxPending, Synced, Conflict};
+        use LocalState::{
+            Clean, Conflict, Dirty, Hashing, OutboxPending, Pinned, Placeholder, Synced,
+            UploadPending,
+        };
         match (self, next) {
             (Clean, Dirty) | (Clean, Placeholder) | (Clean, Pinned) => true,
             (Dirty, Hashing) => true,

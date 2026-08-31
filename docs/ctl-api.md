@@ -137,3 +137,24 @@ sync_state_summary, daemon_flags, server_reachable}` — cheap, safe to poll at 
 - All timestamps are UTC i64 millis, server-authoritative (client ts informational, I4).
 - All paths UTF-8 NFC (original bytes preserved for display).
 - Log policy: presigned/query strings NEVER logged (bearer credentials).
+
+## Additive change note (post-freeze record)
+
+The contract above is frozen; this section records how changes since M8 were
+made WITHOUT breaking it (the recipe every future change must follow):
+
+1. **New message fields** → append with field numbers > 200 (100–199 stay
+   reserved); old clients ignore unknown fields. Existing field numbers/types
+   are immutable. *(Used: none yet.)*
+2. **New RPCs** → new methods on existing services or a `v4` extension service;
+   clients feature-detect via `UNIMPLEMENTED` and degrade gracefully. Never
+   repurpose an existing RPC's semantics.
+3. **Error surface** → `ErrorDetail` codes are a closed enum per ADR-0010;
+   new codes append to the registry with a retry class, never reuse a number.
+4. **Data plane (out of this contract)** → the `CAIRN_S3_*` bucket-backend
+   wiring (ADR-0005) changed only server internals and presigned URL targets;
+   ctl message shapes, ports, and handshake are untouched. The 1h presign TTL
+   cap and checksum-handling semantics are unchanged (SPEC §9).
+5. **Process** → every additive change ships with: regenerated stubs, a truth
+   table/round-trip test, a STATUS.md row, and a minor-version note here.
+   Breaking changes additionally require an ADR + UI-team migration note.

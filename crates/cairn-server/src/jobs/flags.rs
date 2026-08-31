@@ -1,7 +1,6 @@
 //! Kill switches (config_flags, SPEC §16): read PER RUN so flips take effect without
 //! restart; admin actions audited.
 
-
 use crate::ServerState;
 use cairn_core::{CairnError, ErrorKind};
 

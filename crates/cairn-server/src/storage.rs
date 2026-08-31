@@ -410,6 +410,349 @@ impl SigV4Presigner {
             self.endpoint, key, canonical_query
         )
     }
+
+    /// Presigned GET (host-only signed headers, `UNSIGNED-PAYLOAD`) — immutable,
+    /// Range-capable client reads (SPEC §9.3).
+    pub fn presign_get(&self, key: &str, ttl_secs: u64, now_millis: i64) -> String {
+        let ttl = ttl_secs.min(3600);
+        let amz_date = amz_date(now_millis);
+        let date = &amz_date[..8];
+        let host = host_of(&self.endpoint);
+        let scope = format!("{date}/{}/s3/aws4_request", self.region);
+        let canonical_query = format!(
+            "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={}&X-Amz-Date={}&X-Amz-Expires={ttl}&X-Amz-SignedHeaders=host",
+            uri_encode(&format!("{}/{}", self.access_key, scope), true),
+            amz_date,
+        );
+        let canonical_request = [
+            "GET",
+            &format!("/{key}"),
+            canonical_query.as_str(),
+            &format!("host:{host}\n"),
+            "host",
+            "UNSIGNED-PAYLOAD",
+        ]
+        .join("\n");
+        let string_to_sign = [
+            "AWS4-HMAC-SHA256",
+            amz_date.as_str(),
+            scope.as_str(),
+            &SigV4Presigner::sha256_hex(canonical_request.as_bytes()),
+        ]
+        .join("\n");
+        let signature = cairn_core::hash::hex_encode(&SigV4Presigner::hmac(
+            &SigV4Presigner::derive_signing_key(&self.secret_key, date, &self.region, "s3"),
+            string_to_sign.as_bytes(),
+        ));
+        format!(
+            "{}/{}?{}&X-Amz-Signature={signature}",
+            self.endpoint, key, canonical_query
+        )
+    }
+
+    /// Host-only presigned PUT (`UNSIGNED-PAYLOAD`): the standard S3 presign
+    /// form. Checksum-bound presigning (`presign_put` above) is used when the
+    /// session carries per-chunk SHA-256s.
+    pub fn presign_put_host_only(&self, key: &str, ttl_secs: u64, now_millis: i64) -> String {
+        let ttl = ttl_secs.min(3600);
+        let amz_date = amz_date(now_millis);
+        let date = &amz_date[..8];
+        let host = host_of(&self.endpoint);
+        let scope = format!("{date}/{}/s3/aws4_request", self.region);
+        let canonical_query = format!(
+            "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={}&X-Amz-Date={}&X-Amz-Expires={ttl}&X-Amz-SignedHeaders=host",
+            uri_encode(&format!("{}/{}", self.access_key, scope), true),
+            amz_date,
+        );
+        let canonical_request = [
+            "PUT",
+            &format!("/{key}"),
+            canonical_query.as_str(),
+            &format!("host:{host}\n"),
+            "host",
+            "UNSIGNED-PAYLOAD",
+        ]
+        .join("\n");
+        let string_to_sign = [
+            "AWS4-HMAC-SHA256",
+            amz_date.as_str(),
+            scope.as_str(),
+            &SigV4Presigner::sha256_hex(canonical_request.as_bytes()),
+        ]
+        .join("\n");
+        let signature = cairn_core::hash::hex_encode(&SigV4Presigner::hmac(
+            &SigV4Presigner::derive_signing_key(&self.secret_key, date, &self.region, "s3"),
+            string_to_sign.as_bytes(),
+        ));
+        format!(
+            "{}/{}?{}&X-Amz-Signature={signature}",
+            self.endpoint, key, canonical_query
+        )
+    }
+
+    /// SigV4 key-derivation chain: HMAC(HMAC(HMAC(HMAC(kSecret, date), region), service), "aws4_request").
+    /// Public for known-answer tests against AWS-published vectors.
+    pub fn derive_signing_key(
+        secret_key: &str,
+        date: &str,
+        region: &str,
+        service: &str,
+    ) -> Vec<u8> {
+        let k_date = SigV4Presigner::hmac(format!("AWS4{secret_key}").as_bytes(), date.as_bytes());
+        let k_region = SigV4Presigner::hmac(&k_date, region.as_bytes());
+        let k_service = SigV4Presigner::hmac(&k_region, service.as_bytes());
+        SigV4Presigner::hmac(&k_service, b"aws4_request")
+    }
+
+    /// Final signature over a string-to-sign with a derived signing key.
+    pub fn sign_string_to_sign(string_to_sign: &str, signing_key: &[u8]) -> String {
+        cairn_core::hash::hex_encode(&SigV4Presigner::hmac(
+            signing_key,
+            string_to_sign.as_bytes(),
+        ))
+    }
+
+    /// Header-auth tuple for server-side calls (manifests, packs, GC sweep):
+    /// returns (Authorization header, x-amz-date header value). Signs
+    /// host + x-amz-content-sha256 + x-amz-date; payload hash is the real
+    /// SHA-256 of the body (hex), per the SigV4 header-auth canonical form.
+    pub fn authorization_header(
+        &self,
+        method: &str,
+        key: &str,
+        payload_hash_hex: &str,
+        now_millis: i64,
+    ) -> (String, String) {
+        let amz_date = amz_date(now_millis);
+        let date = &amz_date[..8];
+        let host = host_of(&self.endpoint);
+        let scope = format!("{date}/{}/s3/aws4_request", self.region);
+        let canonical_headers = format!(
+            "host:{host}\nx-amz-content-sha256:{payload_hash_hex}\nx-amz-date:{amz_date}\n"
+        );
+        let signed_headers = "host;x-amz-content-sha256;x-amz-date";
+        let canonical_request = [
+            method,
+            &format!("/{}", uri_encode(key, false)),
+            "", // no query string on server-side calls
+            canonical_headers.as_str(),
+            signed_headers,
+            payload_hash_hex,
+        ]
+        .join("\n");
+        let string_to_sign = [
+            "AWS4-HMAC-SHA256",
+            amz_date.as_str(),
+            scope.as_str(),
+            &SigV4Presigner::sha256_hex(canonical_request.as_bytes()),
+        ]
+        .join("\n");
+        let signing_key =
+            SigV4Presigner::derive_signing_key(&self.secret_key, date, &self.region, "s3");
+        let signature = SigV4Presigner::sign_string_to_sign(&string_to_sign, &signing_key);
+        let auth = format!(
+            "AWS4-HMAC-SHA256 Credential={}/{}, SignedHeaders={signed_headers}, Signature={signature}",
+            self.access_key, scope
+        );
+        (auth, amz_date)
+    }
+}
+
+/// S3-compatible production backend (ADR-0005): real SigV4 against a real bucket
+/// (AWS S3, Cloudflare R2, B2 S3-compatible API). Client chunk/manifest
+/// transfers ride presigned URLs — bytes never traverse the API server (SPEC
+/// §9). Server-side paths (manifests, packs, GC sweep) use header-signed
+/// requests. Constructed from environment; absent config falls back to the
+/// dev `LocalFsStore` (see `run.rs`).
+///
+/// Environment (all required):
+/// - `CAIRN_S3_ENDPOINT`    e.g. `https://s3.us-west-004.backblazeb2.com`
+/// - `CAIRN_S3_BUCKET`      e.g. `studio-media`
+/// - `CAIRN_S3_REGION`      e.g. `us-west-004`
+/// - `CAIRN_S3_ACCESS_KEY_ID`
+/// - `CAIRN_S3_SECRET_ACCESS_KEY`
+pub struct S3ObjectStore {
+    presigner: SigV4Presigner,
+    /// Virtual-host form: `https://bucket.endpoint-host` (used by presigned URLs).
+    vhost_endpoint: String,
+    http: reqwest::Client,
+}
+
+impl S3ObjectStore {
+    /// Build from the standard `CAIRN_S3_*` environment; `None` when unset/incomplete.
+    pub fn from_env() -> Option<Self> {
+        let get = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
+        let endpoint = get("CAIRN_S3_ENDPOINT")?;
+        let bucket = get("CAIRN_S3_BUCKET")?;
+        let region = get("CAIRN_S3_REGION")?;
+        let access_key = get("CAIRN_S3_ACCESS_KEY_ID")?;
+        let secret_key = get("CAIRN_S3_SECRET_ACCESS_KEY")?;
+        let host = endpoint
+            .trim_start_matches("https://")
+            .trim_end_matches('/');
+        let vhost_endpoint = format!("https://{bucket}.{host}");
+        let http = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(60))
+            .build()
+            .ok()?;
+        Some(S3ObjectStore {
+            presigner: SigV4Presigner::new(&access_key, &secret_key, &region, &vhost_endpoint),
+            vhost_endpoint,
+            http,
+        })
+    }
+
+    fn url(&self, key: &str) -> String {
+        format!("{}/{}", self.vhost_endpoint, uri_encode(key, false))
+    }
+
+    fn now(&self) -> i64 {
+        cairn_core::clock::WallClock.now_millis()
+    }
+}
+
+#[async_trait]
+impl ObjectStore for S3ObjectStore {
+    async fn put(&self, key: &str, bytes: &[u8]) -> Result<(), CairnError> {
+        let payload_hash = SigV4Presigner::sha256_hex(bytes);
+        let (auth, amz_date) =
+            self.presigner
+                .authorization_header("PUT", key, &payload_hash, self.now());
+        let resp = self
+            .http
+            .put(self.url(key))
+            .header("Authorization", auth)
+            .header("x-amz-date", amz_date)
+            .header("x-amz-content-sha256", payload_hash)
+            .body(bytes.to_vec())
+            .send()
+            .await
+            .map_err(|e| CairnError::new(ErrorKind::Unavailable, format!("s3 put: {e}")))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(CairnError::new(
+                ErrorKind::Unavailable,
+                format!("s3 put {}: {status} {body}", Self::brief(&body)),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn get(&self, key: &str) -> Result<Vec<u8>, CairnError> {
+        let payload_hash = SigV4Presigner::sha256_hex(b"");
+        let (auth, amz_date) =
+            self.presigner
+                .authorization_header("GET", key, &payload_hash, self.now());
+        let resp = self
+            .http
+            .get(self.url(key))
+            .header("Authorization", auth)
+            .header("x-amz-date", amz_date)
+            .header("x-amz-content-sha256", payload_hash)
+            .send()
+            .await
+            .map_err(|e| CairnError::new(ErrorKind::Unavailable, format!("s3 get: {e}")))?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(CairnError::new(
+                ErrorKind::NotFound,
+                format!("object {key}"),
+            ));
+        }
+        if !resp.status().is_success() {
+            return Err(CairnError::new(
+                ErrorKind::Unavailable,
+                format!("s3 get {key}: {}", resp.status()),
+            ));
+        }
+        Ok(resp
+            .bytes()
+            .await
+            .map_err(|e| CairnError::new(ErrorKind::Unavailable, format!("s3 body: {e}")))?
+            .to_vec())
+    }
+
+    async fn head(&self, key: &str) -> Result<u64, CairnError> {
+        let payload_hash = SigV4Presigner::sha256_hex(b"");
+        let (auth, amz_date) =
+            self.presigner
+                .authorization_header("HEAD", key, &payload_hash, self.now());
+        let resp = self
+            .http
+            .head(self.url(key))
+            .header("Authorization", auth)
+            .header("x-amz-date", amz_date)
+            .header("x-amz-content-sha256", payload_hash)
+            .send()
+            .await
+            .map_err(|e| CairnError::new(ErrorKind::Unavailable, format!("s3 head: {e}")))?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(CairnError::new(
+                ErrorKind::NotFound,
+                format!("object {key}"),
+            ));
+        }
+        if !resp.status().is_success() {
+            return Err(CairnError::new(
+                ErrorKind::Unavailable,
+                format!("s3 head {key}: {}", resp.status()),
+            ));
+        }
+        Ok(resp
+            .headers()
+            .get(reqwest::header::CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok().and_then(|s| s.parse().ok()))
+            .unwrap_or(0))
+    }
+
+    async fn delete(&self, key: &str) -> Result<(), CairnError> {
+        let payload_hash = SigV4Presigner::sha256_hex(b"");
+        let (auth, amz_date) =
+            self.presigner
+                .authorization_header("DELETE", key, &payload_hash, self.now());
+        let resp = self
+            .http
+            .delete(self.url(key))
+            .header("Authorization", auth)
+            .header("x-amz-date", amz_date)
+            .header("x-amz-content-sha256", payload_hash)
+            .send()
+            .await
+            .map_err(|e| CairnError::new(ErrorKind::Unavailable, format!("s3 delete: {e}")))?;
+        // DELETE is idempotent per the S3 contract: 204/404 both mean "gone".
+        if resp.status().is_success() || resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(());
+        }
+        Err(CairnError::new(
+            ErrorKind::Unavailable,
+            format!("s3 delete {key}: {}", resp.status()),
+        ))
+    }
+
+    async fn presign_put(&self, key: &str, ttl_secs: u64) -> Result<String, CairnError> {
+        // Host-only standard presign form. Clients attach `x-amz-checksum-sha256`
+        // on PUT; CompleteUpload sample-verify enforces BLAKE3 equality (SPEC
+        // §9.2). Checksum-*signed* presigning (checksum bound into SignedHeaders)
+        // activates with the session extension that carries per-chunk SHA-256s
+        // (SigV4Presigner::presign_put is ready for it).
+        Ok(self
+            .presigner
+            .presign_put_host_only(key, ttl_secs, self.now()))
+    }
+
+    async fn presign_get(&self, key: &str, ttl_secs: u64) -> Result<String, CairnError> {
+        Ok(self.presigner.presign_get(key, ttl_secs, self.now()))
+    }
+
+    fn name(&self) -> &'static str {
+        "s3"
+    }
+}
+
+impl S3ObjectStore {
+    fn brief(s: &str) -> String {
+        s.chars().take(160).collect()
+    }
 }
 
 fn amz_date(now_millis: i64) -> String {
@@ -496,5 +839,126 @@ mod tests {
         assert!(url.contains("X-Amz-Algorithm=AWS4-HMAC-SHA256"));
         assert!(url.contains("X-Amz-SignedHeaders=host%3Bx-amz-checksum-sha256"));
         assert!(url.contains("x-amz-checksum-sha256=deadbeef"));
+    }
+
+    /// AWS-published known-answer vector (AWS General Reference,
+    /// "Example: computing the signature" — IAM ListUsers, header auth).
+    /// Proves the KDF chain + string-to-sign math byte-for-byte.
+    #[test]
+    fn sigv4_aws_known_answer_vector() {
+        // Fixed inputs from the AWS documentation example.
+        let secret = "wJalrXUtnFEMI/K7MDENG+bPxRfiCYEXAMPLEKEY";
+        let date = "20150830";
+        let region = "us-east-1";
+        let service = "iam";
+        let canonical_request = [
+            "GET",
+            "/",
+            "Action=ListUsers&Version=2010-05-08",
+            "content-type:application/x-www-form-urlencoded; charset=utf-8\nhost:iam.amazonaws.com\nx-amz-date:20150830T123600Z\n",
+            "content-type;host;x-amz-date",
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        ]
+        .join("\n");
+        let string_to_sign = [
+            "AWS4-HMAC-SHA256",
+            "20150830T123600Z",
+            "20150830/us-east-1/iam/aws4_request",
+            &SigV4Presigner::sha256_hex(canonical_request.as_bytes()),
+        ]
+        .join("\n");
+        let key = SigV4Presigner::derive_signing_key(secret, date, region, service);
+        let sig = SigV4Presigner::sign_string_to_sign(&string_to_sign, &key);
+        assert_eq!(
+            sig, "5d672d79c15b13162d9279b0855cfba6789a8edb4c82c400e06b5924a6f2b5d7",
+            "SigV4 KDF/vector mismatch — signing math diverged from AWS spec"
+        );
+    }
+
+    /// S3 presigned GET: AWS-published example shape (examplebucket/test.txt,
+    /// sigv4 query form). Structural assertions + KDF reuse proven above.
+    #[test]
+    fn sigv4_s3_presign_get_shape_and_stability() {
+        let p = SigV4Presigner::new(
+            "AKIAIOSFODNN7EXAMPLE",
+            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            "us-east-1",
+            "https://examplebucket.s3.amazonaws.com",
+        );
+        let a = p.presign_get("test.txt", 86400, 1_369_353_600_000); // 20130524T000000Z
+        assert!(a.starts_with("https://examplebucket.s3.amazonaws.com/test.txt?"));
+        assert!(a.contains("X-Amz-Algorithm=AWS4-HMAC-SHA256"));
+        assert!(a.contains(
+            "X-Amz-Credential=AKIAIOSFODNN7EXAMPLE%2F20130524%2Fus-east-1%2Fs3%2Faws4_request"
+        ));
+        assert!(a.contains("X-Amz-Date=20130524T000000Z"));
+        assert!(
+            a.contains("X-Amz-Expires=3600"),
+            "TTL clamped to the 1h SPEC cap"
+        );
+        assert!(a.contains("X-Amz-SignedHeaders=host"));
+        // deterministic: same inputs -> byte-identical URL
+        let b = p.presign_get("test.txt", 86400, 1_369_353_600_000);
+        assert_eq!(a, b);
+    }
+
+    /// Header-auth: stable, well-formed Authorization for server-side calls.
+    #[test]
+    fn sigv4_header_auth_shape_and_stability() {
+        let p = SigV4Presigner::new(
+            "AKIAIOSFODNN7EXAMPLE",
+            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            "us-east-1",
+            "https://examplebucket.s3.amazonaws.com",
+        );
+        let payload = SigV4Presigner::sha256_hex(b"manifest-bytes");
+        let (auth, date) =
+            p.authorization_header("PUT", "t1/m/ab/hash", &payload, 1_369_353_600_000);
+        assert_eq!(date, "20130524T000000Z");
+        assert!(auth.starts_with(
+            "AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/20130524/us-east-1/s3/aws4_request, "
+        ));
+        assert!(auth.contains("SignedHeaders=host;x-amz-content-sha256;x-amz-date, "));
+        let (auth2, _) = p.authorization_header("PUT", "t1/m/ab/hash", &payload, 1_369_353_600_000);
+        assert_eq!(auth, auth2);
+    }
+
+    /// from_env: complete config -> Some; partial config -> None (no half-wired backends).
+    #[test]
+    fn s3_from_env_all_or_nothing() {
+        // Ensure a clean slate regardless of the outer environment.
+        for k in [
+            "CAIRN_S3_ENDPOINT",
+            "CAIRN_S3_BUCKET",
+            "CAIRN_S3_REGION",
+            "CAIRN_S3_ACCESS_KEY_ID",
+            "CAIRN_S3_SECRET_ACCESS_KEY",
+        ] {
+            std::env::remove_var(k);
+        }
+        assert!(S3ObjectStore::from_env().is_none());
+        std::env::set_var(
+            "CAIRN_S3_ENDPOINT",
+            "https://s3.us-west-004.backblazeb2.com",
+        );
+        std::env::set_var("CAIRN_S3_BUCKET", "studio-media");
+        std::env::set_var("CAIRN_S3_REGION", "us-west-004");
+        std::env::set_var("CAIRN_S3_ACCESS_KEY_ID", "AKIATEST");
+        std::env::set_var("CAIRN_S3_SECRET_ACCESS_KEY", "shhh");
+        let store = S3ObjectStore::from_env().expect("complete env -> Some");
+        assert_eq!(store.name(), "s3");
+        assert_eq!(
+            store.url("t1/c/ab/h"),
+            "https://studio-media.s3.us-west-004.backblazeb2.com/t1/c/ab/h"
+        );
+        for k in [
+            "CAIRN_S3_ENDPOINT",
+            "CAIRN_S3_BUCKET",
+            "CAIRN_S3_REGION",
+            "CAIRN_S3_ACCESS_KEY_ID",
+            "CAIRN_S3_SECRET_ACCESS_KEY",
+        ] {
+            std::env::remove_var(k);
+        }
     }
 }

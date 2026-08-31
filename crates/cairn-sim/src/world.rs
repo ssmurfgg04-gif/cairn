@@ -48,7 +48,6 @@ async fn server_state(dir: &std::path::Path) -> Arc<cairn_server::ServerState> {
         db,
         auth,
         store: Arc::new(store),
-        s3: None,
         bloom: tokio::sync::RwLock::new(cairn_core::bloom::Bloom::empty()),
         clock: Arc::new(cairn_core::clock::WallClock),
         dev_insecure: true,
@@ -233,16 +232,34 @@ impl World {
             }
         }
 
-        // (a) every acknowledged append is in the journal
+        // (a) every acknowledged append is in the journal (vacuously true when
+        // the fault script allowed none — `vacuous` below marks that regime).
         let journal_count: i64 = sqlx_count(&self.state, "SELECT COUNT(*) FROM journal").await;
-        let acked_ok = journal_count >= i64::try_from(self.acked_appends).unwrap_or(i64::MAX)
-            && self.acked_appends > 0;
+        let acked_ok = journal_count >= i64::try_from(self.acked_appends).unwrap_or(i64::MAX);
+        let vacuous = self.acked_appends == 0;
 
-        // (b) convergence: both devices' live views match the folded snapshot view
+        // (b) convergence: devices' live views match the folded snapshot view.
+        // An empty view is converged UNLESS some device believes it synced a
+        // file — that would be a lost append (real violation, not vacuous).
         let view = cairn_server::fold::materialize(&self.state.db, "t1", "p1", 0)
             .await
             .unwrap();
-        let mut converged = !view.is_empty();
+        let mut converged = true;
+        if view.is_empty() {
+            for d in &self.devices {
+                if let Some(engine) = &d.engine {
+                    let synced = engine
+                        .store
+                        .list_files("p1")
+                        .into_iter()
+                        .filter(|f| f.local_state == LocalState::Synced.as_str())
+                        .count();
+                    if synced > 0 {
+                        converged = false;
+                    }
+                }
+            }
+        }
         for (path, ps) in &view {
             if let cairn_server::fold::PathState::Present {
                 manifest_hash,
@@ -268,7 +285,7 @@ impl World {
 
         // (c) no corrupt manifest: every registered manifest parses + hash matches
         let rows = sqlx_all(&self.state, "SELECT hash, size FROM manifests").await;
-        let mut no_corrupt = !rows.is_empty();
+        let mut no_corrupt = true;
         for (hash, size) in &rows {
             let bytes = self
                 .state
@@ -319,6 +336,7 @@ impl World {
             gc_shadow_clean: shadow_clean,
             ticks: 0,
             appends_acked: self.acked_appends,
+            vacuous,
         }
     }
 }

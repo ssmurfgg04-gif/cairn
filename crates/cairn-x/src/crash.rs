@@ -132,16 +132,12 @@ fn verify(root: &std::path::Path, acked: usize) -> Result<(), String> {
             .serve("ptr-p1-scene")
             .map_err(|e| format!("LOST: acknowledged header: {e}"))?;
     }
-    if acked >= 5
-        && outbox.pending_count("p1") == 0 {
-            return Err(
-                "LOST: acknowledged outbox entry (the journal append would be lost)".into(),
-            );
-        }
-    if acked >= 6
-        && store.get_cursor("dev-crash", "p1") != 42 {
-            return Err("LOST: acknowledged cursor".into());
-        }
+    if acked >= 5 && outbox.pending_count("p1") == 0 {
+        return Err("LOST: acknowledged outbox entry (the journal append would be lost)".into());
+    }
+    if acked >= 6 && store.get_cursor("dev-crash", "p1") != 42 {
+        return Err("LOST: acknowledged cursor".into());
+    }
     // CAS integrity must hold on the whole sample
     let (_n, bad) = cas.verify_sample(1000).map_err(|e| e.to_string())?;
     if !bad.is_empty() {
