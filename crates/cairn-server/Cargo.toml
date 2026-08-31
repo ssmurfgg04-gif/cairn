@@ -26,6 +26,9 @@ tokio-stream = "0.1"
 uuid = { workspace = true }
 axum = { workspace = true }
 bytes = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls = { workspace = true }
+webpki-roots = { workspace = true }
 zstd = { workspace = true }
 
 [lints]

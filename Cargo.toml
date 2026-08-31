@@ -52,6 +52,11 @@ sha2 = "0.10"
 pasetors = "0.6"
 keyring = "3"
 
+# s3-compatible buckets (SigV4 presign + signed REST; ADR-0005)
+tokio-rustls = "0.26"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "0.26"
+
 # fs / platform
 notify = "6"
 fuser = { version = "0.14", default-features = false }

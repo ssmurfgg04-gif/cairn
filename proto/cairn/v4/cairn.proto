@@ -274,6 +274,8 @@ message CreateUploadSessionRequest {
   string device_id = 2;
   string project_id = 3;
   repeated string missing = 4;
+  repeated string checksums = 5;  // sha256 hex of STORED bytes per missing chunk; binds
+                                  // x-amz-checksum-sha256 when SigV4 presigning (S3/R2/B2)
   reserved 100 to 199;
 }
 

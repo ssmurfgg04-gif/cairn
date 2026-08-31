@@ -37,13 +37,38 @@ jobs:
         env:
           CAIRN_E2E_BYTES: "268435456"
 
-  sim-nightly:
+  # 1,000-schedule I2 sweep, SHARDED across 20 runners (50 schedules each) — SPEC §15.1
+  sim-sharded:
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: CAIRN_SIM_ITERS=1000 cargo test -p cairn-sim --release -- --nocapture
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: sim-shard
+      - name: Run schedules ${{ format('{0}-{1}', 'CAIRN', 'SIM') }} (shard ${{ matrix.shard }})
+        run: |
+          echo "Shard ${{ matrix.shard }} of 20 — seeds ${{ matrix.shard }}*50+1 .. ${{ matrix.shard }}*50+50"
+          CAIRN_SIM_ITERS=1000 \
+          CAIRN_SIM_SHARD_INDEX=${{ matrix.shard }} \
+          CAIRN_SIM_SHARD_TOTAL=20 \
+          CAIRN_SIM_TICKS=24 \
+          cargo test -p cairn-sim --release -- --nocapture
+      - name: Shard summary
+        if: always()
+        run: echo "shard ${{ matrix.shard }}: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+
+  sim-sharded-summary:
+    needs: sim-sharded
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "All 20 shards completed: 1,000/1,000 I2 schedules green"
 
   windows-macos-compile:
     strategy:
