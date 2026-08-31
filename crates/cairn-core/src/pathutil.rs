@@ -13,7 +13,12 @@ pub fn nfc_normalize(path: &str) -> String {
 
 /// AppleDouble + metadata junk never synced (default policy, SPEC §10).
 pub const DEFAULT_IGNORE: &[&str] = &[
-    ".DS_Store", "Thumbs.db", "desktop.ini", "._*", ".cairn*", "$RECYCLE.BIN",
+    ".DS_Store",
+    "Thumbs.db",
+    "desktop.ini",
+    "._*",
+    ".cairn*",
+    "$RECYCLE.BIN",
     "System Volume Information",
 ];
 
@@ -74,7 +79,13 @@ const WIN_INVALID: &[char] = &['<', '>', ':', '"', '|', '?', '*'];
 pub fn conflict_copy_name(original: &str, device: &str, date: &str) -> String {
     let safe = |s: &str| -> String {
         s.chars()
-            .map(|c| if WIN_INVALID.contains(&c) || c == '/' || c == '\\' { '_' } else { c })
+            .map(|c| {
+                if WIN_INVALID.contains(&c) || c == '/' || c == '\\' {
+                    '_'
+                } else {
+                    c
+                }
+            })
             .collect()
     };
     let (stem, ext) = match original.rsplit_once('.') {
@@ -82,7 +93,12 @@ pub fn conflict_copy_name(original: &str, device: &str, date: &str) -> String {
         Some((s, e)) if !e.is_empty() && e.len() <= 12 && !e.contains('/') => (s, Some(e)),
         _ => (original, None),
     };
-    let base = format!("{} (conflict — {} — {})", safe(stem), safe(device), safe(date));
+    let base = format!(
+        "{} (conflict — {} — {})",
+        safe(stem),
+        safe(device),
+        safe(date)
+    );
     match ext {
         Some(e) => format!("{base}.{}", safe(e)),
         None => base,
@@ -109,7 +125,10 @@ mod tests {
     #[test]
     fn nfc_is_idempotent_and_stable() {
         let decomposed = "caf\u{e9}".to_string(); // é as single codepoint is already NFC
-        assert_eq!(nfc_normalize(&decomposed), nfc_normalize(&nfc_normalize(&decomposed)));
+        assert_eq!(
+            nfc_normalize(&decomposed),
+            nfc_normalize(&nfc_normalize(&decomposed))
+        );
     }
 
     #[test]
@@ -118,7 +137,9 @@ mod tests {
         assert!(is_ignored("sub/._foo.mp4"));
         assert!(is_ignored(".cairn-cache"));
         assert!(!is_ignored("render.mov"));
-        assert!(!is_ignored("._real-work.braw".replace("._", "final-").as_str()));
+        assert!(!is_ignored(
+            "._real-work.braw".replace("._", "final-").as_str()
+        ));
     }
 
     #[test]
@@ -140,7 +161,11 @@ mod tests {
 
     #[test]
     fn case_collision_detection() {
-        let paths = vec!["A/Shot.braw".to_string(), "a/shot.braw".to_string(), "b/other.mov".to_string()];
+        let paths = vec![
+            "A/Shot.braw".to_string(),
+            "a/shot.braw".to_string(),
+            "b/other.mov".to_string(),
+        ];
         let c = find_case_collisions(&paths);
         assert_eq!(c, vec!["a/shot.braw".to_string()]);
     }

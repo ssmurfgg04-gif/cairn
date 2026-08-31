@@ -19,10 +19,11 @@ pub enum QuiescedEvent {
     Settled(String),
 }
 
-type EventSink = mpsc::Sender<notify::Event>;
-
 /// Watch a root (OS-native backend), forwarding quiesced paths through `tx`.
-pub fn watch(root: &Path, tx: mpsc::Sender<QuiescedEvent>) -> Result<notify::RecommendedWatcher, CairnError> {
+pub fn watch(
+    root: &Path,
+    tx: mpsc::Sender<QuiescedEvent>,
+) -> Result<notify::RecommendedWatcher, CairnError> {
     let (event_tx, event_rx) = mpsc::channel();
     let mut watcher = notify::RecommendedWatcher::new(
         move |res: Result<notify::Event, notify::Error>| {
@@ -121,6 +122,9 @@ mod tests {
                 settled += 1;
             }
         }
-        assert_eq!(settled, 1, "burst of 5 writes must collapse to one settled event");
+        assert_eq!(
+            settled, 1,
+            "burst of 5 writes must collapse to one settled event"
+        );
     }
 }

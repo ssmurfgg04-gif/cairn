@@ -93,11 +93,13 @@ impl FastCdc {
             self.gear = (self.gear << 1).wrapping_add(self.table[usize::from(b)]);
             self.since_cut += 1;
             self.abs += 1;
-            if self.since_cut >= self.min as u64
-                && (self.gear & self.mask) == 0
+            if self.since_cut >= self.min as u64 && (self.gear & self.mask) == 0
                 || self.since_cut >= self.max as u64
             {
-                out.push(ChunkSpan { offset: self.chunk_start, len: self.since_cut as u32 });
+                out.push(ChunkSpan {
+                    offset: self.chunk_start,
+                    len: self.since_cut as u32,
+                });
                 self.chunk_start = self.abs;
                 self.since_cut = 0;
             }
@@ -107,7 +109,10 @@ impl FastCdc {
     /// Finish the stream: emit the trailing chunk if any bytes remain.
     pub fn finish(&mut self, out: &mut Vec<ChunkSpan>) {
         if self.since_cut > 0 {
-            out.push(ChunkSpan { offset: self.chunk_start, len: self.since_cut as u32 });
+            out.push(ChunkSpan {
+                offset: self.chunk_start,
+                len: self.since_cut as u32,
+            });
             self.chunk_start = self.abs;
             self.since_cut = 0;
         }
@@ -189,13 +194,18 @@ mod tests {
         r.fill_bytes(&mut buf);
         let spans = FastCdc::cut(&buf);
         assert_eq!(spans.first().unwrap().offset, 0);
-        assert!((8..=80).contains(&spans.len()), "got {} chunks", spans.len());
+        assert!(
+            (8..=80).contains(&spans.len()),
+            "got {} chunks",
+            spans.len()
+        );
         let avg = avg_len(&spans);
         assert!(
             avg > 2 * 1024 * 1024 && avg < 8 * 1024 * 1024,
             "avg chunk {avg} outside expected band"
         );
-        assert!(spans.iter().all(|s| s.len as usize >= CHUNK_MIN || spans.len() == 1
+        assert!(spans.iter().all(|s| s.len as usize >= CHUNK_MIN
+            || spans.len() == 1
             || s.offset as usize + s.len as usize == buf.len()));
         assert!(spans.iter().all(|s| s.len as usize <= CHUNK_MAX));
         // spans tile the buffer exactly
@@ -216,7 +226,9 @@ mod tests {
     #[test]
     fn spans_before_insertion_are_stable() {
         // CDC guarantee: a byte inserted mid-stream leaves all boundaries BEFORE it unchanged.
-        let buf: Vec<u8> = (0..32 * 1024 * 1024).map(|i| ((i * 7) % 255) as u8).collect();
+        let buf: Vec<u8> = (0..32 * 1024 * 1024)
+            .map(|i| ((i * 7) % 255) as u8)
+            .collect();
         let a = FastCdc::cut(&buf);
         assert!(a.len() >= 2, "test data must produce a cut");
         // insert exactly after the first cut so the prefix assertion is never vacuous
@@ -224,10 +236,16 @@ mod tests {
         let mut mutated = buf.clone();
         mutated.insert(at, 0xAB);
         let b = FastCdc::cut(&mutated);
-        let a_before: Vec<ChunkSpan> =
-            a.iter().take_while(|s| s.offset + u64::from(s.len) <= at as u64).cloned().collect();
-        let b_before: Vec<ChunkSpan> =
-            b.iter().take_while(|s| s.offset + u64::from(s.len) <= at as u64).cloned().collect();
+        let a_before: Vec<ChunkSpan> = a
+            .iter()
+            .take_while(|s| s.offset + u64::from(s.len) <= at as u64)
+            .cloned()
+            .collect();
+        let b_before: Vec<ChunkSpan> = b
+            .iter()
+            .take_while(|s| s.offset + u64::from(s.len) <= at as u64)
+            .cloned()
+            .collect();
         assert_eq!(a_before, b_before);
         // and reuse across versions stays high: identical prefix bytes
         let prefix_bytes: u64 = b_before.iter().map(|s| u64::from(s.len)).sum();
@@ -236,7 +254,9 @@ mod tests {
 
     #[test]
     fn streaming_matches_one_shot() {
-        let buf: Vec<u8> = (0..24 * 1024 * 1024).map(|i| ((i * 31 + 5) % 256) as u8).collect();
+        let buf: Vec<u8> = (0..24 * 1024 * 1024)
+            .map(|i| ((i * 31 + 5) % 256) as u8)
+            .collect();
         let one_shot = FastCdc::cut(&buf);
         let mut streamed = FastCdc::default();
         let mut spans = Vec::new();
@@ -249,7 +269,9 @@ mod tests {
 
     #[test]
     fn stream_hash_file_hash_matches_frozen_construction() {
-        let buf: Vec<u8> = (0..10 * 1024 * 1024).map(|i| (i as u8).wrapping_mul(13)).collect();
+        let buf: Vec<u8> = (0..10 * 1024 * 1024)
+            .map(|i| (i as u8).wrapping_mul(13))
+            .collect();
         let sh = StreamHash::compute(&buf);
         assert_eq!(sh.chunk_hashes.len(), sh.spans.len());
         let expect = Hash::file_hash_from_chunk_hashes(&sh.chunk_hashes);

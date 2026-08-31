@@ -43,17 +43,16 @@ pub const CLIENT_SCHEMA_VERSION: i64 = 1;
 
 impl Store {
     /// Open (or create) the store at `root` (a directory). Applies migrations.
-    pub fn open(
-        root: &Path,
-        clock: std::sync::Arc<dyn SystemClock>,
-    ) -> Result<Self, CairnError> {
+    pub fn open(root: &Path, clock: std::sync::Arc<dyn SystemClock>) -> Result<Self, CairnError> {
         std::fs::create_dir_all(root)
             .map_err(|e| CairnError::new(cairn_core::ErrorKind::Io, format!("mkdir root: {e}")))?;
         let db_path = root.join("db.sqlite");
         let conn = Connection::open(&db_path)
             .map_err(|e| CairnError::new(cairn_core::ErrorKind::Io, format!("open db: {e}")))?;
         conn.busy_timeout(std::time::Duration::from_millis(5000))
-            .map_err(|e| CairnError::new(cairn_core::ErrorKind::Io, format!("busy_timeout: {e}")))?;
+            .map_err(|e| {
+                CairnError::new(cairn_core::ErrorKind::Io, format!("busy_timeout: {e}"))
+            })?;
         // WAL discipline (SQLite reference, THIRD_PARTY.md)
         conn.pragma_update(None, "journal_mode", "WAL")
             .map_err(|e| CairnError::new(cairn_core::ErrorKind::Io, format!("wal: {e}")))?;
@@ -91,10 +90,12 @@ impl Store {
         let conn = self.conn.lock().expect("store poisoned");
         let v: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
-            .map_err(|e| CairnError::new(cairn_core::ErrorKind::Io, format!("user_version: {e}")))?;
+            .map_err(|e| {
+                CairnError::new(cairn_core::ErrorKind::Io, format!("user_version: {e}"))
+            })?;
         if v < 1 {
             conn.execute_batch(
-                r#"
+                r"
                 BEGIN;
                 CREATE TABLE IF NOT EXISTS files(
                   path TEXT NOT NULL,
@@ -139,7 +140,7 @@ impl Store {
                 );
                 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
                 COMMIT;
-                "#,
+                ",
             )
             .map_err(|e| CairnError::new(cairn_core::ErrorKind::Io, format!("migrate v1: {e}")))?;
             conn.pragma_update(None, "user_version", 1)
@@ -159,7 +160,15 @@ impl Store {
              ON CONFLICT(project_id, path) DO UPDATE SET
                manifest_hash=excluded.manifest_hash, size=excluded.size, mode=excluded.mode,
                mtime=excluded.mtime, local_state=excluded.local_state",
-            rusqlite::params![f.path, f.project_id, f.manifest_hash, f.size as i64, f.mode, f.mtime, f.local_state],
+            rusqlite::params![
+                f.path,
+                f.project_id,
+                f.manifest_hash,
+                f.size as i64,
+                f.mode,
+                f.mtime,
+                f.local_state
+            ],
         )
         .map_err(db_err)?;
         Ok(())
@@ -217,7 +226,12 @@ impl Store {
     }
 
     /// Transition a file's local state (single writer, instant durability).
-    pub fn set_file_state(&self, project_id: &str, path: &str, state: &str) -> Result<(), CairnError> {
+    pub fn set_file_state(
+        &self,
+        project_id: &str,
+        path: &str,
+        state: &str,
+    ) -> Result<(), CairnError> {
         let conn = self.conn.lock().expect("store poisoned");
         conn.execute(
             "UPDATE files SET local_state=?3 WHERE project_id=?1 AND path=?2",
@@ -233,7 +247,12 @@ impl Store {
     #[must_use]
     pub fn meta_get(&self, key: &str) -> Option<String> {
         let conn = self.conn.lock().expect("store poisoned");
-        conn.query_row("SELECT value FROM meta WHERE key=?1", rusqlite::params![key], |r| r.get(0)).ok()
+        conn.query_row(
+            "SELECT value FROM meta WHERE key=?1",
+            rusqlite::params![key],
+            |r| r.get(0),
+        )
+        .ok()
     }
 
     /// Write a meta key.
@@ -248,7 +267,12 @@ impl Store {
     }
 
     /// Advance the per-device cursor (durable before any append is acknowledged upstream).
-    pub fn set_cursor(&self, device_id: &str, project_id: &str, last_seq: u64) -> Result<(), CairnError> {
+    pub fn set_cursor(
+        &self,
+        device_id: &str,
+        project_id: &str,
+        last_seq: u64,
+    ) -> Result<(), CairnError> {
         let conn = self.conn.lock().expect("store poisoned");
         conn.execute(
             "INSERT INTO devices(device_id, project_id, last_seq) VALUES(?1,?2,?3)
@@ -301,8 +325,70 @@ impl Store {
     /// Drop a lease.
     pub fn drop_lease(&self, path: &str) -> Result<(), CairnError> {
         let conn = self.conn.lock().expect("store poisoned");
-        conn.execute("DELETE FROM leases_local WHERE path=?1", rusqlite::params![path]).map_err(db_err)?;
+        conn.execute(
+            "DELETE FROM leases_local WHERE path=?1",
+            rusqlite::params![path],
+        )
+        .map_err(db_err)?;
         Ok(())
+    }
+
+    /// Aggregate summary across ALL projects (dashboard/status surface).
+    pub fn all_files_summary(&self) -> (usize, usize) {
+        let conn = self.conn.lock().expect("store poisoned");
+        let total: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM files WHERE mode<>'tombstone'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let conflicts: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM files WHERE local_state='conflict'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        (total.max(0) as usize, conflicts.max(0) as usize)
+    }
+
+    /// Most recently touched file rows across projects (dashboard activity feed).
+    #[must_use]
+    pub fn recent_file_rows(&self, limit: usize) -> Vec<FileRow> {
+        let conn = self.conn.lock().expect("store poisoned");
+        let mut stmt = match conn.prepare(
+            "SELECT path, project_id, manifest_hash, size, mode, mtime, local_state
+             FROM files ORDER BY mtime DESC LIMIT ?1",
+        ) {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        let rows = stmt
+            .query_map(rusqlite::params![limit as i64], |r| {
+                Ok(FileRow {
+                    path: r.get(0)?,
+                    project_id: r.get(1)?,
+                    manifest_hash: r.get(2)?,
+                    size: r.get::<_, i64>(3)?.max(0) as u64,
+                    mode: r.get(4)?,
+                    mtime: r.get(5)?,
+                    local_state: r.get(6)?,
+                })
+            })
+            .map(|rows| rows.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default();
+        rows
+    }
+
+    /// Max cursor across devices/projects (headline journal position).
+    pub fn max_cursor(&self) -> u64 {
+        let conn = self.conn.lock().expect("store poisoned");
+        conn.query_row("SELECT COALESCE(MAX(last_seq),0) FROM devices", [], |r| {
+            r.get::<_, i64>(0)
+        })
+        .map(|v| v.max(0) as u64)
+        .unwrap_or(0)
     }
 
     /// Run a closure in a single serialized transaction (single-writer discipline).
@@ -381,14 +467,20 @@ mod tests {
     fn transaction_is_atomic() {
         let (_d, s) = open_tmp();
         let r: Result<(), CairnError> = s.with_tx(|conn| {
-            conn.execute("INSERT INTO meta(key,value) VALUES('a','1')", []).map_err(db_err)?;
-            conn.execute("INSERT INTO meta(key,value) VALUES('b','2')", []).map_err(db_err)?;
+            conn.execute("INSERT INTO meta(key,value) VALUES('a','1')", [])
+                .map_err(db_err)?;
+            conn.execute("INSERT INTO meta(key,value) VALUES('b','2')", [])
+                .map_err(db_err)?;
             Err(CairnError::new(cairn_core::ErrorKind::Io, "boom"))
         });
         assert!(r.is_err());
-        assert!(s.meta_get("a").is_none(), "rollback must erase uncommitted writes");
+        assert!(
+            s.meta_get("a").is_none(),
+            "rollback must erase uncommitted writes"
+        );
         let r2: Result<(), CairnError> = s.with_tx(|conn| {
-            conn.execute("INSERT INTO meta(key,value) VALUES('a','1')", []).map_err(db_err)?;
+            conn.execute("INSERT INTO meta(key,value) VALUES('a','1')", [])
+                .map_err(db_err)?;
             Ok(())
         });
         r2.unwrap();

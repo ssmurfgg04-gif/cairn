@@ -6,6 +6,8 @@
 //! presigned PUT with `x-amz-checksum-sha256`, presigned GET with Range + 403 renewal, and
 //! strict status-code handling.
 
+#![allow(dead_code)] // full client surface kept for the harness; not all paths exercised
+
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
@@ -19,7 +21,10 @@ pub struct Response {
 impl Response {
     #[must_use]
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers.iter().find(|(n, _)| n == name).map(|(_, v)| v.as_str())
+        self.headers
+            .iter()
+            .find(|(n, _)| n == name)
+            .map(|(_, v)| v.as_str())
     }
 }
 
@@ -38,7 +43,8 @@ async fn request(
 ) -> std::io::Result<Response> {
     let (authority, target) = split_url(url);
     let mut stream = TcpStream::connect(&authority).await?;
-    let mut req = format!("{method} {target} HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\n");
+    let mut req =
+        format!("{method} {target} HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\n");
     for (n, v) in headers {
         req.push_str(&format!("{n}: {v}\r\n"));
     }
@@ -61,7 +67,11 @@ async fn request(
     let head = String::from_utf8_lossy(&buf[..header_end]).into_owned();
     let mut lines = head.lines();
     let status_line = lines.next().unwrap_or_default();
-    let status: u16 = status_line.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let status: u16 = status_line
+        .split_whitespace()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
     let mut resp_headers = Vec::new();
     for line in lines {
         if let Some((n, v)) = line.split_once(':') {
@@ -69,7 +79,11 @@ async fn request(
         }
     }
     let body_start = header_end + 4;
-    Ok(Response { status, headers: resp_headers, body: buf[body_start.min(buf.len())..].to_vec() })
+    Ok(Response {
+        status,
+        headers: resp_headers,
+        body: buf[body_start.min(buf.len())..].to_vec(),
+    })
 }
 
 fn find_header_end(buf: &[u8]) -> Option<usize> {

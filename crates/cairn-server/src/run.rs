@@ -4,8 +4,8 @@
 
 use std::sync::Arc;
 
-use cairn_core::clock::SystemClock;
 use cairn_core::bloom::Bloom;
+use cairn_core::clock::SystemClock;
 use cairn_core::{CairnError, ErrorKind};
 
 use crate::storage::LocalFsStore;
@@ -24,9 +24,13 @@ pub struct ServerConfig {
 }
 
 /// Build the server state from config.
-pub async fn build_state(cfg: &ServerConfig, clock: Arc<dyn SystemClock>) -> Result<Arc<ServerState>, CairnError> {
+pub async fn build_state(
+    cfg: &ServerConfig,
+    clock: Arc<dyn SystemClock>,
+) -> Result<Arc<ServerState>, CairnError> {
     let db = crate::db::open(&cfg.data_dir.join("meta.db")).await?;
-    let auth = crate::auth::Authenticator::load_or_create(&cfg.data_dir.join("keys"), clock.clone())?;
+    let auth =
+        crate::auth::Authenticator::load_or_create(&cfg.data_dir.join("keys"), clock.clone())?;
     let signing_key = read_or_create_object_key(&cfg.data_dir)?;
     let store = LocalFsStore::open(
         &cfg.data_dir.join("objects"),
@@ -107,25 +111,41 @@ pub async fn run(cfg: ServerConfig) -> Result<(), CairnError> {
 
     // gRPC metadata plane
     let grpc = tonic::transport::Server::builder()
-        .add_service(cairn_proto::pb::journal_server::JournalServer::new(crate::services::JournalSvc {
-            state: Arc::clone(&state),
-        }))
-        .add_service(cairn_proto::pb::lease_server::LeaseServer::new(crate::services::LeaseSvc {
-            state: Arc::clone(&state),
-        }))
-        .add_service(cairn_proto::pb::upload_server::UploadServer::new(crate::services::UploadSvc {
-            state: Arc::clone(&state),
-        }))
-        .add_service(cairn_proto::pb::download_server::DownloadServer::new(
-            crate::services::DownloadSvc { state: Arc::clone(&state) },
+        .add_service(cairn_proto::pb::journal_server::JournalServer::new(
+            crate::services::JournalSvc {
+                state: Arc::clone(&state),
+            },
         ))
-        .add_service(cairn_proto::pb::auth_server::AuthServer::new(crate::services::AuthSvc {
-            state: Arc::clone(&state),
-        }))
-        .add_service(cairn_proto::pb::project_server::ProjectServer::new(crate::services::ProjectSvc {
-            state: Arc::clone(&state),
-        }))
-        .serve(cfg.grpc_addr.parse().map_err(|e| CairnError::new(ErrorKind::Io, format!("addr: {e}")))?);
+        .add_service(cairn_proto::pb::lease_server::LeaseServer::new(
+            crate::services::LeaseSvc {
+                state: Arc::clone(&state),
+            },
+        ))
+        .add_service(cairn_proto::pb::upload_server::UploadServer::new(
+            crate::services::UploadSvc {
+                state: Arc::clone(&state),
+            },
+        ))
+        .add_service(cairn_proto::pb::download_server::DownloadServer::new(
+            crate::services::DownloadSvc {
+                state: Arc::clone(&state),
+            },
+        ))
+        .add_service(cairn_proto::pb::auth_server::AuthServer::new(
+            crate::services::AuthSvc {
+                state: Arc::clone(&state),
+            },
+        ))
+        .add_service(cairn_proto::pb::project_server::ProjectServer::new(
+            crate::services::ProjectSvc {
+                state: Arc::clone(&state),
+            },
+        ))
+        .serve(
+            cfg.grpc_addr
+                .parse()
+                .map_err(|e| CairnError::new(ErrorKind::Io, format!("addr: {e}")))?,
+        );
 
     fn as_cairn<E: std::fmt::Display>(r: Result<(), E>, what: &str) -> Result<(), CairnError> {
         r.map_err(|e| CairnError::new(ErrorKind::Io, format!("{what}: {e}")))

@@ -94,9 +94,7 @@ impl ErrorKind {
     pub const fn retry_class(self) -> RetryClass {
         match self {
             ErrorKind::Unavailable | ErrorKind::RateLimited | ErrorKind::Io => RetryClass::Auto,
-            ErrorKind::Conflict | ErrorKind::StaleLease | ErrorKind::RefCas => {
-                RetryClass::Conflict
-            }
+            ErrorKind::Conflict | ErrorKind::StaleLease | ErrorKind::RefCas => RetryClass::Conflict,
             ErrorKind::ManifestFormat
             | ErrorKind::ChunkVerification
             | ErrorKind::LocalCasCorrupt
@@ -128,7 +126,10 @@ impl CairnError {
     /// Shorthand constructor.
     #[must_use]
     pub fn new(kind: ErrorKind, message: impl Into<String>) -> Self {
-        CairnError { kind, message: message.into() }
+        CairnError {
+            kind,
+            message: message.into(),
+        }
     }
 
     /// Stable code for the wire.

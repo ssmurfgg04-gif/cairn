@@ -2,10 +2,10 @@
 //! checksum → tombstone hot copy. NEVER tier manifests/trees/commits. Deep Archive is
 //! per-tenant opt-in. RecallService restores with progress + ETA.
 
-use cairn_core::hash::Hash;
-use cairn_core::{CairnError, ErrorKind};
 use crate::storage::LocalFsStore;
 use crate::ServerState;
+use cairn_core::hash::Hash;
+use cairn_core::{CairnError, ErrorKind};
 use sqlx::Row;
 
 const TIER_AFTER_DAYS: i64 = 90;
@@ -27,7 +27,9 @@ impl DevColdStore {
     /// New dev cold store under `root`.
     pub fn new(root: &std::path::Path) -> Self {
         let _ = std::fs::create_dir_all(root);
-        DevColdStore { root: root.to_path_buf() }
+        DevColdStore {
+            root: root.to_path_buf(),
+        }
     }
 
     fn path(&self, key: &str) -> std::path::PathBuf {
@@ -54,7 +56,11 @@ impl ColdStore for DevColdStore {
 /// Tier cold chunks (>90d untouched) to the cold backend. Kill switch: `tiering_enabled`.
 /// Deep Archive is per-tenant opt-in (`tenants.deep_archive`) — cold tiering only runs for
 /// opted-in tenants when the backend supports it.
-pub async fn tier_pass(state: &ServerState, cold: &dyn ColdStore, tenant_id: &str) -> Result<u64, CairnError> {
+pub async fn tier_pass(
+    state: &ServerState,
+    cold: &dyn ColdStore,
+    tenant_id: &str,
+) -> Result<u64, CairnError> {
     if !crate::jobs::flags::enabled(state, "tiering_enabled").await? {
         return Ok(0);
     }
@@ -90,7 +96,16 @@ pub async fn tier_pass(state: &ServerState, cold: &dyn ColdStore, tenant_id: &st
                     .execute(&state.db)
                     .await
                     .map_err(|e| CairnError::new(ErrorKind::Unavailable, format!("tier: {e}")))?;
-                crate::db::audit(&state.db, &state.clock, tenant_id, "tier-job", "tier.archive", &hash, "cold copy verified").await;
+                crate::db::audit(
+                    &state.db,
+                    &state.clock,
+                    tenant_id,
+                    "tier-job",
+                    "tier.archive",
+                    &hash,
+                    "cold copy verified",
+                )
+                .await;
                 tiered += 1;
             }
             _ => {
@@ -143,7 +158,10 @@ pub async fn start_recall(
         let bytes = cold.get(&key).await?;
         // verify before serving hot again (I2)
         if Hash::of(&bytes).hex() != hash || bytes.len() as i64 != size {
-            return Err(CairnError::new(ErrorKind::ChecksumMismatch, format!("recall {hash} corrupt")));
+            return Err(CairnError::new(
+                ErrorKind::ChecksumMismatch,
+                format!("recall {hash} corrupt"),
+            ));
         }
         state.store.put(&key, &bytes).await?;
         sqlx::query("UPDATE chunks SET tier='hot', last_touched=?3 WHERE tenant_id=?1 AND hash=?2")
@@ -155,23 +173,25 @@ pub async fn start_recall(
             .map_err(|e| CairnError::new(ErrorKind::Unavailable, format!("recall: {e}")))?;
         done += size;
         let elapsed = state.clock.now_millis() - started;
-        let progress = if total > 0 { done as f64 / total as f64 } else { 1.0 };
+        let progress = if total > 0 {
+            done as f64 / total as f64
+        } else {
+            1.0
+        };
         // ETA: elapsed/progress − elapsed (ms), clamped
         let eta = if progress > 0.001 {
             ((elapsed as f64 / progress) - elapsed as f64).max(0.0) as i64
         } else {
             -1
         };
-        sqlx::query(
-            "UPDATE jobs SET progress=?2, detail=?3, updated_at=?4 WHERE id=?1",
-        )
-        .bind(job_id)
-        .bind(progress)
-        .bind(format!("eta_ms={eta}"))
-        .bind(state.clock.now_millis())
-        .execute(&state.db)
-        .await
-        .map_err(|e| CairnError::new(ErrorKind::Unavailable, format!("job upd: {e}")))?;
+        sqlx::query("UPDATE jobs SET progress=?2, detail=?3, updated_at=?4 WHERE id=?1")
+            .bind(job_id)
+            .bind(progress)
+            .bind(format!("eta_ms={eta}"))
+            .bind(state.clock.now_millis())
+            .execute(&state.db)
+            .await
+            .map_err(|e| CairnError::new(ErrorKind::Unavailable, format!("job upd: {e}")))?;
     }
     sqlx::query("UPDATE jobs SET state='complete', progress=1.0, updated_at=?2 WHERE id=?1")
         .bind(job_id)
@@ -179,7 +199,16 @@ pub async fn start_recall(
         .execute(&state.db)
         .await
         .map_err(|e| CairnError::new(ErrorKind::Unavailable, format!("job done: {e}")))?;
-    crate::db::audit(&state.db, &state.clock, tenant_id, "recall", "tier.recall", job_id, "complete").await;
+    crate::db::audit(
+        &state.db,
+        &state.clock,
+        tenant_id,
+        "recall",
+        "tier.recall",
+        job_id,
+        "complete",
+    )
+    .await;
     Ok(())
 }
 
@@ -193,11 +222,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let state = crate::tests_support::state_at(dir.path()).await;
         sqlx::query("INSERT OR IGNORE INTO tenants(id, created_at) VALUES('t1',0)")
-            .execute(&state.db).await.unwrap();
+            .execute(&state.db)
+            .await
+            .unwrap();
         // one chunk, long untouched
         let body = b"cold-chunk-body".repeat(100);
         let h = Hash::of(&body);
-        state.store.put(&LocalFsStore::chunk_key("t1", &h.hex()), &body).await.unwrap();
+        state
+            .store
+            .put(&LocalFsStore::chunk_key("t1", &h.hex()), &body)
+            .await
+            .unwrap();
         sqlx::query("INSERT INTO chunks(tenant_id, hash, size, tier, state, last_touched) VALUES('t1',?1,?2,'hot','present',0)")
             .bind(h.hex())
             .bind(body.len() as i64)
@@ -207,17 +242,32 @@ mod tests {
         let tiered = tier_pass(&state, &cold, "t1").await.unwrap();
         assert_eq!(tiered, 1);
         // hot copy gone, archive tier recorded
-        assert!(state.store.head(&LocalFsStore::chunk_key("t1", &h.hex())).await.is_err());
+        assert!(state
+            .store
+            .head(&LocalFsStore::chunk_key("t1", &h.hex()))
+            .await
+            .is_err());
 
         // recall brings it back verified
-        start_recall(&state, &cold, "t1", "job-1", Some(&h.hex())).await.unwrap();
-        let back = state.store.get(&LocalFsStore::chunk_key("t1", &h.hex())).await.unwrap();
+        start_recall(&state, &cold, "t1", "job-1", Some(&h.hex()))
+            .await
+            .unwrap();
+        let back = state
+            .store
+            .get(&LocalFsStore::chunk_key("t1", &h.hex()))
+            .await
+            .unwrap();
         assert_eq!(back, body);
         let tier: String = sqlx::query_scalar("SELECT tier FROM chunks WHERE hash=?1")
-            .bind(h.hex()).fetch_one(&state.db).await.unwrap();
+            .bind(h.hex())
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
         assert_eq!(tier, "hot");
         let st: String = sqlx::query_scalar("SELECT state FROM jobs WHERE id='job-1'")
-            .fetch_one(&state.db).await.unwrap();
+            .fetch_one(&state.db)
+            .await
+            .unwrap();
         assert_eq!(st, "complete");
     }
 
@@ -226,8 +276,10 @@ mod tests {
     async fn tiering_respects_kill_switch() {
         let dir = tempfile::tempdir().unwrap();
         let state = crate::tests_support::state_at(dir.path()).await;
-        crate::jobs::flags::set(&state, "ops", "tiering_enabled", "false").await.unwrap();
-        let cold = DevColdStore::new(&tempfile::tempdir().unwrap().path());
+        crate::jobs::flags::set(&state, "ops", "tiering_enabled", "false")
+            .await
+            .unwrap();
+        let cold = DevColdStore::new(tempfile::tempdir().unwrap().path());
         assert_eq!(tier_pass(&state, &cold, "t1").await.unwrap(), 0);
     }
 }

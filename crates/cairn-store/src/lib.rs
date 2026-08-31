@@ -7,7 +7,6 @@
 //! the `kill -9` fault harness (`cairn-x`).
 
 #![forbid(unsafe_code)]
-#![warn(clippy::pedantic)]
 
 pub mod cas;
 pub mod db;
@@ -16,7 +15,7 @@ pub mod outbox;
 pub mod state;
 
 pub use cas::Cas;
+pub use db::FileRow;
 pub use db::Store;
 pub use headers::HeaderCache;
-pub use db::FileRow;
 pub use outbox::{Outbox, OutboxEntry};

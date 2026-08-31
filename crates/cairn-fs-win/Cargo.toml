@@ -8,5 +8,9 @@ description = "Cairn cairn-fs-win"
 [dependencies]
 cairn-core = { path = "../cairn-core" }
 
-[lints.rust]
-unsafe_code = "deny"
+
+[features]
+cfapi = []
+
+[lints]
+workspace = true

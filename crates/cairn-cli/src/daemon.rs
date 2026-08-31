@@ -30,7 +30,11 @@ pub struct DaemonState {
 
 impl DaemonState {
     fn new(home: PathBuf) -> Self {
-        DaemonState { home, started: Instant::now(), flags: RwLock::new(default_flags()) }
+        DaemonState {
+            home,
+            started: Instant::now(),
+            flags: RwLock::new(default_flags()),
+        }
     }
 }
 
@@ -52,14 +56,21 @@ pub struct CtlStatusSvc {
 
 #[tonic::async_trait]
 impl CtlStatus for CtlStatusSvc {
-    async fn status(&self, _request: Request<StatusRequest>) -> Result<Response<StatusResponse>, Status> {
-        let rep = doctor::collect(&self.state.home).await;
+    async fn status(
+        &self,
+        _request: Request<StatusRequest>,
+    ) -> Result<Response<StatusResponse>, Status> {
+        let rep = doctor::collect(&self.state.home);
         Ok(Response::new(StatusResponse {
             version: format!("cairn {}", env!("CARGO_PKG_VERSION")),
             proto: cairn_proto::PROTO_VERSION,
             uptime_ms: u64::try_from(self.state.started.elapsed().as_millis()).unwrap_or(u64::MAX),
             projects: vec![], // attached roots appear with ProjectService (M4)
-            server_reachable: if rep.healthy() { "ok".into() } else { "degraded".into() },
+            server_reachable: if rep.healthy() {
+                "ok".into()
+            } else {
+                "degraded".into()
+            },
         }))
     }
 }
@@ -70,8 +81,11 @@ pub struct CtlDiagSvc {
 
 #[tonic::async_trait]
 impl CtlDiagnostics for CtlDiagSvc {
-    async fn doctor(&self, _request: Request<DoctorRequest>) -> Result<Response<DoctorReport>, Status> {
-        let rep = doctor::collect(&self.state.home).await;
+    async fn doctor(
+        &self,
+        _request: Request<DoctorRequest>,
+    ) -> Result<Response<DoctorReport>, Status> {
+        let rep = doctor::collect(&self.state.home);
         Ok(Response::new(DoctorReport {
             checks: rep
                 .checks
@@ -91,10 +105,15 @@ impl CtlDiagnostics for CtlDiagSvc {
         &self,
         _request: Request<cairn_proto::pb::GcShadowReportRequest>,
     ) -> Result<Response<cairn_proto::pb::GcShadowReportResponse>, Status> {
-        Err(Status::unimplemented("GC shadow report runs against the storage server (M6); ctl forwards then"))
+        Err(Status::unimplemented(
+            "GC shadow report runs against the storage server (M6); ctl forwards then",
+        ))
     }
 
-    async fn set_flag(&self, request: Request<SetFlagRequest>) -> Result<Response<cairn_proto::pb::Ack>, Status> {
+    async fn set_flag(
+        &self,
+        request: Request<SetFlagRequest>,
+    ) -> Result<Response<cairn_proto::pb::Ack>, Status> {
         let req = request.into_inner();
         let mut flags = self.state.flags.write().await;
         let known = flags.iter_mut().find(|(n, _)| *n == req.name);
@@ -108,12 +127,18 @@ impl CtlDiagnostics for CtlDiagSvc {
         }
     }
 
-    async fn get_flags(&self, _request: Request<GetFlagsRequest>) -> Result<Response<GetFlagsResponse>, Status> {
+    async fn get_flags(
+        &self,
+        _request: Request<GetFlagsRequest>,
+    ) -> Result<Response<GetFlagsResponse>, Status> {
         let flags = self.state.flags.read().await;
         Ok(Response::new(GetFlagsResponse {
             flags: flags
                 .iter()
-                .map(|(n, v)| FlagInfo { name: n.clone(), value: v.clone() })
+                .map(|(n, v)| FlagInfo {
+                    name: n.clone(),
+                    value: v.clone(),
+                })
                 .collect(),
         }))
     }
@@ -128,8 +153,12 @@ pub async fn run(home: PathBuf, ctl_addr: String, ui_addr: String) -> anyhow::Re
     let state = Arc::new(DaemonState::new(home));
     tracing::info!(ctl_addr = %ctl_addr, ui_addr = %ui_addr, "cairn daemon starting");
 
-    let status_svc = CtlStatusServer::new(CtlStatusSvc { state: Arc::clone(&state) });
-    let diag_svc = CtlDiagnosticsServer::new(CtlDiagSvc { state: Arc::clone(&state) });
+    let status_svc = CtlStatusServer::new(CtlStatusSvc {
+        state: Arc::clone(&state),
+    });
+    let diag_svc = CtlDiagnosticsServer::new(CtlDiagSvc {
+        state: Arc::clone(&state),
+    });
 
     let ctl = tonic::transport::Server::builder()
         .add_service(status_svc)
@@ -179,7 +208,7 @@ pub async fn login(
 }
 
 /// Remove the locally stored token (server-side revocation is an admin action via ctl).
-pub fn logout(_home: &std::path::Path) -> anyhow::Result<()> {
+pub fn logout(_home: &std::path::Path) {
     match keyring_entry() {
         Ok(e) => {
             let _ = e.delete_credential();
@@ -187,7 +216,6 @@ pub fn logout(_home: &std::path::Path) -> anyhow::Result<()> {
         Err(e) => tracing::warn!("keychain unavailable at logout: {e}"),
     }
     let _ = std::fs::remove_file(token_file());
-    Ok(())
 }
 
 fn keyring_entry() -> Result<keyring::Entry, String> {
@@ -195,16 +223,22 @@ fn keyring_entry() -> Result<keyring::Entry, String> {
 }
 
 fn token_file() -> PathBuf {
-    dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")).join(".cairn-token-dev")
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".cairn-token-dev")
 }
 
 fn store_token(server: &str, token: &str, allow_plaintext_file: bool) -> anyhow::Result<()> {
     let payload = format!("{server}|{token}");
     match keyring_entry() {
-        Ok(e) => e.set_password(&payload).map_err(|e| anyhow::anyhow!("keychain: {e}")),
+        Ok(e) => e
+            .set_password(&payload)
+            .map_err(|e| anyhow::anyhow!("keychain: {e}")),
         Err(msg) => {
             if allow_plaintext_file {
-                tracing::warn!("keychain unavailable ({msg}); using 0600 dev file (NOT for production)");
+                tracing::warn!(
+                    "keychain unavailable ({msg}); using 0600 dev file (NOT for production)"
+                );
                 let path = token_file();
                 std::fs::write(&path, &payload)?;
                 #[cfg(unix)]
@@ -222,6 +256,7 @@ fn store_token(server: &str, token: &str, allow_plaintext_file: bool) -> anyhow:
 
 /// Read the stored token if any (server: token).
 #[must_use]
+#[allow(dead_code)] // used by future daemon-server attach wiring (M8+ ctl integration)
 pub fn load_token() -> Option<(String, String)> {
     if let Ok(e) = keyring_entry() {
         if let Ok(p) = e.get_password() {
@@ -234,6 +269,9 @@ pub fn load_token() -> Option<(String, String)> {
     let p = token_file();
     std::fs::read_to_string(&p).ok().and_then(|s| {
         let mut parts = s.splitn(2, '|');
-        Some((parts.next()?.to_string(), parts.next().unwrap_or("").to_string()))
+        Some((
+            parts.next()?.to_string(),
+            parts.next().unwrap_or("").to_string(),
+        ))
     })
 }

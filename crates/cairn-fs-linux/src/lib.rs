@@ -7,9 +7,7 @@
 //! run on FUSE-enabled machines. Cross-platform watching lives in `cairn-sync::watch`.
 
 #![forbid(unsafe_code)]
-#![warn(clippy::pedantic)]
 
-use std::path::Path;
 use std::sync::Arc;
 
 use cairn_core::CairnError;

@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cairn — local console</title>
+<link rel="stylesheet" href="/assets/app.css">
+</head>
+<body>
+<div class="frame">
+  <aside class="side">
+    <div class="brand">
+      <span class="brand-mark">▲</span>
+      <div>
+        <h1 class="brand-name">cairn</h1>
+        <p class="brand-sub">local console</p>
+      </div>
+    </div>
+    <nav class="nav" id="nav">
+      <a href="#overview" class="nav-item is-active">Overview</a>
+      <a href="#activity" class="nav-item">Activity</a>
+      <a href="#leases" class="nav-item">Leases</a>
+      <a href="#snapshots" class="nav-item">Snapshots</a>
+      <a href="#storage" class="nav-item">Storage</a>
+      <a href="#flags" class="nav-item">Kill switches</a>
+      <a href="#doctor" class="nav-item">Doctor</a>
+    </nav>
+    <div class="side-foot">
+      <p class="meta">daemon <span id="daemon-version">—</span></p>
+      <p class="meta">proto <span id="daemon-proto">—</span></p>
+      <p class="meta" id="daemon-uptime">uptime —</p>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="head">
+      <div>
+        <p class="kicker">project folder</p>
+        <h2 class="title" id="project-name">no roots attached</h2>
+      </div>
+      <div class="head-right">
+        <span class="state-chip" id="state-chip"><span class="dot"></span><span id="state-label">checking</span></span>
+      </div>
+    </header>
+
+    <section id="overview" class="grid">
+      <article class="card card-wide">
+        <h3 class="card-title">Sync state</h3>
+        <div class="stat-row">
+          <div class="stat">
+            <p class="stat-num mono" id="stat-pending">0</p>
+            <p class="stat-label">outbox pending</p>
+          </div>
+          <div class="stat">
+            <p class="stat-num mono" id="stat-cursor">0</p>
+            <p class="stat-label">journal cursor</p>
+          </div>
+          <div class="stat">
+            <p class="stat-num mono" id="stat-files">0</p>
+            <p class="stat-label">files known</p>
+          </div>
+          <div class="stat">
+            <p class="stat-num mono" id="stat-conflicts">0</p>
+            <p class="stat-label">conflict copies</p>
+          </div>
+        </div>
+        <p class="note" id="overview-note">The daemon watches attached roots, chunks content with FastCDC, and appends every save to the server-linearized journal.</p>
+      </article>
+      <article class="card">
+        <h3 class="card-title">Hydration (I1)</h3>
+        <p class="stat-num mono" id="stat-i1">—</p>
+        <p class="stat-label">first byte, cached</p>
+        <div class="meter"><div class="meter-fill" id="i1-meter"></div></div>
+        <p class="note">target &lt; 50 ms · measured from the header cache</p>
+      </article>
+    </section>
+
+    <section id="activity" class="card">
+      <h3 class="card-title">Journal activity</h3>
+      <table class="table">
+        <thead><tr><th>seq</th><th>path</th><th>state</th><th>size</th></tr></thead>
+        <tbody id="activity-body">
+          <tr><td colspan="4" class="empty">No entries yet — saves appear here as they are journaled.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="leases" class="card">
+      <h3 class="card-title">Active leases</h3>
+      <p class="note">NLE project files auto-acquire leases on open; fencing tokens protect every append.</p>
+      <table class="table">
+        <thead><tr><th>path</th><th>token</th><th>expires</th><th></th></tr></thead>
+        <tbody id="lease-body">
+          <tr><td colspan="4" class="empty">No live leases on this machine.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="snapshots" class="card">
+      <h3 class="card-title">Snapshots</h3>
+      <p class="note">Snapshots fold from the journal every 5,000 entries, every 24h, on demand, or at project close.</p>
+      <table class="table">
+        <thead><tr><th>commit</th><th>label</th><th>seq</th><th>author</th></tr></thead>
+        <tbody id="snapshot-body">
+          <tr><td colspan="4" class="empty">Snapshots list is served by the storage server after the first fold.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="storage" class="card">
+      <h3 class="card-title">Local storage</h3>
+      <div class="stat-row">
+        <div class="stat">
+          <p class="stat-num mono" id="stat-blobs">0</p>
+          <p class="stat-label">local chunks</p>
+        </div>
+        <div class="stat">
+          <p class="stat-num mono" id="stat-bytes">0</p>
+          <p class="stat-label">bytes cached</p>
+        </div>
+        <div class="stat">
+          <p class="stat-num mono" id="stat-pinned">0</p>
+          <p class="stat-label">pinned chunks</p>
+        </div>
+      </div>
+      <p class="note">NLE media caches belong on local scratch; pinned chunks are never evicted.</p>
+    </section>
+
+    <section id="flags" class="card">
+      <h3 class="card-title">Kill switches</h3>
+      <p class="note">Flags take effect on the next job run. No restart required.</p>
+      <div class="flag-grid" id="flag-grid"></div>
+    </section>
+
+    <section id="doctor" class="card">
+      <h3 class="card-title">Doctor</h3>
+      <div id="doctor-body" class="doctor"></div>
+    </section>
+
+    <footer class="foot">
+      <p class="meta">cairn v4 · content-addressed sync & storage for video teams · loopback only</p>
+    </footer>
+  </main>
+</div>
+<script src="/assets/app.js"></script>
+</body>
+</html>

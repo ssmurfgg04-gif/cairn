@@ -93,7 +93,12 @@ mod tests {
     use std::sync::Arc;
 
     fn entry(op: cairn_proto::pb::JournalOp, seq: u64) -> Entry {
-        Entry { seq, device_id: "other".into(), op, server_ts: 1 }
+        Entry {
+            seq,
+            device_id: "other".into(),
+            op,
+            server_ts: 1,
+        }
     }
 
     #[test]
@@ -120,7 +125,14 @@ mod tests {
             })),
         };
         apply_entry(&store, "p1", "me", &entry(rn, 2)).unwrap();
-        assert!(store.get_file("p1", "a.mov").unwrap().mode == "tombstone");
-        assert_eq!(store.get_file("p1", "b.mov").unwrap().manifest_hash.as_deref(), Some("aa"));
+        assert_eq!(store.get_file("p1", "a.mov").unwrap().mode, "tombstone");
+        assert_eq!(
+            store
+                .get_file("p1", "b.mov")
+                .unwrap()
+                .manifest_hash
+                .as_deref(),
+            Some("aa")
+        );
     }
 }

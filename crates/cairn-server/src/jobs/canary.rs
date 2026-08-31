@@ -2,11 +2,11 @@
 //! failures raise `cairn_canary_loop_result` = 0 (alertable metric; page-on-failure wired in
 //! the ops runbook). Runs against the LIVE server state — no UI, no client.
 
+use crate::storage::LocalFsStore;
+use crate::ServerState;
 use cairn_core::hash::Hash;
 use cairn_core::manifest::{Compression, Manifest, ManifestEntry};
 use cairn_core::{CairnError, ErrorKind};
-use crate::storage::LocalFsStore;
-use crate::ServerState;
 
 /// One canary probe against a scratch tenant. Returns Ok(len) on success.
 pub async fn probe(state: &ServerState) -> Result<usize, CairnError> {
@@ -41,27 +41,46 @@ pub async fn probe(state: &ServerState) -> Result<usize, CairnError> {
         .spans
         .iter()
         .zip(sh.chunk_hashes.iter())
-        .map(|(s, h)| ManifestEntry { offset: s.offset, len: s.len, chunk_hash: *h })
+        .map(|(s, h)| ManifestEntry {
+            offset: s.offset,
+            len: s.len,
+            chunk_hash: *h,
+        })
         .collect();
     let m = Manifest::build(entries, Compression::None, None);
     let (mh, mb) = m.serialize();
     crate::upload::register_manifest(state, tenant, &mh.hex(), &mb).await?;
 
     // verify: fetch back through the download path contract (signed GET semantics)
-    let url = state.store.presign_get(&LocalFsStore::object_key(tenant, &mh.hex()), 3600).await?;
+    let url = state
+        .store
+        .presign_get(&LocalFsStore::object_key(tenant, &mh.hex()), 3600)
+        .await?;
     if url.is_empty() {
         return Err(CairnError::new(ErrorKind::Internal, "canary: empty url"));
     }
-    let stored = state.store.get(&LocalFsStore::object_key(tenant, &mh.hex())).await?;
+    let stored = state
+        .store
+        .get(&LocalFsStore::object_key(tenant, &mh.hex()))
+        .await?;
     if Hash::of(&stored).hex() != mh.hex() {
-        return Err(CairnError::new(ErrorKind::ChecksumMismatch, "canary manifest corrupt"));
+        return Err(CairnError::new(
+            ErrorKind::ChecksumMismatch,
+            "canary manifest corrupt",
+        ));
     }
     // recompute every chunk hash (I2 spot check)
     let parsed = Manifest::parse(&stored)?;
     for e in parsed.flatten() {
-        let bytes = state.store.get(&LocalFsStore::chunk_key(tenant, &e.chunk_hash.hex())).await?;
+        let bytes = state
+            .store
+            .get(&LocalFsStore::chunk_key(tenant, &e.chunk_hash.hex()))
+            .await?;
         if bytes.len() != e.len as usize {
-            return Err(CairnError::new(ErrorKind::ChecksumMismatch, "canary chunk size"));
+            return Err(CairnError::new(
+                ErrorKind::ChecksumMismatch,
+                "canary chunk size",
+            ));
         }
     }
     Ok(payload.len())
@@ -75,7 +94,16 @@ pub async fn run_loop(state: std::sync::Arc<ServerState>) {
             Ok(len) => tracing::info!(bytes = len, "canary loop OK"),
             Err(e) => {
                 tracing::error!(error = %e, "CANARY FAILED — page on-call (see runbook)");
-                crate::db::audit(&state.db, &state.clock, "", "canary", "canary.fail", "", &e.message).await;
+                crate::db::audit(
+                    &state.db,
+                    &state.clock,
+                    "",
+                    "canary",
+                    "canary.fail",
+                    "",
+                    &e.message,
+                )
+                .await;
             }
         }
         tokio::time::sleep(std::time::Duration::from_secs(300)).await;
@@ -91,7 +119,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let state = crate::tests_support::state_at(dir.path()).await;
         sqlx::query("INSERT OR IGNORE INTO tenants(id, created_at) VALUES('canary',0)")
-            .execute(&state.db).await.unwrap();
+            .execute(&state.db)
+            .await
+            .unwrap();
         let len = probe(&state).await.unwrap();
         assert_eq!(len, 8 * 1024 * 1024);
     }

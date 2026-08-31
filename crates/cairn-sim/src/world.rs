@@ -2,7 +2,6 @@
 
 use std::sync::Arc;
 
-use cairn_core::clock::SystemClock;
 use cairn_core::hash::Hash;
 use cairn_proto::pb::journal_op::Op as OpKind;
 use cairn_proto::pb::FileUpsertOp;
@@ -10,8 +9,8 @@ use cairn_store::state::LocalState;
 use cairn_store::{Cas, FileRow, HeaderCache, Outbox, Store};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
-use std::sync::atomic::Ordering;
 use sqlx::Row;
+use std::sync::atomic::Ordering;
 
 use crate::plane::{Faults, InProcPlane};
 
@@ -58,7 +57,14 @@ async fn server_state(dir: &std::path::Path) -> Arc<cairn_server::ServerState> {
     Arc::new(state)
 }
 
-fn open_device(root: &std::path::Path, tenant: &str, project: &str, id: &str, state: Arc<cairn_server::ServerState>, faults: Arc<Faults>) -> cairn_sync::Engine {
+fn open_device(
+    root: &std::path::Path,
+    tenant: &str,
+    project: &str,
+    id: &str,
+    state: Arc<cairn_server::ServerState>,
+    faults: Arc<Faults>,
+) -> cairn_sync::Engine {
     let store = Store::open(&root.join("store"), Arc::new(cairn_core::clock::WallClock)).unwrap();
     let conn = store.conn_handle();
     let cas = Cas::open(&root.join("blobs"), conn.clone()).unwrap();
@@ -72,7 +78,12 @@ fn open_device(root: &std::path::Path, tenant: &str, project: &str, id: &str, st
         cas,
         outbox,
         headers,
-        plane: Arc::new(InProcPlane { state, tenant_id: tenant.into(), device_id: id.into(), faults }),
+        plane: Arc::new(InProcPlane {
+            state,
+            tenant_id: tenant.into(),
+            device_id: id.into(),
+            faults,
+        }),
         dicts: cairn_core::compress::DictRegistry::new(),
         gate: cairn_sync::Gate::new(),
     }
@@ -84,17 +95,42 @@ impl World {
         let _ = seed;
         let server_dir = tempfile::tempdir().unwrap();
         let state = server_state(server_dir.path()).await;
-        sqlx_insert(&state, "INSERT OR IGNORE INTO tenants(id, created_at) VALUES('t1',0)").await;
-        sqlx_insert(&state, "INSERT OR IGNORE INTO projects(tenant_id, project_id, created_at) VALUES('t1','p1',0)").await;
+        sqlx_insert(
+            &state,
+            "INSERT OR IGNORE INTO tenants(id, created_at) VALUES('t1',0)",
+        )
+        .await;
+        sqlx_insert(
+            &state,
+            "INSERT OR IGNORE INTO projects(tenant_id, project_id, created_at) VALUES('t1','p1',0)",
+        )
+        .await;
         let faults = Arc::new(Faults::default());
         let mut devices = Vec::new();
         for i in 0..2 {
             let root = tempfile::tempdir().unwrap();
-            let engine =
-                open_device(root.path(), "t1", "p1", &format!("dev-{i}"), Arc::clone(&state), Arc::clone(&faults));
-            devices.push(Device { id: format!("dev-{i}"), root, engine: Some(engine), crashes: 0 });
+            let engine = open_device(
+                root.path(),
+                "t1",
+                "p1",
+                &format!("dev-{i}"),
+                Arc::clone(&state),
+                Arc::clone(&faults),
+            );
+            devices.push(Device {
+                id: format!("dev-{i}"),
+                root,
+                engine: Some(engine),
+                crashes: 0,
+            });
         }
-        World { server_dir, state, faults, devices, acked_appends: 0 }
+        World {
+            server_dir,
+            state,
+            faults,
+            devices,
+            acked_appends: 0,
+        }
     }
 
     fn dev(&mut self, i: usize) -> &mut Device {
@@ -110,7 +146,12 @@ impl World {
             let d = &mut self.devices[idx];
             d.engine = None; // abrupt: no cleanup, no flush
             d.crashes += 1;
-            (Arc::clone(&self.state), Arc::clone(&self.faults), d.root.path().to_path_buf(), d.id.clone())
+            (
+                Arc::clone(&self.state),
+                Arc::clone(&self.faults),
+                d.root.path().to_path_buf(),
+                d.id.clone(),
+            )
         };
         let d = &mut self.devices[idx];
         d.engine = Some(open_device(&root_path, "t1", "p1", &id, state, faults));
@@ -128,19 +169,25 @@ impl World {
                 let root = self.devices[i].root.path().to_path_buf();
                 let ws = root.join("store").join("workspace");
                 std::fs::create_dir_all(&ws).unwrap();
-                let content = format!("content device {i} file {file_idx} tick {tick} seed-edit {}", rng.gen::<u32>());
+                let content = format!(
+                    "content device {i} file {file_idx} tick {tick} seed-edit {}",
+                    rng.gen::<u32>()
+                );
                 std::fs::write(ws.join(&path), &content).unwrap();
                 let dev = self.dev(i);
                 let engine = dev.engine.as_mut().expect("device live");
-                engine.store.put_file(&FileRow {
-                    path,
-                    project_id: "p1".into(),
-                    manifest_hash: None,
-                    size: content.len() as u64,
-                    mode: "file".into(),
-                    mtime: tick as i64,
-                    local_state: LocalState::Dirty.as_str().into(),
-                }).unwrap();
+                engine
+                    .store
+                    .put_file(&FileRow {
+                        path,
+                        project_id: "p1".into(),
+                        manifest_hash: None,
+                        size: content.len() as u64,
+                        mode: "file".into(),
+                        mtime: tick as i64,
+                        local_state: LocalState::Dirty.as_str().into(),
+                    })
+                    .unwrap();
             }
             3 | 4 => {
                 // sync pass on a live device
@@ -192,10 +239,16 @@ impl World {
             && self.acked_appends > 0;
 
         // (b) convergence: both devices' live views match the folded snapshot view
-        let view = cairn_server::fold::materialize(&self.state.db, "t1", "p1", 0).await.unwrap();
+        let view = cairn_server::fold::materialize(&self.state.db, "t1", "p1", 0)
+            .await
+            .unwrap();
         let mut converged = !view.is_empty();
         for (path, ps) in &view {
-            if let cairn_server::fold::PathState::Present { manifest_hash, size } = ps {
+            if let cairn_server::fold::PathState::Present {
+                manifest_hash,
+                size,
+            } = ps
+            {
                 for d in &self.devices {
                     if let Some(engine) = &d.engine {
                         match engine.store.get_file("p1", path) {
@@ -234,16 +287,21 @@ impl World {
         let mut shadow_clean = true;
         for (path, ps) in &view {
             if let cairn_server::fold::PathState::Present { manifest_hash, .. } = ps {
-                if let Some(bytes) = self
+                if let Ok(bytes) = self
                     .state
                     .store
-                    .get(&cairn_server::storage::LocalFsStore::object_key("t1", manifest_hash))
+                    .get(&cairn_server::storage::LocalFsStore::object_key(
+                        "t1",
+                        manifest_hash,
+                    ))
                     .await
-                    .ok()
                 {
                     if let Ok(m) = cairn_core::manifest::Manifest::parse(&bytes) {
                         for e in m.flatten() {
-                            let key = cairn_server::storage::LocalFsStore::chunk_key("t1", &e.chunk_hash.hex());
+                            let key = cairn_server::storage::LocalFsStore::chunk_key(
+                                "t1",
+                                &e.chunk_hash.hex(),
+                            );
                             if self.state.store.head(&key).await.is_err() {
                                 tracing::error!(%path, chunk = %e.chunk_hash, "GC shadow violation");
                                 shadow_clean = false;
@@ -282,7 +340,10 @@ async fn sqlx_insert(state: &cairn_server::ServerState, sql: &str) {
 }
 
 async fn sqlx_count(state: &cairn_server::ServerState, sql: &str) -> i64 {
-    sqlx::query_scalar(sql).fetch_one(&state.db).await.unwrap_or(0)
+    sqlx::query_scalar(sql)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(0)
 }
 
 async fn sqlx_all(state: &cairn_server::ServerState, sql: &str) -> Vec<(String, usize)> {
@@ -291,7 +352,12 @@ async fn sqlx_all(state: &cairn_server::ServerState, sql: &str) -> Vec<(String, 
         .await
         .unwrap_or_default()
         .into_iter()
-        .map(|r| (r.try_get::<String, _>(0).unwrap_or_default(), r.try_get::<i64, _>(1).unwrap_or(0).max(0) as usize))
+        .map(|r| {
+            (
+                r.try_get::<String, _>(0).unwrap_or_default(),
+                r.try_get::<i64, _>(1).unwrap_or(0).max(0) as usize,
+            )
+        })
         .collect()
 }
 

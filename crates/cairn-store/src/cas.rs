@@ -21,13 +21,13 @@ pub struct Cas {
 
 impl Cas {
     /// Open CAS rooted at `root` (typically `<store_root>/blobs` dir + shared db).
-    pub fn open(
-        root: &Path,
-        db: Arc<std::sync::Mutex<Connection>>,
-    ) -> Result<Self, CairnError> {
+    pub fn open(root: &Path, db: Arc<std::sync::Mutex<Connection>>) -> Result<Self, CairnError> {
         std::fs::create_dir_all(root.join("data"))
             .map_err(|e| CairnError::new(ErrorKind::Io, format!("cas mkdir: {e}")))?;
-        Ok(Cas { root: root.to_path_buf(), db })
+        Ok(Cas {
+            root: root.to_path_buf(),
+            db,
+        })
     }
 
     fn path_for(&self, h: &Hash) -> PathBuf {
@@ -76,8 +76,9 @@ impl Cas {
     /// Read a chunk (updates atime).
     pub fn get(&self, h: &Hash) -> Result<Vec<u8>, CairnError> {
         let path = self.path_for(h);
-        let bytes = std::fs::read(&path)
-            .map_err(|_| CairnError::new(ErrorKind::NotFound, format!("chunk {h} not in local CAS")))?;
+        let bytes = std::fs::read(&path).map_err(|_| {
+            CairnError::new(ErrorKind::NotFound, format!("chunk {h} not in local CAS"))
+        })?;
         // I2: verify on ingest, "free at 10+GB/s" (SPEC §9.2)
         let actual = Hash::of(&bytes);
         if actual != *h {
@@ -110,8 +111,11 @@ impl Cas {
     /// Unpin a chunk.
     pub fn unpin(&self, h: &Hash) -> Result<(), CairnError> {
         let db = self.db.lock().expect("cas db poisoned");
-        db.execute("UPDATE blobs SET pinned=0 WHERE hash=?1", rusqlite::params![h.hex()])
-            .map_err(|e| CairnError::new(ErrorKind::Io, format!("unpin: {e}")))?;
+        db.execute(
+            "UPDATE blobs SET pinned=0 WHERE hash=?1",
+            rusqlite::params![h.hex()],
+        )
+        .map_err(|e| CairnError::new(ErrorKind::Io, format!("unpin: {e}")))?;
         Ok(())
     }
 
@@ -120,9 +124,7 @@ impl Cas {
     pub fn evict_to(&self, target_bytes: u64) -> Result<Vec<String>, CairnError> {
         let db = self.db.lock().expect("cas db poisoned");
         let mut stmt = db
-            .prepare(
-                "SELECT hash, size, pinned FROM blobs WHERE pinned=0 ORDER BY atime ASC",
-            )
+            .prepare("SELECT hash, size, pinned FROM blobs WHERE pinned=0 ORDER BY atime ASC")
             .map_err(|e| CairnError::new(ErrorKind::Io, format!("evict q: {e}")))?;
         let rows: Vec<(String, i64)> = stmt
             .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
@@ -130,8 +132,10 @@ impl Cas {
             .filter_map(|r| r.ok())
             .collect();
         drop(stmt);
-        let mut live: u64 = db
-            .query_row("SELECT COALESCE(SUM(size),0) FROM blobs", [], |r| r.get::<_, i64>(0))
+        let mut live: u64 =
+            db.query_row("SELECT COALESCE(SUM(size),0) FROM blobs", [], |r| {
+                r.get::<_, i64>(0)
+            })
             .map_err(|e| CairnError::new(ErrorKind::Io, format!("sum: {e}")))? as u64;
         let mut evicted = Vec::new();
         for (hash, size) in rows {
@@ -207,11 +211,7 @@ mod tests {
             "CREATE TABLE IF NOT EXISTS blobs(hash TEXT PRIMARY KEY, size INTEGER, atime INTEGER, pinned INTEGER DEFAULT 0);",
         )
         .unwrap();
-        let cas = Cas::open(
-            dir.path(),
-            Arc::new(std::sync::Mutex::new(conn)),
-        )
-        .unwrap();
+        let cas = Cas::open(dir.path(), Arc::new(std::sync::Mutex::new(conn))).unwrap();
         (dir, cas)
     }
 
@@ -247,7 +247,10 @@ mod tests {
         cas.pin(&hb).unwrap();
         let evicted = cas.evict_to(0).unwrap();
         assert!(evicted.contains(&ha.hex()));
-        assert!(!evicted.contains(&hb.hex()), "pinned chunk is never evicted");
+        assert!(
+            !evicted.contains(&hb.hex()),
+            "pinned chunk is never evicted"
+        );
         assert!(cas.contains(&hb));
         assert!(!cas.contains(&ha));
     }

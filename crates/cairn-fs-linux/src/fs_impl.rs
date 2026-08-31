@@ -1,9 +1,8 @@
 //! FUSE filesystem implementation (see crate docs).
+#![cfg_attr(not(feature = "fuse"), allow(dead_code))]
 
 use std::collections::HashMap;
-use std::ffi::OsStr;
-use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use std::time::Duration;
 
 use cairn_core::hash::Hash;
@@ -45,7 +44,11 @@ impl InodeTable {
 
 #[cfg(feature = "fuse")]
 fn attr(ino: u64, size: u64, is_dir: bool, mtime: i64) -> FileAttr {
-    let kind = if is_dir { fuser::FileType::Directory } else { fuser::FileType::RegularFile };
+    let kind = if is_dir {
+        fuser::FileType::Directory
+    } else {
+        fuser::FileType::RegularFile
+    };
     FileAttr {
         ino,
         size,
@@ -97,7 +100,9 @@ impl CairnFs {
         let Some(manifest_hex) = f.manifest_hash else {
             return Ok((Vec::new(), Duration::ZERO));
         };
-        self.headers.serve_measured(&manifest_hex).map(|(h, dt)| (h.head, dt))
+        self.headers
+            .serve_measured(&manifest_hex)
+            .map(|(h, dt)| (h.head, dt))
     }
 
     /// Mount at `mountpoint` (blocking; requires /dev/fuse + the `fuse` feature, which needs
@@ -108,7 +113,12 @@ impl CairnFs {
             .map_err(|e| CairnError::new(ErrorKind::Io, format!("fuse mount: {e}")))
     }
 
-    fn read_range(&self, manifest_hex: &str, offset: u64, size: usize) -> Result<Vec<u8>, CairnError> {
+    fn read_range(
+        &self,
+        manifest_hex: &str,
+        offset: u64,
+        size: usize,
+    ) -> Result<Vec<u8>, CairnError> {
         // header cache fast path (I1): head/tail served from local SQLite
         if let Ok(cached) = self.headers.serve(manifest_hex) {
             if offset + size as u64 <= cached.head.len() as u64 {
@@ -183,7 +193,10 @@ impl Filesystem for CairnFs {
     ) {
         let prefix = self.path_of(ino).unwrap_or_default();
         let mut inodes = self.inodes.lock().expect("inode table");
-        let mut entries: Vec<(u64, String)> = vec![(fuser::FUSE_ROOT_ID, ".".into()), (fuser::FUSE_ROOT_ID, "..".into())];
+        let mut entries: Vec<(u64, String)> = vec![
+            (fuser::FUSE_ROOT_ID, ".".into()),
+            (fuser::FUSE_ROOT_ID, "..".into()),
+        ];
         for f in self.store.list_files(&self.project_id) {
             let is_child = if prefix.is_empty() {
                 !f.path.contains('/')
@@ -259,13 +272,19 @@ mod tests {
         // chunk + CAS the content, build a manifest, cache the header
         let sh = StreamHash::compute(content);
         for (s, h) in sh.spans.iter().zip(sh.chunk_hashes.iter()) {
-            let off = s.offset as usize; let end = off + s.len as usize; cas.put(h, &content[off..end]).unwrap();
+            let off = s.offset as usize;
+            let end = off + s.len as usize;
+            cas.put(h, &content[off..end]).unwrap();
         }
         let entries: Vec<ManifestEntry> = sh
             .spans
             .iter()
             .zip(sh.chunk_hashes.iter())
-            .map(|(s, h)| ManifestEntry { offset: s.offset, len: s.len, chunk_hash: *h })
+            .map(|(s, h)| ManifestEntry {
+                offset: s.offset,
+                len: s.len,
+                chunk_hash: *h,
+            })
             .collect();
         let m = Manifest::build(entries, Compression::None, None);
         let (mh, mb) = m.serialize();
@@ -304,21 +323,28 @@ mod tests {
             let (head, dt) = fs.serve_header("A001.mov").unwrap();
             assert_eq!(head.len(), cairn_core::HEADER_HEAD_BYTES);
             assert_eq!(head, &content[..cairn_core::HEADER_HEAD_BYTES]);
-            assert!(dt.as_secs_f64() * 1000.0 < cairn_core::I1_TARGET_CACHED_MS, "I1 violated: {dt:?}");
+            assert!(
+                dt.as_secs_f64() * 1000.0 < cairn_core::I1_TARGET_CACHED_MS,
+                "I1 violated: {dt:?}"
+            );
         }
     }
 
     /// Hydration reads are byte-identical with per-chunk verification (I2).
     #[test]
     fn hydration_reads_verified() {
-        let content: Vec<u8> = (0..9 * 1024 * 1024).map(|i| ((i * 7) % 253) as u8).collect();
+        let content: Vec<u8> = (0..9 * 1024 * 1024)
+            .map(|i| ((i * 7) % 253) as u8)
+            .collect();
         let (_d, fs, mh) = setup_with_file(&content);
         let read = fs.read_range(&mh, 0, 5 * 1024 * 1024).unwrap();
         assert_eq!(&read[..], &content[..5 * 1024 * 1024]);
         let tail = fs.read_range(&mh, 8 * 1024 * 1024, 1024).unwrap();
         assert_eq!(tail, content[8 * 1024 * 1024..8 * 1024 * 1024 + 1024]);
         // out-of-range read is empty
-        let past = fs.read_range(&mh, u64::from(content.len() as u32), 16).unwrap();
+        let past = fs
+            .read_range(&mh, u64::from(content.len() as u32), 16)
+            .unwrap();
         assert!(past.is_empty());
     }
 

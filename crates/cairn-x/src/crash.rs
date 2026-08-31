@@ -27,7 +27,13 @@ fn ack(step: usize, detail: &str) {
 }
 
 /// Perform step `n` durably, then ack. `crash_at`: exit abruptly after that ack.
-fn perform(store: &Store, cas: &Cas, outbox: &Outbox, headers: &HeaderCache, n: usize) -> Result<(), CairnError> {
+fn perform(
+    store: &Store,
+    cas: &Cas,
+    outbox: &Outbox,
+    headers: &HeaderCache,
+    n: usize,
+) -> Result<(), CairnError> {
     match n {
         1 => {
             store.put_file(&FileRow {
@@ -71,7 +77,12 @@ fn perform(store: &Store, cas: &Cas, outbox: &Outbox, headers: &HeaderCache, n: 
             store.set_cursor("dev-crash", "p1", 42)?;
             ack(6, "state + cursor advanced");
         }
-        _ => return Err(CairnError::new(cairn_core::ErrorKind::Internal, "unknown step")),
+        _ => {
+            return Err(CairnError::new(
+                cairn_core::ErrorKind::Internal,
+                "unknown step",
+            ))
+        }
     }
     Ok(())
 }
@@ -96,37 +107,48 @@ fn verify(root: &std::path::Path, acked: usize) -> Result<(), String> {
             .get_file("p1", "scene.prproj")
             .ok_or("LOST: acknowledged file row (step 1)")?;
         if f.local_state != "dirty" && f.local_state != "outbox_pending" {
-            return Err(format!("inconsistent file state after recovery: {}", f.local_state));
+            return Err(format!(
+                "inconsistent file state after recovery: {}",
+                f.local_state
+            ));
         }
     }
     if acked >= 2 {
         let chunk = b"chunk-payload-A".repeat(4096);
-        let got = cas.get(&Hash::of(&chunk)).map_err(|e| format!("LOST: acknowledged chunk A: {e}"))?;
+        let got = cas
+            .get(&Hash::of(&chunk))
+            .map_err(|e| format!("LOST: acknowledged chunk A: {e}"))?;
         if got != chunk {
             return Err("CORRUPT: chunk A bytes differ (I2 violation)".into());
         }
     }
     if acked >= 3 {
         let chunk = b"chunk-payload-B".repeat(4096);
-        cas.get(&Hash::of(&chunk)).map_err(|e| format!("LOST: acknowledged chunk B: {e}"))?;
+        cas.get(&Hash::of(&chunk))
+            .map_err(|e| format!("LOST: acknowledged chunk B: {e}"))?;
     }
     if acked >= 4 {
-        headers.serve("ptr-p1-scene").map_err(|e| format!("LOST: acknowledged header: {e}"))?;
+        headers
+            .serve("ptr-p1-scene")
+            .map_err(|e| format!("LOST: acknowledged header: {e}"))?;
     }
-    if acked >= 5 {
-        if outbox.pending_count("p1") == 0 {
-            return Err("LOST: acknowledged outbox entry (the journal append would be lost)".into());
+    if acked >= 5
+        && outbox.pending_count("p1") == 0 {
+            return Err(
+                "LOST: acknowledged outbox entry (the journal append would be lost)".into(),
+            );
         }
-    }
-    if acked >= 6 {
-        if store.get_cursor("dev-crash", "p1") != 42 {
+    if acked >= 6
+        && store.get_cursor("dev-crash", "p1") != 42 {
             return Err("LOST: acknowledged cursor".into());
         }
-    }
     // CAS integrity must hold on the whole sample
     let (_n, bad) = cas.verify_sample(1000).map_err(|e| e.to_string())?;
     if !bad.is_empty() {
-        return Err(format!("CORRUPT: {} CAS entries failed verification", bad.len()));
+        return Err(format!(
+            "CORRUPT: {} CAS entries failed verification",
+            bad.len()
+        ));
     }
     Ok(())
 }
@@ -139,13 +161,22 @@ pub fn run_matrix(steps: usize) -> anyhow::Result<()> {
         let dir = tempfile::tempdir()?;
         // run a fresh worker that crashes right after ack k (real SIGKILL of a subprocess)
         let status = Command::new(&exe)
-            .args(["crash-worker", "--db-dir", dir.path().to_string_lossy().as_ref(), "--crash-at", &k.to_string()])
+            .args([
+                "crash-worker",
+                "--db-dir",
+                dir.path().to_string_lossy().as_ref(),
+                "--crash-at",
+                &k.to_string(),
+            ])
             .status()?;
         let acked = k; // worker acks 1..=k then dies abruptly
         if let Err(e) = verify(dir.path(), acked) {
             failures.push(format!("step {k}: {e}"));
         } else {
-            tracing::info!("step {k}: crash+recovery verified (exit {})", status.code().unwrap_or(-1));
+            tracing::info!(
+                "step {k}: crash+recovery verified (exit {})",
+                status.code().unwrap_or(-1)
+            );
         }
     }
     if failures.is_empty() {

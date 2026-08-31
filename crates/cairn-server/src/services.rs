@@ -3,8 +3,8 @@
 
 use std::sync::Arc;
 
-use tonic::{Request, Response, Status};
 use tokio_stream::wrappers::ReceiverStream;
+use tonic::{Request, Response, Status};
 
 use cairn_core::CairnError;
 use cairn_proto::pb::journal_op::Op as OpKind;
@@ -35,9 +35,16 @@ pub struct JournalSvc {
 
 #[tonic::async_trait]
 impl Journal for JournalSvc {
-    async fn append(&self, request: Request<AppendRequest>) -> Result<Response<AppendResponse>, Status> {
+    async fn append(
+        &self,
+        request: Request<AppendRequest>,
+    ) -> Result<Response<AppendResponse>, Status> {
         // authenticate BEFORE consuming the request (metadata needed first)
-        let identity = self.state.authenticate_metadata(&request).await.map_err(internal)?;
+        let identity = self
+            .state
+            .authenticate_metadata(&request)
+            .await
+            .map_err(internal)?;
         let req = request.into_inner();
         let Some(op) = req.op else {
             return Err(Status::invalid_argument("missing op"));
@@ -59,13 +66,23 @@ impl Journal for JournalSvc {
         )
         .await
         .map_err(internal)?;
-        Ok(Response::new(AppendResponse { seq, deduplicated: dedup }))
+        Ok(Response::new(AppendResponse {
+            seq,
+            deduplicated: dedup,
+        }))
     }
 
     type WatchStream = ReceiverStream<Result<JournalBatch, Status>>;
 
-    async fn watch(&self, request: Request<WatchRequest>) -> Result<Response<Self::WatchStream>, Status> {
-        let identity = self.state.authenticate_metadata(&request).await.map_err(internal)?;
+    async fn watch(
+        &self,
+        request: Request<WatchRequest>,
+    ) -> Result<Response<Self::WatchStream>, Status> {
+        let identity = self
+            .state
+            .authenticate_metadata(&request)
+            .await
+            .map_err(internal)?;
         let req = request.into_inner();
         if identity.tenant_id != req.tenant_id {
             self.state.audit_denial(&identity, "journal.watch").await;
@@ -102,16 +119,29 @@ impl Journal for JournalSvc {
         Ok(Response::new(ReceiverStream::new(rx)))
     }
 
-    async fn update_cursor(&self, request: Request<CursorUpdate>) -> Result<Response<cairn_proto::pb::Ack>, Status> {
-        let identity = self.state.authenticate_metadata(&request).await.map_err(internal)?;
+    async fn update_cursor(
+        &self,
+        request: Request<CursorUpdate>,
+    ) -> Result<Response<cairn_proto::pb::Ack>, Status> {
+        let identity = self
+            .state
+            .authenticate_metadata(&request)
+            .await
+            .map_err(internal)?;
         let req = request.into_inner();
         if identity.device_id != req.device_id || identity.tenant_id != req.tenant_id {
             self.state.audit_denial(&identity, "journal.cursor").await;
             return Err(Status::permission_denied("device/tenant mismatch"));
         }
-        crate::journal::update_cursor(&self.state.db, &req.tenant_id, &req.device_id, &req.project_id, req.last_seq)
-            .await
-            .map_err(internal)?;
+        crate::journal::update_cursor(
+            &self.state.db,
+            &req.tenant_id,
+            &req.device_id,
+            &req.project_id,
+            req.last_seq,
+        )
+        .await
+        .map_err(internal)?;
         Ok(Response::new(cairn_proto::pb::Ack { ok: true }))
     }
 }
@@ -124,11 +154,20 @@ pub struct UploadSvc {
 
 #[tonic::async_trait]
 impl Upload for UploadSvc {
-    async fn batch_exists(&self, request: Request<BatchExistsRequest>) -> Result<Response<BatchExistsResponse>, Status> {
-        let identity = self.state.authenticate_metadata(&request).await.map_err(internal)?;
+    async fn batch_exists(
+        &self,
+        request: Request<BatchExistsRequest>,
+    ) -> Result<Response<BatchExistsResponse>, Status> {
+        let identity = self
+            .state
+            .authenticate_metadata(&request)
+            .await
+            .map_err(internal)?;
         let req = request.into_inner();
         if identity.tenant_id != req.tenant_id {
-            self.state.audit_denial(&identity, "upload.batch_exists").await;
+            self.state
+                .audit_denial(&identity, "upload.batch_exists")
+                .await;
             return Err(Status::permission_denied("tenant mismatch"));
         }
         if req.chunk_hashes.len() > BATCH_EXISTS_CAP {
@@ -138,8 +177,9 @@ impl Upload for UploadSvc {
                 format!("batch {} > cap {BATCH_EXISTS_CAP}", req.chunk_hashes.len()),
             ));
         }
-        let missing =
-            crate::upload::batch_exists(&self.state, &req.tenant_id, &req.chunk_hashes).await.map_err(internal)?;
+        let missing = crate::upload::batch_exists(&self.state, &req.tenant_id, &req.chunk_hashes)
+            .await
+            .map_err(internal)?;
         Ok(Response::new(BatchExistsResponse { missing }))
     }
 
@@ -147,15 +187,22 @@ impl Upload for UploadSvc {
         &self,
         request: Request<CreateUploadSessionRequest>,
     ) -> Result<Response<CreateUploadSessionResponse>, Status> {
-        let identity = self.state.authenticate_metadata(&request).await.map_err(internal)?;
-        let req = request.into_inner();
-        if identity.tenant_id != req.tenant_id {
-            self.state.audit_denial(&identity, "upload.create_session").await;
-            return Err(Status::permission_denied("tenant mismatch"));
-        }
-        let session = crate::upload::create_session(&self.state, &identity, &req.project_id, &req.missing)
+        let identity = self
+            .state
+            .authenticate_metadata(&request)
             .await
             .map_err(internal)?;
+        let req = request.into_inner();
+        if identity.tenant_id != req.tenant_id {
+            self.state
+                .audit_denial(&identity, "upload.create_session")
+                .await;
+            return Err(Status::permission_denied("tenant mismatch"));
+        }
+        let session =
+            crate::upload::create_session(&self.state, &identity, &req.project_id, &req.missing)
+                .await
+                .map_err(internal)?;
         Ok(Response::new(session))
     }
 
@@ -163,7 +210,11 @@ impl Upload for UploadSvc {
         &self,
         request: Request<CompleteUploadRequest>,
     ) -> Result<Response<CompleteUploadResponse>, Status> {
-        let identity = self.state.authenticate_metadata(&request).await.map_err(internal)?;
+        let identity = self
+            .state
+            .authenticate_metadata(&request)
+            .await
+            .map_err(internal)?;
         let req = request.into_inner();
         if identity.tenant_id != req.tenant_id {
             self.state.audit_denial(&identity, "upload.complete").await;
@@ -188,18 +239,31 @@ impl cairn_proto::pb::download_server::Download for DownloadSvc {
         &self,
         request: Request<GetDownloadUrlRequest>,
     ) -> Result<Response<GetDownloadUrlResponse>, Status> {
-        let identity = self.state.authenticate_metadata(&request).await.map_err(internal)?;
+        let identity = self
+            .state
+            .authenticate_metadata(&request)
+            .await
+            .map_err(internal)?;
         let req = request.into_inner();
         if identity.tenant_id != req.tenant_id {
             return Err(Status::permission_denied("tenant mismatch"));
         }
         let (url, expires_at) =
-            crate::upload::download_url(&self.state, &req.tenant_id, &req.manifest_hash).await.map_err(internal)?;
+            crate::upload::download_url(&self.state, &req.tenant_id, &req.manifest_hash)
+                .await
+                .map_err(internal)?;
         Ok(Response::new(GetDownloadUrlResponse { url, expires_at }))
     }
 
-    async fn get_manifest(&self, request: Request<GetManifestRequest>) -> Result<Response<ManifestObject>, Status> {
-        let identity = self.state.authenticate_metadata(&request).await.map_err(internal)?;
+    async fn get_manifest(
+        &self,
+        request: Request<GetManifestRequest>,
+    ) -> Result<Response<ManifestObject>, Status> {
+        let identity = self
+            .state
+            .authenticate_metadata(&request)
+            .await
+            .map_err(internal)?;
         let req = request.into_inner();
         if identity.tenant_id != req.tenant_id {
             return Err(Status::permission_denied("tenant mismatch"));
@@ -233,7 +297,11 @@ impl cairn_proto::pb::lease_server::Lease for LeaseSvc {
         &self,
         request: Request<cairn_proto::pb::AcquireRequest>,
     ) -> Result<Response<cairn_proto::pb::AcquireResponse>, Status> {
-        let identity = self.state.authenticate_metadata(&request).await.map_err(internal)?;
+        let identity = self
+            .state
+            .authenticate_metadata(&request)
+            .await
+            .map_err(internal)?;
         let req = request.into_inner();
         if identity.tenant_id != req.tenant_id || identity.device_id != req.device_id {
             self.state.audit_denial(&identity, "lease.acquire").await;
@@ -241,26 +309,44 @@ impl cairn_proto::pb::lease_server::Lease for LeaseSvc {
         }
         let ttl = if req.ttl_ms == 0 { 60_000 } else { req.ttl_ms };
         let (token, expires_at) = crate::leases::acquire(
-            &self.state.db, &self.state.clock, &req.tenant_id, &req.project_id, &req.path,
-            &req.device_id, ttl,
+            &self.state.db,
+            &self.state.clock,
+            &req.tenant_id,
+            &req.project_id,
+            &req.path,
+            &req.device_id,
+            ttl,
         )
         .await
         .map_err(internal)?;
-        Ok(Response::new(cairn_proto::pb::AcquireResponse { token, expires_at }))
+        Ok(Response::new(cairn_proto::pb::AcquireResponse {
+            token,
+            expires_at,
+        }))
     }
 
     async fn renew(
         &self,
         request: Request<cairn_proto::pb::RenewRequest>,
     ) -> Result<Response<cairn_proto::pb::RenewResponse>, Status> {
-        let identity = self.state.authenticate_metadata(&request).await.map_err(internal)?;
+        let identity = self
+            .state
+            .authenticate_metadata(&request)
+            .await
+            .map_err(internal)?;
         let req = request.into_inner();
         if identity.tenant_id != req.tenant_id || identity.device_id != req.device_id {
             return Err(Status::permission_denied("device/tenant mismatch"));
         }
         let expires_at = crate::leases::renew(
-            &self.state.db, &self.state.clock, &req.tenant_id, &req.project_id, &req.path,
-            &req.device_id, req.token, req.ttl_ms,
+            &self.state.db,
+            &self.state.clock,
+            &req.tenant_id,
+            &req.project_id,
+            &req.path,
+            &req.device_id,
+            req.token,
+            req.ttl_ms,
         )
         .await
         .map_err(internal)?;
@@ -271,14 +357,25 @@ impl cairn_proto::pb::lease_server::Lease for LeaseSvc {
         &self,
         request: Request<cairn_proto::pb::ReleaseRequest>,
     ) -> Result<Response<cairn_proto::pb::Ack>, Status> {
-        let identity = self.state.authenticate_metadata(&request).await.map_err(internal)?;
+        let identity = self
+            .state
+            .authenticate_metadata(&request)
+            .await
+            .map_err(internal)?;
         let req = request.into_inner();
         if identity.tenant_id != req.tenant_id {
             return Err(Status::permission_denied("tenant mismatch"));
         }
-        crate::leases::release(&self.state.db, &req.tenant_id, &req.project_id, &req.path, &req.device_id, req.token)
-            .await
-            .map_err(internal)?;
+        crate::leases::release(
+            &self.state.db,
+            &req.tenant_id,
+            &req.project_id,
+            &req.path,
+            &req.device_id,
+            req.token,
+        )
+        .await
+        .map_err(internal)?;
         Ok(Response::new(cairn_proto::pb::Ack { ok: true }))
     }
 
@@ -286,14 +383,23 @@ impl cairn_proto::pb::lease_server::Lease for LeaseSvc {
         &self,
         request: Request<cairn_proto::pb::ListLeasesRequest>,
     ) -> Result<Response<cairn_proto::pb::ListLeasesResponse>, Status> {
-        let identity = self.state.authenticate_metadata(&request).await.map_err(internal)?;
+        let identity = self
+            .state
+            .authenticate_metadata(&request)
+            .await
+            .map_err(internal)?;
         let req = request.into_inner();
         if identity.tenant_id != req.tenant_id {
             return Err(Status::permission_denied("tenant mismatch"));
         }
-        let leases = crate::leases::list(&self.state.db, &self.state.clock, &req.tenant_id, &req.project_id)
-            .await
-            .map_err(internal)?;
+        let leases = crate::leases::list(
+            &self.state.db,
+            &self.state.clock,
+            &req.tenant_id,
+            &req.project_id,
+        )
+        .await
+        .map_err(internal)?;
         Ok(Response::new(cairn_proto::pb::ListLeasesResponse {
             leases: leases
                 .into_iter()
@@ -340,7 +446,9 @@ impl cairn_proto::pb::auth_server::Auth for AuthSvc {
             &self.state.db,
             &self.state.clock,
             &req.tenant_id,
-            authed.as_ref().map_or("bootstrap", |i| i.device_id.as_str()),
+            authed
+                .as_ref()
+                .map_or("bootstrap", |i| i.device_id.as_str()),
             "admin.enroll_code",
             &req.email,
             &req.scopes,
@@ -360,7 +468,12 @@ impl cairn_proto::pb::auth_server::Auth for AuthSvc {
         let (paseto, identity) = self
             .state
             .auth
-            .enroll(&self.state.db, &req.code, &req.device_pubkey, &req.device_name)
+            .enroll(
+                &self.state.db,
+                &req.code,
+                &req.device_pubkey,
+                &req.device_name,
+            )
             .await
             .map_err(internal)?;
         Ok(Response::new(cairn_proto::pb::EnrollResponse {
@@ -375,13 +488,21 @@ impl cairn_proto::pb::auth_server::Auth for AuthSvc {
         &self,
         request: Request<cairn_proto::pb::RevokeRequest>,
     ) -> Result<Response<cairn_proto::pb::Ack>, Status> {
-        let identity = self.state.authenticate_metadata(&request).await.map_err(internal)?;
+        let identity = self
+            .state
+            .authenticate_metadata(&request)
+            .await
+            .map_err(internal)?;
         if !identity.scopes.contains("admin") {
             self.state.audit_denial(&identity, "auth.revoke").await;
             return Err(Status::permission_denied("admin scope required"));
         }
         let req = request.into_inner();
-        self.state.auth.revoke(&self.state.db, &req.device_id).await.map_err(internal)?;
+        self.state
+            .auth
+            .revoke(&self.state.db, &req.device_id)
+            .await
+            .map_err(internal)?;
         Ok(Response::new(cairn_proto::pb::Ack { ok: true }))
     }
 }
@@ -398,7 +519,11 @@ impl cairn_proto::pb::project_server::Project for ProjectSvc {
         &self,
         request: Request<cairn_proto::pb::CreateProjectRequest>,
     ) -> Result<Response<cairn_proto::pb::ProjectInfo>, Status> {
-        let identity = self.state.authenticate_metadata(&request).await.map_err(internal)?;
+        let identity = self
+            .state
+            .authenticate_metadata(&request)
+            .await
+            .map_err(internal)?;
         let req = request.into_inner();
         if identity.tenant_id != req.tenant_id {
             self.state.audit_denial(&identity, "project.create").await;
@@ -429,7 +554,11 @@ impl cairn_proto::pb::project_server::Project for ProjectSvc {
         &self,
         request: Request<cairn_proto::pb::ListProjectsServerRequest>,
     ) -> Result<Response<cairn_proto::pb::ListProjectsServerResponse>, Status> {
-        let identity = self.state.authenticate_metadata(&request).await.map_err(internal)?;
+        let identity = self
+            .state
+            .authenticate_metadata(&request)
+            .await
+            .map_err(internal)?;
         let req = request.into_inner();
         if identity.tenant_id != req.tenant_id {
             return Err(Status::permission_denied("tenant mismatch"));
@@ -460,7 +589,11 @@ impl cairn_proto::pb::project_server::Project for ProjectSvc {
         &self,
         request: Request<cairn_proto::pb::GetProjectRequest>,
     ) -> Result<Response<cairn_proto::pb::ProjectInfo>, Status> {
-        let identity = self.state.authenticate_metadata(&request).await.map_err(internal)?;
+        let identity = self
+            .state
+            .authenticate_metadata(&request)
+            .await
+            .map_err(internal)?;
         let req = request.into_inner();
         if identity.tenant_id != req.tenant_id {
             return Err(Status::permission_denied("tenant mismatch"));
@@ -474,7 +607,9 @@ impl cairn_proto::pb::project_server::Project for ProjectSvc {
         .fetch_optional(&self.state.db)
         .await
         .map_err(|e| Status::internal(format!("project: {e}")))?;
-        let Some(r) = row else { return Err(Status::not_found("project")) };
+        let Some(r) = row else {
+            return Err(Status::not_found("project"));
+        };
         use sqlx::Row;
         Ok(Response::new(cairn_proto::pb::ProjectInfo {
             tenant_id: r.get(0),

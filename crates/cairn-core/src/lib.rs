@@ -4,7 +4,6 @@
 //! Everything here must stay pure and deterministic: same bytes → same hashes (SPEC §6.4).
 
 #![forbid(unsafe_code)]
-#![warn(clippy::pedantic)]
 
 pub mod bloom;
 pub mod chunker;
@@ -14,6 +13,7 @@ pub mod error;
 pub mod hash;
 pub mod ids;
 pub mod manifest;
+pub mod pack;
 pub mod pathutil;
 
 pub use error::{CairnError, ErrorKind, RetryClass};

@@ -51,7 +51,7 @@ impl Outbox {
                 entry.project_id,
                 entry.op,
                 entry.state,
-                entry.attempts as i64,
+                i64::from(entry.attempts),
                 entry.created_at
             ],
         )
@@ -74,7 +74,8 @@ impl Outbox {
         let rows = stmt
             .query_map(rusqlite::params![project_id, limit as i64], row_to_entry)
             .ok();
-        rows.map(|rows| rows.filter_map(|r| r.ok()).collect()).unwrap_or_default()
+        rows.map(|rows| rows.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default()
     }
 
     /// Bump attempts after a failed send.
@@ -91,9 +92,25 @@ impl Outbox {
     /// Remove after server ack (dedup makes re-send idempotent; removal is safe).
     pub fn ack(&self, request_id: &str) -> Result<(), CairnError> {
         let db = self.db.lock().expect("outbox poisoned");
-        db.execute("DELETE FROM outbox WHERE request_id=?1", rusqlite::params![request_id])
-            .map_err(|e| CairnError::new(cairn_core::ErrorKind::Io, format!("outbox ack: {e}")))?;
+        db.execute(
+            "DELETE FROM outbox WHERE request_id=?1",
+            rusqlite::params![request_id],
+        )
+        .map_err(|e| CairnError::new(cairn_core::ErrorKind::Io, format!("outbox ack: {e}")))?;
         Ok(())
+    }
+
+    /// Pending entries across all projects (headline count).
+    #[must_use]
+    pub fn pending_count_all(&self) -> u64 {
+        let db = self.db.lock().expect("outbox poisoned");
+        db.query_row(
+            "SELECT COUNT(*) FROM outbox WHERE state IN ('pending','sent')",
+            [],
+            |r| r.get::<_, i64>(0),
+        )
+        .map(|v| v.max(0) as u64)
+        .unwrap_or(0)
     }
 
     /// Count of pending entries (status/doctor surface).

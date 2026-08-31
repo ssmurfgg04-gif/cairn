@@ -45,7 +45,7 @@ impl LocalState {
 
     /// Parse from column.
     #[must_use]
-    pub fn from_str(s: &str) -> Option<Self> {
+    pub fn parse(s: &str) -> Option<Self> {
         match s {
             "clean" => Some(LocalState::Clean),
             "dirty" => Some(LocalState::Dirty),
@@ -63,7 +63,7 @@ impl LocalState {
     /// Allowed transition table (SPEC §7.3). Exhaustive match — compiler-enforced.
     #[must_use]
     pub const fn can_transition_to(self, next: LocalState) -> bool {
-        use LocalState::*;
+        use LocalState::{Clean, Dirty, Placeholder, Pinned, Hashing, UploadPending, OutboxPending, Synced, Conflict};
         match (self, next) {
             (Clean, Dirty) | (Clean, Placeholder) | (Clean, Pinned) => true,
             (Dirty, Hashing) => true,
@@ -134,7 +134,8 @@ mod tests {
     fn forbidden_transitions_rejected() {
         assert!(!LocalState::Clean.can_transition_to(LocalState::Synced)); // must go through pipeline
         assert!(!LocalState::Synced.can_transition_to(LocalState::Hashing));
-        assert!(!LocalState::UploadPending.can_transition_to(LocalState::Synced)); // no append → no sync
+        assert!(!LocalState::UploadPending.can_transition_to(LocalState::Synced));
+        // no append → no sync
     }
 
     #[test]
@@ -150,8 +151,8 @@ mod tests {
             LocalState::Pinned,
             LocalState::Conflict,
         ] {
-            assert_eq!(LocalState::from_str(s.as_str()), Some(s));
+            assert_eq!(LocalState::parse(s.as_str()), Some(s));
         }
-        assert_eq!(LocalState::from_str("bogus"), None);
+        assert_eq!(LocalState::parse("bogus"), None);
     }
 }

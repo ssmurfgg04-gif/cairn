@@ -8,6 +8,7 @@ pub mod auth;
 pub mod db;
 pub mod error_map;
 pub mod fold;
+pub mod jobs;
 pub mod journal;
 pub mod leases;
 pub mod run;
@@ -15,7 +16,6 @@ pub mod services;
 pub mod storage;
 pub mod tests_support;
 pub mod upload;
-pub mod jobs;
 
 use std::sync::Arc;
 
@@ -60,7 +60,16 @@ impl ServerState {
         match self.auth.authenticate(&self.db, &bearer).await {
             Ok(id) => Ok(id),
             Err(e) => {
-                db::audit(&self.db, &self.clock, "", "unknown", "authz.denial", "metadata", &e.message).await;
+                db::audit(
+                    &self.db,
+                    &self.clock,
+                    "",
+                    "unknown",
+                    "authz.denial",
+                    "metadata",
+                    &e.message,
+                )
+                .await;
                 Err(e)
             }
         }

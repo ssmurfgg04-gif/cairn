@@ -8,5 +8,6 @@ description = "Cairn cairn-fs-mac"
 [dependencies]
 cairn-core = { path = "../cairn-core" }
 
-[lints.rust]
-unsafe_code = "deny"
+
+[lints]
+workspace = true

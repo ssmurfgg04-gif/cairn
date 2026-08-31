@@ -20,9 +20,9 @@ pub mod metering;
 pub mod pack;
 pub mod tier;
 
+use crate::ServerState;
 use cairn_core::bloom::Bloom;
 use cairn_core::CairnError;
-use crate::ServerState;
 
 /// Rebuild the per-tenant bloom filter from the authoritative chunks table (cheap, always
 /// safe; the authoritative check backstops every positive).
@@ -65,14 +65,15 @@ pub async fn try_acquire_leader(
     .map_err(|e| CairnError::new(cairn_core::ErrorKind::Unavailable, format!("leader: {e}")))?;
     if res.rows_affected() == 0 {
         // maybe we already hold it
-        let holder_row: Option<String> = sqlx::query_scalar(
-            "SELECT holder FROM jobs_leader WHERE name=?1 AND expires_at>=?2",
-        )
-        .bind(name)
-        .bind(now)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(|e| CairnError::new(cairn_core::ErrorKind::Unavailable, format!("leader: {e}")))?;
+        let holder_row: Option<String> =
+            sqlx::query_scalar("SELECT holder FROM jobs_leader WHERE name=?1 AND expires_at>=?2")
+                .bind(name)
+                .bind(now)
+                .fetch_optional(&state.db)
+                .await
+                .map_err(|e| {
+                    CairnError::new(cairn_core::ErrorKind::Unavailable, format!("leader: {e}"))
+                })?;
         return Ok(holder_row.as_deref() == Some(holder));
     }
     Ok(true)
@@ -93,7 +94,8 @@ pub async fn bump_epoch(state: &ServerState) -> Result<i64, CairnError> {
         .fetch_one(&state.db)
         .await
         .map_err(|e| CairnError::new(cairn_core::ErrorKind::Unavailable, format!("epoch: {e}")))?;
-    v.parse::<i64>().map_err(|e| CairnError::new(cairn_core::ErrorKind::Internal, format!("{e}")))
+    v.parse::<i64>()
+        .map_err(|e| CairnError::new(cairn_core::ErrorKind::Internal, format!("{e}")))
 }
 
 #[cfg(test)]
@@ -104,8 +106,12 @@ mod tests {
     async fn leader_lease_is_single_holder_and_expiring() {
         let dir = tempfile::tempdir().unwrap();
         let state = crate::tests_support::state_at(dir.path()).await;
-        let a = try_acquire_leader(&state, "gc", "worker-a", 1_000).await.unwrap();
-        let b = try_acquire_leader(&state, "gc", "worker-b", 1_000).await.unwrap();
+        let a = try_acquire_leader(&state, "gc", "worker-a", 1_000)
+            .await
+            .unwrap();
+        let b = try_acquire_leader(&state, "gc", "worker-b", 1_000)
+            .await
+            .unwrap();
         assert!(a);
         assert!(!b, "second holder must not acquire a live lease");
     }

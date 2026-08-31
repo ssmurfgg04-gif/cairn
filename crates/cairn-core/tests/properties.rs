@@ -20,8 +20,9 @@ impl SaveSequence {
     fn initial(rng: &mut StdRng, size: usize) -> Self {
         let mut c = vec![0u8; size];
         rng.fill_bytes(&mut c);
-        let header: Vec<u8> =
-            (0..4096).map(|i| b"PROJECT_META_SENSOR_A7S3_4K24_TIMELINE"[i % 38]).collect();
+        let header: Vec<u8> = (0..4096)
+            .map(|i| b"PROJECT_META_SENSOR_A7S3_4K24_TIMELINE"[i % 38])
+            .collect();
         c[..header.len()].copy_from_slice(&header);
         SaveSequence { content: c }
     }
@@ -99,7 +100,7 @@ proptest! {
         let mut rng = StdRng::seed_from_u64(seed);
         let mut entries = Vec::new();
         let mut off = 0u64;
-        for i in 0..n_entries {
+        for _ in 0..n_entries {
             let len = 1 + rng.gen_range(0u32..64_000);
             let mut bytes = vec![0u8; 8];
             rng.fill_bytes(&mut bytes);
@@ -139,8 +140,14 @@ fn acceptance_chunk_reuse_over_70pct_on_synthetic_save_sequence() {
 
         let r12 = reuse_ratio(&v1.spans, &v1.chunk_hashes, &v2.spans, &v2.chunk_hashes);
         let r23 = reuse_ratio(&v2.spans, &v2.chunk_hashes, &v3.spans, &v3.chunk_hashes);
-        assert!(r12 > 0.70, "seed {seed}: save1→save2 reuse {r12:.3} below 70%");
-        assert!(r23 > 0.70, "seed {seed}: save2→save3 reuse {r23:.3} below 70%");
+        assert!(
+            r12 > 0.70,
+            "seed {seed}: save1→save2 reuse {r12:.3} below 70%"
+        );
+        assert!(
+            r23 > 0.70,
+            "seed {seed}: save2→save3 reuse {r23:.3} below 70%"
+        );
     }
 }
 
@@ -166,14 +173,22 @@ fn golden_corpus_harness() {
             .filter(|p| p.is_file())
             .collect();
         saves.sort();
-        assert!(saves.len() >= 2, "sequence {:?} needs at least 2 saves", dir);
+        assert!(
+            saves.len() >= 2,
+            "sequence {:?} needs at least 2 saves",
+            dir
+        );
         let mut prev: Option<StreamHash> = None;
         for save in &saves {
             let bytes = std::fs::read(save).expect("corpus file readable");
             let sh = StreamHash::compute(&bytes);
             if let Some(p) = &prev {
                 let r = reuse_ratio(&p.spans, &p.chunk_hashes, &sh.spans, &sh.chunk_hashes);
-                assert!(r > 0.70, "corpus sequence {:?}: reuse {r:.3} below gate", dir);
+                assert!(
+                    r > 0.70,
+                    "corpus sequence {:?}: reuse {r:.3} below gate",
+                    dir
+                );
             }
             prev = Some(sh);
         }
@@ -185,13 +200,19 @@ fn golden_corpus_harness() {
 /// Chunk-level round-trip through manifest + verified assembly (I2 gate).
 #[test]
 fn assemble_with_verification_roundtrip() {
-    let buf: Vec<u8> = (0..9 * 1024 * 1024).map(|i| ((i * 3 + 11) % 256) as u8).collect();
+    let buf: Vec<u8> = (0..9 * 1024 * 1024)
+        .map(|i| ((i * 3 + 11) % 256) as u8)
+        .collect();
     let sh = StreamHash::compute(&buf);
     let entries: Vec<ManifestEntry> = sh
         .spans
         .iter()
         .zip(sh.chunk_hashes.iter())
-        .map(|(s, h)| ManifestEntry { offset: s.offset, len: s.len, chunk_hash: *h })
+        .map(|(s, h)| ManifestEntry {
+            offset: s.offset,
+            len: s.len,
+            chunk_hash: *h,
+        })
         .collect();
     let m = Manifest::build(entries, Compression::None, None);
     let mut resolve = |_: &Hash| -> Option<Manifest> { None };

@@ -97,7 +97,11 @@ impl Manifest {
     ) -> Self {
         entries.sort();
         if entries.len() <= MANIFEST_MAX_ENTRIES {
-            return Manifest::Leaf { entries, compression, dict_hash };
+            return Manifest::Leaf {
+                entries,
+                compression,
+                dict_hash,
+            };
         }
         let mut children = Vec::new();
         for group in entries.chunks(MANIFEST_MAX_ENTRIES) {
@@ -114,7 +118,11 @@ impl Manifest {
                 entry_count: group.len() as u32,
             });
         }
-        Manifest::Node { children, compression, dict_hash }
+        Manifest::Node {
+            children,
+            compression,
+            dict_hash,
+        }
     }
 
     /// Flatten to entries in file order (stream reassembly order).
@@ -122,11 +130,14 @@ impl Manifest {
     pub fn flatten(&self) -> Vec<ManifestEntry> {
         match self {
             Manifest::Leaf { entries, .. } => entries.clone(),
-            Manifest::Node { children, .. } => children.iter().map(|_| ManifestEntry {
-                offset: 0,
-                len: 0,
-                chunk_hash: Hash::from_bytes([0u8; 32]),
-            }).collect(), // replaced below; see `flatten_with`
+            Manifest::Node { children, .. } => children
+                .iter()
+                .map(|_| ManifestEntry {
+                    offset: 0,
+                    len: 0,
+                    chunk_hash: Hash::from_bytes([0u8; 32]),
+                })
+                .collect(), // replaced below; see `flatten_with`
         }
     }
 
@@ -175,7 +186,11 @@ impl Manifest {
     pub fn serialize(&self) -> (Hash, Vec<u8>) {
         let mut buf = Vec::new();
         match self {
-            Manifest::Leaf { entries, compression, dict_hash } => {
+            Manifest::Leaf {
+                entries,
+                compression,
+                dict_hash,
+            } => {
                 buf.extend_from_slice(b"CMAN");
                 buf.push(MANIFEST_FORMAT_VERSION);
                 buf.push(compression.tag());
@@ -190,7 +205,11 @@ impl Manifest {
                     buf.extend_from_slice(&e.chunk_hash.0);
                 }
             }
-            Manifest::Node { children, compression, dict_hash } => {
+            Manifest::Node {
+                children,
+                compression,
+                dict_hash,
+            } => {
                 buf.extend_from_slice(b"CMND");
                 buf.push(MANIFEST_FORMAT_VERSION);
                 buf.push(compression.tag());
@@ -251,12 +270,20 @@ impl Manifest {
                 let offset = u64::from_le_bytes(b[0..8].try_into().map_err(|_| err())?);
                 let len = u32::from_le_bytes(b[8..12].try_into().map_err(|_| err())?);
                 let chunk_hash = Hash::from_slice(&b[12..44]).ok_or_else(err)?;
-                entries.push(ManifestEntry { offset, len, chunk_hash });
+                entries.push(ManifestEntry {
+                    offset,
+                    len,
+                    chunk_hash,
+                });
             }
             if entries.windows(2).any(|w| w[0].offset >= w[1].offset) {
                 return Err(err()); // entries MUST be sorted by offset
             }
-            Ok(Manifest::Leaf { entries, compression, dict_hash })
+            Ok(Manifest::Leaf {
+                entries,
+                compression,
+                dict_hash,
+            })
         } else {
             let stride = 44usize; // 32 + 8 + 4
             if bytes.len() < pos + count * stride {
@@ -267,11 +294,18 @@ impl Manifest {
                 let b = &bytes[pos + i * stride..pos + (i + 1) * stride];
                 let hash = Hash::from_slice(&b[0..32]).ok_or_else(err)?;
                 let total_len = u64::from_le_bytes(b[32..40].try_into().map_err(|_| err())?);
-                let entry_count =
-                    u32::from_le_bytes(b[40..44].try_into().map_err(|_| err())?);
-                children.push(ChildRef { hash, total_len, entry_count });
+                let entry_count = u32::from_le_bytes(b[40..44].try_into().map_err(|_| err())?);
+                children.push(ChildRef {
+                    hash,
+                    total_len,
+                    entry_count,
+                });
             }
-            Ok(Manifest::Node { children, compression, dict_hash })
+            Ok(Manifest::Node {
+                children,
+                compression,
+                dict_hash,
+            })
         }
     }
 }
@@ -348,7 +382,11 @@ mod tests {
         let mut off = 0u64;
         for i in 0..20_000u64 {
             let len = 64u32;
-            entries.push(ManifestEntry { offset: off, len, chunk_hash: Hash::of(&i.to_le_bytes()) });
+            entries.push(ManifestEntry {
+                offset: off,
+                len,
+                chunk_hash: Hash::of(&i.to_le_bytes()),
+            });
             off += u64::from(len);
         }
         let m = Manifest::build(entries, Compression::Zstd3, None);
@@ -358,7 +396,7 @@ mod tests {
                 assert_eq!(m.entry_count(), 20_000);
                 assert_eq!(m.total_len(), 20_000 * 64);
             }
-            _ => panic!("expected fanout node"),
+            Manifest::Leaf { .. } => panic!("expected fanout node"),
         }
         let (h, bytes) = m.serialize();
         let parsed = Manifest::parse(&bytes).unwrap();
@@ -368,12 +406,17 @@ mod tests {
 
     #[test]
     fn assemble_verifies_every_chunk_i2() {
-        let buf: Vec<u8> = (0..6 * 1024 * 1024).map(|i| ((i * 7) % 255) as u8).collect();
+        let buf: Vec<u8> = (0..6 * 1024 * 1024)
+            .map(|i| ((i * 7) % 255) as u8)
+            .collect();
         let spans = crate::chunker::FastCdc::cut(&buf);
         let m = Manifest::build(entries_for(&buf, &spans), Compression::None, None);
         let mut store: HashMap<Hash, Vec<u8>> = HashMap::new();
         for e in m.flatten() {
-            store.insert(e.chunk_hash, buf[e.offset as usize..(e.offset + u64::from(e.len)) as usize].to_vec());
+            store.insert(
+                e.chunk_hash,
+                buf[e.offset as usize..(e.offset + u64::from(e.len)) as usize].to_vec(),
+            );
         }
         let mut resolve = |_h: &Hash| -> Option<Manifest> { None }; // leaf needs no resolution
         let mut get = |h: &Hash| store.get(h).cloned();

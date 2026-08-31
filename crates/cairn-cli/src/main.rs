@@ -5,7 +5,6 @@
 //! contract is frozen in docs/ctl-api.md — breaking changes are bugs.
 
 #![forbid(unsafe_code)]
-#![warn(clippy::pedantic)]
 
 mod daemon;
 mod dashboard;
@@ -14,7 +13,10 @@ mod doctor;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "cairn", about = "Cairn — content-addressed sync & storage for video teams")]
+#[command(
+    name = "cairn",
+    about = "Cairn — content-addressed sync & storage for video teams"
+)]
 pub struct Cli {
     /// Data directory (default ~/.cairn)
     #[arg(long, env = "CAIRN_HOME")]
@@ -147,7 +149,10 @@ pub mod snapshot {
             label: String,
         },
         /// List snapshots for a project
-        List { #[arg(long)] project: String },
+        List {
+            #[arg(long)]
+            project: String,
+        },
         /// Restore a snapshot to a target path
         Restore {
             #[arg(long)]
@@ -159,8 +164,6 @@ pub mod snapshot {
         },
     }
 }
-
-
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -186,7 +189,12 @@ fn default_home() -> String {
 
 async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
     match cli.cmd {
-        Cmd::Server { data_dir, grpc_addr, objects_addr, dev_insecure } => {
+        Cmd::Server {
+            data_dir,
+            grpc_addr,
+            objects_addr,
+            dev_insecure,
+        } => {
             if dev_insecure {
                 tracing::warn!("DEV-INSECURE mode: enrollment codes issued without admin auth");
             }
@@ -201,30 +209,46 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
         }
         Cmd::Daemon { ctl_addr, ui_addr } => daemon::run(home, ctl_addr, ui_addr).await,
         Cmd::Status { json } => {
-            let report = doctor::collect(&home).await;
+            let report = doctor::collect(&home);
             if json {
                 println!("{}", serde_json::to_string_pretty(&report.checks.iter()
                     .map(|c| serde_json::json!({"name": c.name, "ok": c.ok, "detail": c.detail}))
                     .collect::<Vec<_>>())?);
             } else {
                 for c in &report.checks {
-                    println!("{:3} {:<28} {}", if c.ok { "ok" } else { "!!" }, c.name, c.detail);
+                    println!(
+                        "{:3} {:<28} {}",
+                        if c.ok { "ok" } else { "!!" },
+                        c.name,
+                        c.detail
+                    );
                 }
             }
             Ok(())
         }
         Cmd::Doctor { json } => {
-            let report = doctor::collect(&home).await;
+            let report = doctor::collect(&home);
             report.print(json);
-            std::process::exit(if report.healthy() { 0 } else { 1 });
+            std::process::exit(i32::from(!report.healthy()));
         }
         // Commands that require the sync engine / server land with M2–M5.
-        Cmd::Login { server, code, name, allow_plaintext_file } => {
-            daemon::login(&home, &server, &code, &name, allow_plaintext_file).await
+        Cmd::Login {
+            server,
+            code,
+            name,
+            allow_plaintext_file,
+        } => daemon::login(&home, &server, &code, &name, allow_plaintext_file).await,
+        Cmd::Logout => {
+            daemon::logout(&home);
+            Ok(())
         }
-        Cmd::Logout => daemon::logout(&home),
-        Cmd::Sync { .. } | Cmd::Snapshot { .. } | Cmd::Pin { .. } | Cmd::Unpin { .. }
-        | Cmd::Lease { .. } | Cmd::Recall { .. } | Cmd::GcShadowReport { .. } => {
+        Cmd::Sync { .. }
+        | Cmd::Snapshot { .. }
+        | Cmd::Pin { .. }
+        | Cmd::Unpin { .. }
+        | Cmd::Lease { .. }
+        | Cmd::Recall { .. }
+        | Cmd::GcShadowReport { .. } => {
             anyhow::bail!("this command needs a running daemon: `cairn daemon` (wired through ctl gRPC; see docs/ctl-api.md)")
         }
     }

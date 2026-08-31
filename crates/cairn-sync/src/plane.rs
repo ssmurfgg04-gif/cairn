@@ -35,7 +35,11 @@ pub struct CompleteOut {
 /// Wire + storage surface the engine needs (idempotent ops per ADR-0010).
 #[async_trait]
 pub trait Plane: Send + Sync {
-    async fn batch_exists(&self, tenant: &str, hashes: &[String]) -> Result<Vec<String>, CairnError>;
+    async fn batch_exists(
+        &self,
+        tenant: &str,
+        hashes: &[String],
+    ) -> Result<Vec<String>, CairnError>;
     async fn create_session(
         &self,
         tenant: &str,
@@ -43,9 +47,23 @@ pub trait Plane: Send + Sync {
         project: &str,
         missing: &[String],
     ) -> Result<Session, CairnError>;
-    async fn complete(&self, session: &str, receipts: &[UploadReceipt]) -> Result<CompleteOut, CairnError>;
-    async fn put_presigned(&self, url: &str, bytes: &[u8], checksum_hex: &str) -> Result<(), CairnError>;
-    async fn put_manifest(&self, tenant: &str, manifest_hash: &str, bytes: &[u8]) -> Result<(), CairnError>;
+    async fn complete(
+        &self,
+        session: &str,
+        receipts: &[UploadReceipt],
+    ) -> Result<CompleteOut, CairnError>;
+    async fn put_presigned(
+        &self,
+        url: &str,
+        bytes: &[u8],
+        checksum_hex: &str,
+    ) -> Result<(), CairnError>;
+    async fn put_manifest(
+        &self,
+        tenant: &str,
+        manifest_hash: &str,
+        bytes: &[u8],
+    ) -> Result<(), CairnError>;
     async fn get_manifest(&self, tenant: &str, manifest_hash: &str) -> Result<Vec<u8>, CairnError>;
     async fn append(
         &self,
@@ -56,7 +74,13 @@ pub trait Plane: Send + Sync {
         op: JournalOp,
         lease_token: u64,
     ) -> Result<(u64, bool), CairnError>;
-    async fn fetch_batch(&self, tenant: &str, project: &str, after: u64, limit: u32) -> Result<Vec<Entry>, CairnError>;
+    async fn fetch_batch(
+        &self,
+        tenant: &str,
+        project: &str,
+        after: u64,
+        limit: u32,
+    ) -> Result<Vec<Entry>, CairnError>;
 }
 
 /// Build a FileUpsert op.

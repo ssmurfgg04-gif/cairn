@@ -14,7 +14,11 @@ impl Aimd {
     /// New gate (defaults per SPEC: start 8, range 4..=64).
     #[must_use]
     pub fn new(start: usize, min: usize, max: usize) -> Self {
-        Aimd { limit: AtomicUsize::new(start.clamp(min, max)), min, max }
+        Aimd {
+            limit: AtomicUsize::new(start.clamp(min, max)),
+            min,
+            max,
+        }
     }
 
     /// Current limit (observable for the AIMD distribution metric).
@@ -76,7 +80,10 @@ impl Gate {
     /// New gate with SPEC defaults (start 8, min 4, max 64).
     #[must_use]
     pub fn new() -> Self {
-        Gate { aimd: Aimd::new(8, 4, 64), in_flight: AtomicUsize::new(0) }
+        Gate {
+            aimd: Aimd::new(8, 4, 64),
+            in_flight: AtomicUsize::new(0),
+        }
     }
 
     /// Try to acquire a permit; on success the caller MUST call [`Gate::finish`] (or `drop`

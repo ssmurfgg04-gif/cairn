@@ -2,7 +2,6 @@
 //! cursor replay. Written against the `Plane` trait so the deterministic sim drives real code.
 
 #![forbid(unsafe_code)]
-#![warn(clippy::pedantic)]
 
 pub mod aimd;
 pub mod apply;

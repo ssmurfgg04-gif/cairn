@@ -5,11 +5,8 @@
 use prost::Message;
 use sqlx::Row;
 use sqlx::SqlitePool;
-use std::sync::Arc;
 
-use cairn_core::clock::SystemClock;
 use cairn_core::hash::Hash;
-use cairn_core::manifest::Manifest;
 use cairn_core::{CairnError, ErrorKind};
 
 /// TREE object: "CTRE" | v1 | u32 n | (u16 name_len, name, u8 kind, hash 32)*
@@ -77,7 +74,11 @@ pub fn parse_commit(bytes: &[u8]) -> Result<(Hash, Option<Hash>, String, String,
     let tree = Hash::from_slice(&bytes[5..37]).ok_or_else(err)?;
     let parent_bytes = &bytes[37..69];
     let parent = Hash::from_slice(parent_bytes).ok_or_else(err)?;
-    let parent = if parent.0 == [0u8; 32] { None } else { Some(parent) };
+    let parent = if parent.0 == [0u8; 32] {
+        None
+    } else {
+        Some(parent)
+    };
     let mut pos = 69;
     let a_len = u16::from_le_bytes([bytes[pos], bytes[pos + 1]]) as usize;
     pos += 2;
@@ -105,7 +106,7 @@ pub async fn materialize(
     )
     .bind(tenant_id)
     .bind(project_id)
-    .bind(since_seq.max(0) as i64)
+    .bind(since_seq as i64)
     .fetch_all(pool)
     .await
     .map_err(|e| CairnError::new(ErrorKind::Unavailable, format!("journal read: {e}")))?;
@@ -117,20 +118,26 @@ pub async fn materialize(
             .map_err(|e| CairnError::new(ErrorKind::Internal, format!("op decode: {e}")))?;
         match op.op.as_ref() {
             Some(cairn_proto::pb::journal_op::Op::FileUpsert(u)) => {
-                view.insert(u.path.clone(), PathState::Present {
-                    manifest_hash: u.manifest_hash.clone(),
-                    size: u.size,
-                });
+                view.insert(
+                    u.path.clone(),
+                    PathState::Present {
+                        manifest_hash: u.manifest_hash.clone(),
+                        size: u.size,
+                    },
+                );
             }
             Some(cairn_proto::pb::journal_op::Op::FileDelete(d)) => {
                 view.insert(d.path.clone(), PathState::Tombstone);
             }
             Some(cairn_proto::pb::journal_op::Op::Rename(rr)) => {
                 view.insert(rr.old_path.clone(), PathState::Tombstone);
-                view.insert(rr.new_path.clone(), PathState::Present {
-                    manifest_hash: rr.manifest_hash.clone(),
-                    size: 0,
-                });
+                view.insert(
+                    rr.new_path.clone(),
+                    PathState::Present {
+                        manifest_hash: rr.manifest_hash.clone(),
+                        size: 0,
+                    },
+                );
             }
             Some(cairn_proto::pb::journal_op::Op::LeaseEvent(_)) => {}
             None => {}
@@ -149,14 +156,13 @@ pub async fn fold(
     author: &str,
     label: &str,
 ) -> Result<(String, u64), CairnError> {
-    let fold_seq: i64 = sqlx::query_scalar(
-        "SELECT fold_seq FROM projects WHERE tenant_id=?1 AND project_id=?2",
-    )
-    .bind(tenant_id)
-    .bind(project_id)
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| CairnError::new(ErrorKind::NotFound, format!("project: {e}")))?;
+    let fold_seq: i64 =
+        sqlx::query_scalar("SELECT fold_seq FROM projects WHERE tenant_id=?1 AND project_id=?2")
+            .bind(tenant_id)
+            .bind(project_id)
+            .fetch_one(&state.db)
+            .await
+            .map_err(|e| CairnError::new(ErrorKind::NotFound, format!("project: {e}")))?;
 
     let view = materialize(&state.db, tenant_id, project_id, fold_seq.max(0) as u64).await?;
     let live: Vec<(String, String)> = view
@@ -188,16 +194,23 @@ pub async fn fold(
     .map_err(|e| CairnError::new(ErrorKind::Unavailable, format!("seq read: {e}")))?;
     let snapshot_seq = max_seq.max(0) as u64;
 
-    let (commit_hash, commit_bytes) = build_commit(&tree_hash, parent.as_ref(), author, label, snapshot_seq);
+    let (commit_hash, commit_bytes) =
+        build_commit(&tree_hash, parent.as_ref(), author, label, snapshot_seq);
 
     // objects go to the store (tenant-scoped keys, I3)
     state
         .store
-        .put(&crate::storage::LocalFsStore::object_key(tenant_id, &tree_hash.hex()), &tree_bytes)
+        .put(
+            &crate::storage::LocalFsStore::object_key(tenant_id, &tree_hash.hex()),
+            &tree_bytes,
+        )
         .await?;
     state
         .store
-        .put(&crate::storage::LocalFsStore::object_key(tenant_id, &commit_hash.hex()), &commit_bytes)
+        .put(
+            &crate::storage::LocalFsStore::object_key(tenant_id, &commit_hash.hex()),
+            &commit_bytes,
+        )
         .await?;
 
     // CAS ref update (once per fold, expected version)
@@ -218,7 +231,7 @@ pub async fn fold(
             )
             .bind(tenant_id)
             .bind(project_id)
-            .bind(&commit_hash.hex())
+            .bind(commit_hash.hex())
             .execute(&mut *conn)
             .await
         }
@@ -230,7 +243,7 @@ pub async fn fold(
             .bind(tenant_id)
             .bind(project_id)
             .bind(v)
-            .bind(&commit_hash.hex())
+            .bind(commit_hash.hex())
             .execute(&mut *conn)
             .await
         }
@@ -238,7 +251,10 @@ pub async fn fold(
     let res = res.map_err(|e| CairnError::new(ErrorKind::Unavailable, format!("ref cas: {e}")))?;
     if res.rows_affected() == 0 {
         crate::db::rollback(&mut conn).await;
-        return Err(CairnError::new(ErrorKind::RefCas, "ref version moved during fold; retry"));
+        return Err(CairnError::new(
+            ErrorKind::RefCas,
+            "ref version moved during fold; retry",
+        ));
     }
     sqlx::query("UPDATE projects SET fold_seq=?3 WHERE tenant_id=?1 AND project_id=?2")
         .bind(tenant_id)
@@ -268,14 +284,13 @@ pub async fn compact(
     project_id: &str,
     grace_millis: i64,
 ) -> Result<u64, CairnError> {
-    let fold_seq: i64 = sqlx::query_scalar(
-        "SELECT fold_seq FROM projects WHERE tenant_id=?1 AND project_id=?2",
-    )
-    .bind(tenant_id)
-    .bind(project_id)
-    .fetch_one(&state.db)
-    .await
-    .map_err(|e| CairnError::new(ErrorKind::NotFound, format!("project: {e}")))?;
+    let fold_seq: i64 =
+        sqlx::query_scalar("SELECT fold_seq FROM projects WHERE tenant_id=?1 AND project_id=?2")
+            .bind(tenant_id)
+            .bind(project_id)
+            .fetch_one(&state.db)
+            .await
+            .map_err(|e| CairnError::new(ErrorKind::NotFound, format!("project: {e}")))?;
     let cutoff_ts = state.clock.now_millis() - grace_millis;
     let res = sqlx::query(
         "DELETE FROM journal WHERE tenant_id=?1 AND project_id=?2 AND seq<=?3 AND server_ts<?4",
@@ -293,6 +308,7 @@ pub async fn compact(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
     use crate::journal;
     use cairn_proto::pb::journal_op::Op as OpKind;
     use cairn_proto::pb::FileUpsertOp;
@@ -328,9 +344,15 @@ mod tests {
     async fn fold_materializes_and_cas_updates() {
         let (_d, state) = setup().await;
         sqlx::query("INSERT OR IGNORE INTO tenants(id, created_at) VALUES('t1',0)")
-            .execute(&state.db).await.unwrap();
-        sqlx::query("INSERT OR IGNORE INTO projects(tenant_id, project_id, created_at) VALUES('t1','p1',0)")
-            .execute(&state.db).await.unwrap();
+            .execute(&state.db)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT OR IGNORE INTO projects(tenant_id, project_id, created_at) VALUES('t1','p1',0)",
+        )
+        .execute(&state.db)
+        .await
+        .unwrap();
         let op = cairn_proto::pb::JournalOp {
             op: Some(OpKind::FileUpsert(FileUpsertOp {
                 path: "shot.mov".into(),
@@ -339,16 +361,27 @@ mod tests {
                 base_seq: 0,
             })),
         };
-        let (_, _) = journal::append(&state.db, &state.clock, "t1", "p1", "d1", "r1", op, 0).await.unwrap();
+        let (_, _) = journal::append(&state.db, &state.clock, "t1", "p1", "d1", "r1", op, 0)
+            .await
+            .unwrap();
 
-        let (commit1, seq1) = crate::fold::fold(&state, "t1", "p1", "editor", "wip").await.unwrap();
+        let (commit1, seq1) = crate::fold::fold(&state, "t1", "p1", "editor", "wip")
+            .await
+            .unwrap();
         assert_eq!(seq1, 1);
         // snapshot view: tombstone then re-fold moves the ref
         let del = cairn_proto::pb::JournalOp {
-            op: Some(OpKind::FileDelete(cairn_proto::pb::FileDeleteOp { path: "shot.mov".into(), base_seq: seq1 })),
+            op: Some(OpKind::FileDelete(cairn_proto::pb::FileDeleteOp {
+                path: "shot.mov".into(),
+                base_seq: seq1,
+            })),
         };
-        journal::append(&state.db, &state.clock, "t1", "p1", "d1", "r2", del, 0).await.unwrap();
-        let (commit2, _) = crate::fold::fold(&state, "t1", "p1", "editor", "cleanup").await.unwrap();
+        journal::append(&state.db, &state.clock, "t1", "p1", "d1", "r2", del, 0)
+            .await
+            .unwrap();
+        let (commit2, _) = crate::fold::fold(&state, "t1", "p1", "editor", "cleanup")
+            .await
+            .unwrap();
         assert_ne!(commit1, commit2);
 
         // restore: parse the commit back out of the store
@@ -360,9 +393,16 @@ mod tests {
         let (tree, parent, author, label, _) = parse_commit(&bytes).unwrap();
         assert_eq!(author, "editor");
         assert_eq!(label, "cleanup");
-        assert_eq!(parent.as_ref().map(|h| h.hex()).as_deref(), Some(commit1.as_str()));
+        assert_eq!(
+            parent.as_ref().map(|h| h.hex()).as_deref(),
+            Some(commit1.as_str())
+        );
         // tree exists and is parseable-format (magic check via fetch)
-        let tb = state.store.get(&crate::storage::LocalFsStore::object_key("t1", &tree.hex())).await.unwrap();
+        let tb = state
+            .store
+            .get(&crate::storage::LocalFsStore::object_key("t1", &tree.hex()))
+            .await
+            .unwrap();
         assert_eq!(&tb[0..4], TREE_MAGIC);
     }
 
@@ -371,15 +411,23 @@ mod tests {
     async fn ref_cas_rejects_stale_version() {
         let (_d, state) = setup().await;
         sqlx::query("INSERT OR IGNORE INTO tenants(id, created_at) VALUES('t1',0)")
-            .execute(&state.db).await.unwrap();
-        sqlx::query("INSERT OR IGNORE INTO projects(tenant_id, project_id, created_at) VALUES('t1','p1',0)")
-            .execute(&state.db).await.unwrap();
+            .execute(&state.db)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT OR IGNORE INTO projects(tenant_id, project_id, created_at) VALUES('t1','p1',0)",
+        )
+        .execute(&state.db)
+        .await
+        .unwrap();
         // simulate a racing writer by inserting a ref row version 1 directly
         sqlx::query("INSERT INTO refs(tenant_id, project_id, ref_name, commit_hash, version) VALUES('t1','p1','main','deadbeef',1)")
             .execute(&state.db).await.unwrap();
         // a fold that expects version 1 but the row moved to 2 → REF_CAS (no write lost)
         sqlx::query("UPDATE refs SET version=2 WHERE tenant_id='t1' AND project_id='p1'")
-            .execute(&state.db).await.unwrap();
+            .execute(&state.db)
+            .await
+            .unwrap();
         let r = crate::fold::fold(&state, "t1", "p1", "a", "l").await;
         // with no journal entries the fold still CASes from version 2 → succeeds
         assert!(r.is_ok());

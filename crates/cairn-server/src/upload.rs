@@ -12,9 +12,7 @@ use sqlx::Row;
 
 use cairn_core::hash::Hash;
 use cairn_core::{CairnError, ErrorKind};
-use cairn_proto::pb::{
-    CreateUploadSessionResponse, UploadPut, UploadReceipt,
-};
+use cairn_proto::pb::{CreateUploadSessionResponse, UploadPut, UploadReceipt};
 
 use crate::storage::LocalFsStore;
 use crate::ServerState;
@@ -68,7 +66,10 @@ pub async fn create_session(
     missing: &[String],
 ) -> Result<CreateUploadSessionResponse, CairnError> {
     if missing.is_empty() {
-        return Err(CairnError::new(ErrorKind::NotFound, "no missing chunks provided"));
+        return Err(CairnError::new(
+            ErrorKind::NotFound,
+            "no missing chunks provided",
+        ));
     }
     let session_id = uuid::Uuid::now_v7().to_string();
     let expires_at = state.clock.now_millis() + SESSION_TTL_MILLIS;
@@ -95,7 +96,11 @@ pub async fn create_session(
     for h in missing {
         let key = LocalFsStore::chunk_key(&identity.tenant_id, h);
         let url = state.store.presign_put(&key, 3600).await?;
-        puts.push(UploadPut { chunk_hash: h.clone(), url, expires_at });
+        puts.push(UploadPut {
+            chunk_hash: h.clone(),
+            url,
+            expires_at,
+        });
     }
     crate::db::audit(
         &state.db,
@@ -126,16 +131,25 @@ pub async fn complete(
     .await
     .map_err(|e| CairnError::new(ErrorKind::Unavailable, format!("session: {e}")))?;
     let Some(row) = row else {
-        return Err(CairnError::new(ErrorKind::NotFound, format!("session {session_id}")));
+        return Err(CairnError::new(
+            ErrorKind::NotFound,
+            format!("session {session_id}"),
+        ));
     };
     let tenant: String = row.get("tenant_id");
     let device: String = row.get("device_id");
     let expires: i64 = row.get("expires_at");
     if tenant != identity.tenant_id || device != identity.device_id {
-        return Err(CairnError::new(ErrorKind::PermissionDenied, "session not yours"));
+        return Err(CairnError::new(
+            ErrorKind::PermissionDenied,
+            "session not yours",
+        ));
     }
     if expires < state.clock.now_millis() {
-        return Err(CairnError::new(ErrorKind::SessionExpired, "upload session expired"));
+        return Err(CairnError::new(
+            ErrorKind::SessionExpired,
+            "upload session expired",
+        ));
     }
 
     let n = receipts.len() as u64;
@@ -143,7 +157,7 @@ pub async fn complete(
     let mut rejected = Vec::new();
     for (i, r) in receipts.iter().enumerate() {
         let is_big = r.size > BIG_CHUNK_BYTES;
-        let sample_hit = is_big || (n > 0 && (i as u64) % (100 / SAMPLE_PERCENT.max(1)) == 0);
+        let sample_hit = is_big || (n > 0 && (i as u64).is_multiple_of(100 / SAMPLE_PERCENT.max(1)));
         let key = LocalFsStore::chunk_key(&tenant, &r.chunk_hash);
         let head = state.store.head(&key).await;
         match head {
@@ -167,14 +181,13 @@ pub async fn complete(
 
     let now = state.clock.now_millis();
     for h in &verified {
-        let size: Option<i64> = sqlx::query_scalar(
-            "SELECT size FROM chunks WHERE tenant_id=?1 AND hash=?2",
-        )
-        .bind(&tenant)
-        .bind(h)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(|e| CairnError::new(ErrorKind::Unavailable, format!("chunk: {e}")))?;
+        let size: Option<i64> =
+            sqlx::query_scalar("SELECT size FROM chunks WHERE tenant_id=?1 AND hash=?2")
+                .bind(&tenant)
+                .bind(h)
+                .fetch_optional(&state.db)
+                .await
+                .map_err(|e| CairnError::new(ErrorKind::Unavailable, format!("chunk: {e}")))?;
         if size.is_none() {
             sqlx::query(
                 "INSERT INTO chunks(tenant_id, hash, size, tier, state, last_touched)
@@ -182,7 +195,16 @@ pub async fn complete(
             )
             .bind(&tenant)
             .bind(h)
-            .bind(i64::try_from(receipts.iter().find(|r| &r.chunk_hash == h).map(|r| r.size).unwrap_or(0)).unwrap_or(0))
+            .bind(
+                i64::try_from(
+                    receipts
+                        .iter()
+                        .find(|r| &r.chunk_hash == h)
+                        .map(|r| r.size)
+                        .unwrap_or(0),
+                )
+                .unwrap_or(0),
+            )
             .bind(now)
             .execute(&state.db)
             .await

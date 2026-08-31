@@ -1,10 +1,9 @@
 //! Kill switches (config_flags, SPEC §16): read PER RUN so flips take effect without
 //! restart; admin actions audited.
 
-use sqlx::Row;
 
-use cairn_core::{CairnError, ErrorKind};
 use crate::ServerState;
+use cairn_core::{CairnError, ErrorKind};
 
 /// Canonical flag names + defaults (SPEC §16).
 pub const FLAGS: &[(&str, &str)] = &[
@@ -22,14 +21,27 @@ pub async fn get(state: &ServerState, name: &str) -> Result<String, CairnError> 
         .fetch_optional(&state.db)
         .await
         .map_err(|e| CairnError::new(ErrorKind::Unavailable, format!("flag: {e}")))?;
-    Ok(v.or_else(|| FLAGS.iter().find(|(n, _)| *n == name).map(|(_, d)| d.to_string()))
-        .unwrap_or_default())
+    Ok(v.or_else(|| {
+        FLAGS
+            .iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, d)| d.to_string())
+    })
+    .unwrap_or_default())
 }
 
 /// Set one flag (audited; next run picks it up — no restart).
-pub async fn set(state: &ServerState, actor: &str, name: &str, value: &str) -> Result<(), CairnError> {
+pub async fn set(
+    state: &ServerState,
+    actor: &str,
+    name: &str,
+    value: &str,
+) -> Result<(), CairnError> {
     if !FLAGS.iter().any(|(n, _)| *n == name) && name != "gc_epoch" {
-        return Err(CairnError::new(ErrorKind::NotFound, format!("unknown flag {name}")));
+        return Err(CairnError::new(
+            ErrorKind::NotFound,
+            format!("unknown flag {name}"),
+        ));
     }
     sqlx::query(
         "INSERT INTO config_flags(name, value, updated_at) VALUES(?1,?2,?3)
@@ -59,7 +71,9 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let state = crate::tests_support::state_at(dir.path()).await;
         assert!(enabled(&state, "packing_enabled").await.unwrap());
-        set(&state, "ops", "packing_enabled", "false").await.unwrap();
+        set(&state, "ops", "packing_enabled", "false")
+            .await
+            .unwrap();
         // a NEW read (as every job run does) sees the flip immediately
         assert!(!enabled(&state, "packing_enabled").await.unwrap());
         let e = set(&state, "ops", "bogus_flag", "1").await;

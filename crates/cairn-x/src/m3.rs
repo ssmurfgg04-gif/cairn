@@ -68,14 +68,22 @@ fn adversarial_bloom_cannot_skip_uploads() {
     use cairn_core::bloom::Bloom;
     let mut b = Bloom::with_fpp(1000, 0.01);
     b.corrupt_all_bits();
-    let missing: Vec<String> = (0..64).map(|i| Hash::of(format!("m{i}").as_bytes()).hex()).collect();
+    let missing: Vec<String> = (0..64)
+        .map(|i| Hash::of(format!("m{i}").as_bytes()).hex())
+        .collect();
     let rt = tokio::runtime::Runtime::new().unwrap();
     rt.block_on(async {
         let dir = tempfile::tempdir().unwrap();
         let (state, _obj) = spin_server(dir.path()).await.unwrap();
         insert_tenant(&state.db, "t1").await;
-        let out = cairn_server::upload::batch_exists(&state, "t1", &missing).await.unwrap();
-        assert_eq!(out.len(), missing.len(), "a lying bloom must not hide missing chunks");
+        let out = cairn_server::upload::batch_exists(&state, "t1", &missing)
+            .await
+            .unwrap();
+        assert_eq!(
+            out.len(),
+            missing.len(),
+            "a lying bloom must not hide missing chunks"
+        );
     });
 }
 
@@ -95,7 +103,9 @@ async fn e2e_restart_resume_roundtrip_byte_identical() {
     // non-periodic stream (splitmix-flavored) so chunks are distinct content
     let data: Vec<u8> = (0..bytes_total)
         .map(|i| {
-            let x = (i as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15).wrapping_add(0x2545_F491);
+            let x = (i as u64)
+                .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+                .wrapping_add(0x2545_F491);
             ((x >> 33) & 0xFF) as u8
         })
         .collect();
@@ -103,7 +113,9 @@ async fn e2e_restart_resume_roundtrip_byte_identical() {
     let hash_hexes: Vec<String> = sh.chunk_hashes.iter().map(Hash::hex).collect();
 
     // 2) BatchExists: fresh tenant → everything missing
-    let missing = cairn_server::upload::batch_exists(&state, "t1", &hash_hexes).await.unwrap();
+    let missing = cairn_server::upload::batch_exists(&state, "t1", &hash_hexes)
+        .await
+        .unwrap();
     assert_eq!(missing.len(), hash_hexes.len());
 
     // 3) upload the FIRST HALF over real HTTP with checksums; corrupt uploads rejected
@@ -112,14 +124,17 @@ async fn e2e_restart_resume_roundtrip_byte_identical() {
     let half = spans_and_hashes.len() / 2;
     let mut uploaded: Vec<(String, Vec<u8>)> = Vec::new();
     for (span, h) in &spans_and_hashes[..half] {
-        let bytes = data[span.offset as usize..(span.offset + u64::from(span.len)) as usize].to_vec();
+        let bytes =
+            data[span.offset as usize..(span.offset + u64::from(span.len)) as usize].to_vec();
         let key = cairn_server::storage::LocalFsStore::chunk_key("t1", &h.hex());
         let url = state.store.presign_put(&key, 3600).await.unwrap();
         let checksum = cairn_core::hash::hex_encode(&Sha256::digest(&bytes));
         let resp = http::put_object(&url, &bytes, &checksum).await.unwrap();
         assert_eq!(resp.status, 200);
         // the "bucket" rejects corrupt uploads (SPEC §9.1)
-        let bad = http::put_object(&url, b"corrupt-payload", &checksum).await.unwrap();
+        let bad = http::put_object(&url, b"corrupt-payload", &checksum)
+            .await
+            .unwrap();
         assert_eq!(bad.status, 400, "bucket must reject corrupt upload");
         uploaded.push((h.hex(), bytes));
     }
@@ -132,14 +147,17 @@ async fn e2e_restart_resume_roundtrip_byte_identical() {
     let (state, _obj) = spin_server(dir.path()).await.unwrap();
 
     // 5) resume: only the un-uploaded half is missing (chunk-granular resume, I2)
-    let missing2 = cairn_server::upload::batch_exists(&state, "t1", &hash_hexes).await.unwrap();
+    let missing2 = cairn_server::upload::batch_exists(&state, "t1", &hash_hexes)
+        .await
+        .unwrap();
     assert_eq!(
         missing2.len(),
         hash_hexes.len() - half,
         "resume must skip acknowledged chunks after restart"
     );
     for (span, h) in &spans_and_hashes[half..] {
-        let bytes = data[span.offset as usize..(span.offset + u64::from(span.len)) as usize].to_vec();
+        let bytes =
+            data[span.offset as usize..(span.offset + u64::from(span.len)) as usize].to_vec();
         let key = cairn_server::storage::LocalFsStore::chunk_key("t1", &h.hex());
         let url = state.store.presign_put(&key, 3600).await.unwrap();
         let checksum = cairn_core::hash::hex_encode(&Sha256::digest(&bytes));
@@ -155,7 +173,11 @@ async fn e2e_restart_resume_roundtrip_byte_identical() {
         .spans
         .iter()
         .zip(sh.chunk_hashes.iter())
-        .map(|(s, h)| ManifestEntry { offset: s.offset, len: s.len, chunk_hash: *h })
+        .map(|(s, h)| ManifestEntry {
+            offset: s.offset,
+            len: s.len,
+            chunk_hash: *h,
+        })
         .collect();
     let manifest = Manifest::build(entries, cairn_core::manifest::Compression::None, None);
     let (manifest_hash, manifest_bytes) = manifest.serialize();
@@ -181,9 +203,17 @@ async fn e2e_restart_resume_roundtrip_byte_identical() {
         let resp = http::get_object(&url, None).await.unwrap();
         assert_eq!(resp.status, 200);
         let chunk_bytes = resp.body;
-        assert_eq!(Hash::of(&chunk_bytes).hex(), *h, "chunk hash verified on ingest (I2)");
+        assert_eq!(
+            Hash::of(&chunk_bytes).hex(),
+            *h,
+            "chunk hash verified on ingest (I2)"
+        );
         back.extend_from_slice(&chunk_bytes);
     }
     assert_eq!(back.len(), bytes_total);
-    assert_eq!(Hash::of(&back), Hash::of(&data), "BYTE-IDENTICAL round trip");
+    assert_eq!(
+        Hash::of(&back),
+        Hash::of(&data),
+        "BYTE-IDENTICAL round trip"
+    );
 }

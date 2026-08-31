@@ -39,12 +39,13 @@ pub async fn acquire(
         .execute(&mut *conn)
         .await
         .map_err(db_err)?;
-    let row = sqlx::query("SELECT next_lease_token FROM projects WHERE tenant_id=?1 AND project_id=?2")
-        .bind(tenant_id)
-        .bind(project_id)
-        .fetch_one(&mut *conn)
-        .await
-        .map_err(db_err)?;
+    let row =
+        sqlx::query("SELECT next_lease_token FROM projects WHERE tenant_id=?1 AND project_id=?2")
+            .bind(tenant_id)
+            .bind(project_id)
+            .fetch_one(&mut *conn)
+            .await
+            .map_err(db_err)?;
     let token: i64 = row.try_get(0).map_err(db_err)?;
     let expires_at = clock.now_millis() + ttl_ms.max(1000) as i64;
     sqlx::query(
@@ -64,7 +65,12 @@ pub async fn acquire(
     .map_err(db_err)?;
     crate::db::commit(&mut conn).await?;
     crate::db::audit(
-        pool, clock, tenant_id, device_id, "lease.takeover", path,
+        pool,
+        clock,
+        tenant_id,
+        device_id,
+        "lease.takeover",
+        path,
         &format!("token={token} ttl_ms={ttl_ms}"),
     )
     .await;
@@ -92,7 +98,7 @@ pub async fn renew(
     .bind(path)
     .bind(now + ttl_ms.max(1000) as i64)
     .bind(device_id)
-    .bind(token.max(0) as i64)
+    .bind(token as i64)
     .bind(now)
     .execute(pool)
     .await
@@ -123,7 +129,7 @@ pub async fn release(
     .bind(project_id)
     .bind(path)
     .bind(device_id)
-    .bind(token.max(0) as i64)
+    .bind(token as i64)
     .execute(pool)
     .await
     .map_err(db_err)?;
@@ -167,7 +173,10 @@ pub async fn list(
 
 /// TTL cleanup job step: remove expired rows (advisory model — correctness never depends on
 /// this; SPEC §8).
-pub async fn cleanup_expired(pool: &SqlitePool, clock: &Arc<dyn SystemClock>) -> Result<u64, CairnError> {
+pub async fn cleanup_expired(
+    pool: &SqlitePool,
+    clock: &Arc<dyn SystemClock>,
+) -> Result<u64, CairnError> {
     let res = sqlx::query("DELETE FROM leases WHERE expires_at<=?1")
         .bind(clock.now_millis())
         .execute(pool)
@@ -186,9 +195,14 @@ mod tests {
 
     async fn setup() -> (tempfile::TempDir, SqlitePool, Arc<dyn SystemClock>) {
         let dir = tempfile::tempdir().unwrap();
-        let pool = crate::db::open(&std::path::Path::new(dir.path()).join("meta.db")).await.unwrap();
+        let pool = crate::db::open(&std::path::Path::new(dir.path()).join("meta.db"))
+            .await
+            .unwrap();
         crate::db::migrate(&pool).await.unwrap();
-        sqlx::query("INSERT INTO tenants(id, created_at) VALUES('t1', 0)").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO tenants(id, created_at) VALUES('t1', 0)")
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query("INSERT INTO projects(tenant_id, project_id, created_at) VALUES('t1','p1',0)")
             .execute(&pool)
             .await
@@ -200,21 +214,33 @@ mod tests {
     #[tokio::test]
     async fn tokens_are_restart_safe_and_monotonic() {
         let (_d, pool, clock) = setup().await;
-        let (t1, _) = acquire(&pool, &clock, "t1", "p1", "a.prproj", "d1", 60_000).await.unwrap();
+        let (t1, _) = acquire(&pool, &clock, "t1", "p1", "a.prproj", "d1", 60_000)
+            .await
+            .unwrap();
         // "restart" = new pool handle on the same file; tokens keep rising
-        let (t2, _) = acquire(&pool, &clock, "t1", "p1", "b.prproj", "d2", 60_000).await.unwrap();
+        let (t2, _) = acquire(&pool, &clock, "t1", "p1", "b.prproj", "d2", 60_000)
+            .await
+            .unwrap();
         assert_eq!((t1, t2), (1, 2));
         // takeover bumps the token → old token fenced
-        let (t3, _) = acquire(&pool, &clock, "t1", "p1", "a.prproj", "d2", 60_000).await.unwrap();
+        let (t3, _) = acquire(&pool, &clock, "t1", "p1", "a.prproj", "d2", 60_000)
+            .await
+            .unwrap();
         assert_eq!(t3, 3);
     }
 
     #[tokio::test]
     async fn renew_requires_ownership() {
         let (_d, pool, clock) = setup().await;
-        let (t, _) = acquire(&pool, &clock, "t1", "p1", "a.prproj", "d1", 60_000).await.unwrap();
-        renew(&pool, &clock, "t1", "p1", "a.prproj", "d1", t, 60_000).await.unwrap();
-        let e = renew(&pool, &clock, "t1", "p1", "a.prproj", "d2", t, 60_000).await.unwrap_err();
+        let (t, _) = acquire(&pool, &clock, "t1", "p1", "a.prproj", "d1", 60_000)
+            .await
+            .unwrap();
+        renew(&pool, &clock, "t1", "p1", "a.prproj", "d1", t, 60_000)
+            .await
+            .unwrap();
+        let e = renew(&pool, &clock, "t1", "p1", "a.prproj", "d2", t, 60_000)
+            .await
+            .unwrap_err();
         assert_eq!(e.code(), "STALE_LEASE");
     }
 
@@ -223,12 +249,18 @@ mod tests {
         let (_d, pool, _clock) = setup().await;
         let fc = Arc::new(cairn_core::clock::FixedClock::new(1_000));
         let fixed: Arc<dyn SystemClock> = fc.clone();
-        let (t, _) = acquire(&pool, &fixed, "t1", "p1", "a.prproj", "d1", 60_000).await.unwrap();
+        let (t, _) = acquire(&pool, &fixed, "t1", "p1", "a.prproj", "d1", 60_000)
+            .await
+            .unwrap();
         assert_eq!(list(&pool, &fixed, "t1", "p1").await.unwrap().len(), 1);
-        release(&pool, "t1", "p1", "a.prproj", "d1", t).await.unwrap();
+        release(&pool, "t1", "p1", "a.prproj", "d1", t)
+            .await
+            .unwrap();
         assert!(list(&pool, &fixed, "t1", "p1").await.unwrap().is_empty());
         // cleanup removes expired
-        let (t2, _) = acquire(&pool, &fixed, "t1", "p1", "b.prproj", "d1", 5_000).await.unwrap();
+        let (t2, _) = acquire(&pool, &fixed, "t1", "p1", "b.prproj", "d1", 5_000)
+            .await
+            .unwrap();
         fc.advance(6_000);
         assert_eq!(cleanup_expired(&pool, &fixed).await.unwrap(), 1);
         let _ = t2;

@@ -79,9 +79,7 @@ pub async fn begin_immediate(
     Ok(conn)
 }
 
-pub async fn commit(
-    conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>,
-) -> Result<(), CairnError> {
+pub async fn commit(conn: &mut sqlx::pool::PoolConnection<sqlx::Sqlite>) -> Result<(), CairnError> {
     sqlx::query("COMMIT")
         .execute(&mut **conn)
         .await

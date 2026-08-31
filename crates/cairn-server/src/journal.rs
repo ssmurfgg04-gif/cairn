@@ -122,7 +122,7 @@ pub async fn append(
     .bind(tenant_id)
     .bind(project_id)
     .bind(&primary_path)
-    .bind(base_seq.max(0) as i64)
+    .bind(base_seq.max(0))
     .bind(device_id)
     .fetch_one(&mut *conn)
     .await
@@ -137,13 +137,14 @@ pub async fn append(
     // same-device entries with seq > base: always supersede (rule allows)
 
     // server-assigned seq (I4) inside the same IMMEDIATE tx
-    let max_seq: i64 =
-        sqlx::query_scalar("SELECT COALESCE(MAX(seq),0) FROM journal WHERE tenant_id=?1 AND project_id=?2")
-            .bind(tenant_id)
-            .bind(project_id)
-            .fetch_one(&mut *conn)
-            .await
-            .map_err(db_err)?;
+    let max_seq: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(seq),0) FROM journal WHERE tenant_id=?1 AND project_id=?2",
+    )
+    .bind(tenant_id)
+    .bind(project_id)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(db_err)?;
     let seq = max_seq + 1;
     sqlx::query(
         "INSERT INTO journal(tenant_id, project_id, seq, request_id, device_id, path, op, server_ts)
@@ -167,9 +168,9 @@ pub async fn append(
 
 fn base_seq_of(op: &JournalOp) -> i64 {
     match op.op.as_ref() {
-        Some(JournalOpKind::FileUpsert(o)) => o.base_seq.max(0) as i64,
-        Some(JournalOpKind::FileDelete(o)) => o.base_seq.max(0) as i64,
-        Some(JournalOpKind::Rename(r)) => r.base_seq.max(0) as i64,
+        Some(JournalOpKind::FileUpsert(o)) => o.base_seq as i64,
+        Some(JournalOpKind::FileDelete(o)) => o.base_seq as i64,
+        Some(JournalOpKind::Rename(r)) => r.base_seq as i64,
         _ => 0,
     }
 }
@@ -188,8 +189,8 @@ pub async fn batch(
     )
     .bind(tenant_id)
     .bind(project_id)
-    .bind(after_seq.max(0) as i64)
-    .bind(limit.max(1) as i64)
+    .bind(after_seq as i64)
+    .bind(i64::from(limit.max(1)))
     .fetch_all(pool)
     .await
     .map_err(db_err)?;
@@ -211,7 +212,7 @@ pub async fn batch(
 /// Update a device's cursor (durable; replay base).
 pub async fn update_cursor(
     pool: &SqlitePool,
-    tenant_id: &str,
+    _tenant_id: &str,
     device_id: &str,
     project_id: &str,
     last_seq: u64,
@@ -222,7 +223,7 @@ pub async fn update_cursor(
     )
     .bind(device_id)
     .bind(project_id)
-    .bind(last_seq.max(0) as i64)
+    .bind(last_seq as i64)
     .execute(pool)
     .await
     .map_err(db_err)?;
@@ -248,9 +249,14 @@ mod tests {
 
     async fn setup() -> (tempfile::TempDir, SqlitePool, Arc<dyn SystemClock>) {
         let dir = tempfile::tempdir().unwrap();
-        let pool = crate::db::open(&Path::new(dir.path()).join("meta.db")).await.unwrap();
+        let pool = crate::db::open(&Path::new(dir.path()).join("meta.db"))
+            .await
+            .unwrap();
         crate::db::migrate(&pool).await.unwrap();
-        sqlx::query("INSERT INTO tenants(id, created_at) VALUES('t1', 0)").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO tenants(id, created_at) VALUES('t1', 0)")
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query("INSERT INTO projects(tenant_id, project_id, created_at) VALUES('t1','p1',0)")
             .execute(&pool)
             .await
@@ -272,8 +278,21 @@ mod tests {
     #[tokio::test]
     async fn sequential_appends_get_server_seq() {
         let (_d, pool, clock) = setup().await;
-        let (s1, dedup) = append(&pool, &clock, "t1", "p1", "d1", "r1", upsert("a.mov", 0), 0).await.unwrap();
-        let (s2, _) = append(&pool, &clock, "t1", "p1", "d2", "r2", upsert("a.mov", s1), 0).await.unwrap();
+        let (s1, dedup) = append(&pool, &clock, "t1", "p1", "d1", "r1", upsert("a.mov", 0), 0)
+            .await
+            .unwrap();
+        let (s2, _) = append(
+            &pool,
+            &clock,
+            "t1",
+            "p1",
+            "d2",
+            "r2",
+            upsert("a.mov", s1),
+            0,
+        )
+        .await
+        .unwrap();
         assert!(!dedup);
         assert_eq!((s1, s2), (1, 2));
     }
@@ -281,8 +300,12 @@ mod tests {
     #[tokio::test]
     async fn duplicate_request_id_returns_same_seq_deduplicated() {
         let (_d, pool, clock) = setup().await;
-        let (s1, _) = append(&pool, &clock, "t1", "p1", "d1", "r1", upsert("a.mov", 0), 0).await.unwrap();
-        let (s2, dedup) = append(&pool, &clock, "t1", "p1", "d1", "r1", upsert("a.mov", 0), 0).await.unwrap();
+        let (s1, _) = append(&pool, &clock, "t1", "p1", "d1", "r1", upsert("a.mov", 0), 0)
+            .await
+            .unwrap();
+        let (s2, dedup) = append(&pool, &clock, "t1", "p1", "d1", "r1", upsert("a.mov", 0), 0)
+            .await
+            .unwrap();
         assert!(dedup);
         assert_eq!(s1, s2, "retry must be safe (request_id dedupe)");
     }
@@ -293,34 +316,73 @@ mod tests {
     async fn conflict_truth_table() {
         let (_d, pool, clock) = setup().await;
         // d1 appends a.mov at seq 1 (base 0)
-        let (s1, _) = append(&pool, &clock, "t1", "p1", "d1", "r1", upsert("a.mov", 0), 0).await.unwrap();
+        let (s1, _) = append(&pool, &clock, "t1", "p1", "d1", "r1", upsert("a.mov", 0), 0)
+            .await
+            .unwrap();
 
         // d2 with base_seq >= s1 → ACCEPTED (no newer different-device entry)
-        append(&pool, &clock, "t1", "p1", "d2", "r2", upsert("a.mov", s1), 0).await.unwrap();
+        append(
+            &pool,
+            &clock,
+            "t1",
+            "p1",
+            "d2",
+            "r2",
+            upsert("a.mov", s1),
+            0,
+        )
+        .await
+        .unwrap();
         // d2 again with stale base (s1 < 2) → CONFLICT (d2's own seq2 was same-device, so the
         // blocking rule checks OTHER devices: d1's seq1 is not > base... base=0 → seq1 from d1
         // IS > 0 and different device → conflict)
-        let e = append(&pool, &clock, "t1", "p1", "d2", "r3", upsert("a.mov", 0), 0).await.unwrap_err();
+        let e = append(&pool, &clock, "t1", "p1", "d2", "r3", upsert("a.mov", 0), 0)
+            .await
+            .unwrap_err();
         assert_eq!(e.code(), "CONFLICT");
 
         // same-device supersede: d2 base 0 (its own seq2 exists) → same-device always supersedes?
         // d1 has seq1 > 0 → different device blocks: CONFLICT regardless (rule is per-path)
-        let e2 = append(&pool, &clock, "t1", "p1", "d1", "r4", upsert("a.mov", 0), 0).await.unwrap_err();
+        let e2 = append(&pool, &clock, "t1", "p1", "d1", "r4", upsert("a.mov", 0), 0)
+            .await
+            .unwrap_err();
         assert_eq!(e2.code(), "CONFLICT");
 
         // d1 with base = current max (2) → accepted (supersedes its own + no newer others)
-        append(&pool, &clock, "t1", "p1", "d1", "r5", upsert("a.mov", 2), 0).await.unwrap();
+        append(&pool, &clock, "t1", "p1", "d1", "r5", upsert("a.mov", 2), 0)
+            .await
+            .unwrap();
 
         // deletes block too (entry = any op on the path): tombstone accepted at fresh base…
-        let del = JournalOp { op: Some(cairn_proto::pb::journal_op::Op::FileDelete(FileDeleteOp { path: "a.mov".into(), base_seq: 3 })) };
-        append(&pool, &clock, "t1", "p1", "d2", "r6", del, 0).await.unwrap();
+        let del = JournalOp {
+            op: Some(cairn_proto::pb::journal_op::Op::FileDelete(FileDeleteOp {
+                path: "a.mov".into(),
+                base_seq: 3,
+            })),
+        };
+        append(&pool, &clock, "t1", "p1", "d2", "r6", del, 0)
+            .await
+            .unwrap();
         // …then a different device at the stale base is rejected by that tombstone
-        let del_stale = JournalOp { op: Some(cairn_proto::pb::journal_op::Op::FileDelete(FileDeleteOp { path: "a.mov".into(), base_seq: 3 })) };
-        let e3 = append(&pool, &clock, "t1", "p1", "d1", "r7", del_stale, 0).await.unwrap_err();
-        assert_eq!(e3.code(), "CONFLICT", "delete tombstone blocks older-device upserts");
+        let del_stale = JournalOp {
+            op: Some(cairn_proto::pb::journal_op::Op::FileDelete(FileDeleteOp {
+                path: "a.mov".into(),
+                base_seq: 3,
+            })),
+        };
+        let e3 = append(&pool, &clock, "t1", "p1", "d1", "r7", del_stale, 0)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            e3.code(),
+            "CONFLICT",
+            "delete tombstone blocks older-device upserts"
+        );
 
         // different path is unaffected
-        append(&pool, &clock, "t1", "p1", "d1", "r8", upsert("b.mov", 0), 0).await.unwrap();
+        append(&pool, &clock, "t1", "p1", "d1", "r8", upsert("b.mov", 0), 0)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -334,23 +396,80 @@ mod tests {
         assert_eq!(token, 1);
 
         // d1 appends WITH correct token → accepted
-        append(&pool, &clock, "t1", "p1", "d1", "r1", upsert("scene.prproj", 0), token).await.unwrap();
+        append(
+            &pool,
+            &clock,
+            "t1",
+            "p1",
+            "d1",
+            "r1",
+            upsert("scene.prproj", 0),
+            token,
+        )
+        .await
+        .unwrap();
 
         // d2 appends with the (stale for it) token → STALE_LEASE
-        let e = append(&pool, &clock, "t1", "p1", "d2", "r2", upsert("scene.prproj", 1), token).await.unwrap_err();
+        let e = append(
+            &pool,
+            &clock,
+            "t1",
+            "p1",
+            "d2",
+            "r2",
+            upsert("scene.prproj", 1),
+            token,
+        )
+        .await
+        .unwrap_err();
         assert_eq!(e.code(), "STALE_LEASE");
 
         // d2 appends with no token → STALE_LEASE
-        let e2 = append(&pool, &clock, "t1", "p1", "d2", "r3", upsert("scene.prproj", 1), 0).await.unwrap_err();
+        let e2 = append(
+            &pool,
+            &clock,
+            "t1",
+            "p1",
+            "d2",
+            "r3",
+            upsert("scene.prproj", 1),
+            0,
+        )
+        .await
+        .unwrap_err();
         assert_eq!(e2.code(), "STALE_LEASE");
 
         // d1 appends with WRONG (old) token → STALE_LEASE
-        let e3 = append(&pool, &clock, "t1", "p1", "d1", "r4", upsert("scene.prproj", 1), token.wrapping_sub(1)).await.unwrap_err();
+        let e3 = append(
+            &pool,
+            &clock,
+            "t1",
+            "p1",
+            "d1",
+            "r4",
+            upsert("scene.prproj", 1),
+            token.wrapping_sub(1),
+        )
+        .await
+        .unwrap_err();
         assert_eq!(e3.code(), "STALE_LEASE");
 
         // release → any device can append again (advisory model)
-        crate::leases::release(&pool, "t1", "p1", "scene.prproj", "d1", token).await.unwrap();
-        append(&pool, &clock, "t1", "p1", "d2", "r5", upsert("scene.prproj", 2), 0).await.unwrap();
+        crate::leases::release(&pool, "t1", "p1", "scene.prproj", "d1", token)
+            .await
+            .unwrap();
+        append(
+            &pool,
+            &clock,
+            "t1",
+            "p1",
+            "d2",
+            "r5",
+            upsert("scene.prproj", 2),
+            0,
+        )
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -364,7 +483,18 @@ mod tests {
             .unwrap()
             .0;
         fc.advance(61_000); // lease expired
-        append(&pool, &fixed, "t1", "p1", "d2", "r1", upsert("x.prproj", 0), 0).await.unwrap();
+        append(
+            &pool,
+            &fixed,
+            "t1",
+            "p1",
+            "d2",
+            "r1",
+            upsert("x.prproj", 0),
+            0,
+        )
+        .await
+        .unwrap();
         let _ = token;
     }
 
@@ -372,7 +502,18 @@ mod tests {
     async fn cursor_replay_returns_full_suffix() {
         let (_d, pool, clock) = setup().await;
         for i in 0..5 {
-            append(&pool, &clock, "t1", "p1", "d1", &format!("r{i}"), upsert(&format!("f{i}.mov"), 0), 0).await.unwrap();
+            append(
+                &pool,
+                &clock,
+                "t1",
+                "p1",
+                "d1",
+                &format!("r{i}"),
+                upsert(&format!("f{i}.mov"), 0),
+                0,
+            )
+            .await
+            .unwrap();
         }
         let batch = batch(&pool, "t1", "p1", 2, 100).await.unwrap();
         assert_eq!(batch.len(), 3);
@@ -384,17 +525,24 @@ mod tests {
     #[tokio::test]
     async fn tenancy_isolation() {
         let (_d, pool, clock) = setup().await;
-        sqlx::query("INSERT INTO tenants(id, created_at) VALUES('t2', 0)").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO tenants(id, created_at) VALUES('t2', 0)")
+            .execute(&pool)
+            .await
+            .unwrap();
         sqlx::query("INSERT INTO projects(tenant_id, project_id, created_at) VALUES('t2','p1',0)")
             .execute(&pool)
             .await
             .unwrap();
-        append(&pool, &clock, "t1", "p1", "d1", "r1", upsert("a.mov", 0), 0).await.unwrap();
+        append(&pool, &clock, "t1", "p1", "d1", "r1", upsert("a.mov", 0), 0)
+            .await
+            .unwrap();
         // t2 sees nothing at seq 0 for same project/path
         let b = batch(&pool, "t2", "p1", 0, 100).await.unwrap();
         assert!(b.is_empty(), "cross-tenant journal leakage — I3 violation");
         // and its own first append gets seq 1 (independent log)
-        let (s, _) = append(&pool, &clock, "t2", "p1", "d1", "r1", upsert("a.mov", 0), 0).await.unwrap();
+        let (s, _) = append(&pool, &clock, "t2", "p1", "d1", "r1", upsert("a.mov", 0), 0)
+            .await
+            .unwrap();
         assert_eq!(s, 1);
     }
 }

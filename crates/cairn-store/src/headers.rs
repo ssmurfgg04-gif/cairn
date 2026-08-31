@@ -29,7 +29,12 @@ impl HeaderCache {
     }
 
     /// Store a pointer's header (idempotent per pointer hash).
-    pub fn put(&self, pointer_hash: &str, head: &[u8], tail: Option<&[u8]>) -> Result<(), CairnError> {
+    pub fn put(
+        &self,
+        pointer_hash: &str,
+        head: &[u8],
+        tail: Option<&[u8]>,
+    ) -> Result<(), CairnError> {
         let db = self.db.lock().expect("headers poisoned");
         db.execute(
             "INSERT INTO dir_headers(pointer_hash, head, tail) VALUES(?1,?2,?3)
@@ -47,7 +52,10 @@ impl HeaderCache {
             "SELECT head, tail FROM dir_headers WHERE pointer_hash=?1",
             rusqlite::params![pointer_hash],
             |r| {
-                Ok(CachedHeader { head: r.get(0)?, tail: r.get(1)? })
+                Ok(CachedHeader {
+                    head: r.get(0)?,
+                    tail: r.get(1)?,
+                })
             },
         )
         .map_err(|_| CairnError::new(cairn_core::ErrorKind::NotFound, "header not cached"))

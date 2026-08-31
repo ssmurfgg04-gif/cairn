@@ -26,7 +26,12 @@ pub struct Report {
 impl Report {
     /// Push a check.
     pub fn push(&mut self, name: &'static str, r: Result<String, String>, latency_ms: f64) {
-        self.checks.push(Check { name, ok: r.is_ok(), detail: r.unwrap_or_default(), latency_ms });
+        self.checks.push(Check {
+            name,
+            ok: r.is_ok(),
+            detail: r.unwrap_or_default(),
+            latency_ms,
+        });
     }
 
     /// Healthy = every check ok.
@@ -47,15 +52,28 @@ impl Report {
             println!("{v}");
         } else {
             for c in &self.checks {
-                println!("{:3} {:<26} {:>8.1}ms  {}", if c.ok { "ok" } else { "!!" }, c.name, c.latency_ms, c.detail);
+                println!(
+                    "{:3} {:<26} {:>8.1}ms  {}",
+                    if c.ok { "ok" } else { "!!" },
+                    c.name,
+                    c.latency_ms,
+                    c.detail
+                );
             }
-            println!("{}", if self.healthy() { "doctor: HEALTHY" } else { "doctor: UNHEALTHY" });
+            println!(
+                "{}",
+                if self.healthy() {
+                    "doctor: HEALTHY"
+                } else {
+                    "doctor: UNHEALTHY"
+                }
+            );
         }
     }
 }
 
 /// Collect the local-check suite (store, WAL, CAS integrity sample, outbox, keychain, clock).
-pub async fn collect(home: &Path) -> Report {
+pub fn collect(home: &Path) -> Report {
     let mut rep = Report::default();
     let t = std::time::Instant::now();
 
@@ -71,7 +89,11 @@ pub async fn collect(home: &Path) -> Report {
             Some(s)
         }
         Err(e) => {
-            rep.push("store_open", Err(format!("cannot open store: {e}")), t.elapsed().as_secs_f64() * 1000.0);
+            rep.push(
+                "store_open",
+                Err(format!("cannot open store: {e}")),
+                t.elapsed().as_secs_f64() * 1000.0,
+            );
             rep.push("wal_mode", Err("store unavailable".into()), 0.0);
             rep.push("cas_integrity", Err("store unavailable".into()), 0.0);
             rep.push("outbox", Err("store unavailable".into()), 0.0);
@@ -84,7 +106,9 @@ pub async fn collect(home: &Path) -> Report {
     let wal = store.with_tx(|conn| {
         let mode: String = conn
             .query_row("PRAGMA journal_mode", [], |r| r.get(0))
-            .map_err(|e| CairnError::new(cairn_core::ErrorKind::Io, format!("journal_mode: {e}")))?;
+            .map_err(|e| {
+                CairnError::new(cairn_core::ErrorKind::Io, format!("journal_mode: {e}"))
+            })?;
         Ok(mode)
     });
     rep.push(
@@ -99,13 +123,18 @@ pub async fn collect(home: &Path) -> Report {
     let conn = store.conn_handle();
     match cairn_store::Cas::open(&cas_dir, conn.clone()) {
         Ok(cas) => {
-            let (n, bad) = cas.verify_sample(32).unwrap_or((0, vec!["unreadable".into()]));
+            let (n, bad) = cas
+                .verify_sample(32)
+                .unwrap_or((0, vec!["unreadable".into()]));
             rep.push(
                 "cas_integrity",
                 if bad.is_empty() {
                     Ok(format!("{n} sampled chunks verified"))
                 } else {
-                    Err(format!("{} corrupt chunks — re-download required", bad.len()))
+                    Err(format!(
+                        "{} corrupt chunks — re-download required",
+                        bad.len()
+                    ))
                 },
                 t.elapsed().as_secs_f64() * 1000.0,
             );
@@ -128,7 +157,11 @@ pub async fn collect(home: &Path) -> Report {
     let now = cairn_core::clock::SystemClock::now_millis(&WallClock);
     rep.push(
         "clock",
-        if now > 1_700_000_000_000 { Ok(format!("utc_millis={now}")) } else { Err("implausible clock".into()) },
+        if now > 1_700_000_000_000 {
+            Ok(format!("utc_millis={now}"))
+        } else {
+            Err("implausible clock".into())
+        },
         t.elapsed().as_secs_f64() * 1000.0,
     );
 
@@ -136,9 +169,14 @@ pub async fn collect(home: &Path) -> Report {
     let probe = keyring_probe();
     rep.push(
         "keychain",
-        Some(probe.clone()).filter(|s| s == "credential store available")
-            .map(|s| Ok(s))
-            .unwrap_or_else(|| Ok(format!("warning: {probe} — login will need it or the dev fallback"))),
+        Some(probe.clone())
+            .filter(|s| s == "credential store available")
+            .map(Ok)
+            .unwrap_or_else(|| {
+                Ok(format!(
+                    "warning: {probe} — login will need it or the dev fallback"
+                ))
+            }),
         t.elapsed().as_secs_f64() * 1000.0,
     );
 
@@ -163,7 +201,7 @@ mod tests {
     #[tokio::test]
     async fn doctor_report_is_healthy_on_fresh_store() {
         let dir = tempfile::tempdir().unwrap();
-        let rep = collect(dir.path()).await;
+        let rep = collect(dir.path());
         assert!(rep.healthy(), "fresh store must be healthy: {rep:?}");
     }
 }

@@ -1,8 +1,8 @@
 //! Metering (SPEC §5.2/§16): server-side counters; nightly rollup recomputes `bytes_stored`
 //! from the authoritative chunks table. Presentation is a NON-GOAL — counters only.
 
-use cairn_core::{CairnError, ErrorKind};
 use crate::ServerState;
+use cairn_core::{CairnError, ErrorKind};
 
 /// YYYY-MM-DD for UTC millis (no chrono dep).
 #[must_use]
@@ -67,12 +67,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let state = crate::tests_support::state_at(dir.path()).await;
         sqlx::query("INSERT OR IGNORE INTO tenants(id, created_at) VALUES('t1',0)")
-            .execute(&state.db).await.unwrap();
+            .execute(&state.db)
+            .await
+            .unwrap();
         sqlx::query("INSERT INTO chunks(tenant_id, hash, size, tier, state, last_touched) VALUES('t1','aa',1000,'hot','present',0)")
             .execute(&state.db).await.unwrap();
         rollup(&state).await.unwrap();
-        let stored: i64 = sqlx::query_scalar("SELECT bytes_stored FROM metering WHERE tenant_id='t1'")
-            .fetch_one(&state.db).await.unwrap();
+        let stored: i64 =
+            sqlx::query_scalar("SELECT bytes_stored FROM metering WHERE tenant_id='t1'")
+                .fetch_one(&state.db)
+                .await
+                .unwrap();
         assert_eq!(stored, 1000);
     }
 }

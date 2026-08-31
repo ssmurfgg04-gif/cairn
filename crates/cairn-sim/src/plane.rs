@@ -35,7 +35,10 @@ pub struct InProcPlane {
 fn partitioned(f: &Faults) -> Option<CairnError> {
     if f.partition.load(Ordering::SeqCst) {
         f.partition_errors.fetch_add(1, Ordering::SeqCst);
-        Some(CairnError::new(ErrorKind::Unavailable, "simulated partition"))
+        Some(CairnError::new(
+            ErrorKind::Unavailable,
+            "simulated partition",
+        ))
     } else {
         None
     }
@@ -43,7 +46,11 @@ fn partitioned(f: &Faults) -> Option<CairnError> {
 
 #[async_trait]
 impl cairn_sync::plane::Plane for InProcPlane {
-    async fn batch_exists(&self, tenant: &str, hashes: &[String]) -> Result<Vec<String>, CairnError> {
+    async fn batch_exists(
+        &self,
+        tenant: &str,
+        hashes: &[String],
+    ) -> Result<Vec<String>, CairnError> {
         if let Some(e) = partitioned(&self.faults) {
             return Err(e);
         }
@@ -65,11 +72,24 @@ impl cairn_sync::plane::Plane for InProcPlane {
             tenant_id: tenant.to_string(),
             scopes: "sync".into(),
         };
-        let out = cairn_server::upload::create_session(&self.state, &identity, project, missing).await?;
-        Ok(Session { id: out.session_id, puts: out.puts.into_iter().map(|p| (p.chunk_hash, p.url)).collect(), expires_at: 0 })
+        let out =
+            cairn_server::upload::create_session(&self.state, &identity, project, missing).await?;
+        Ok(Session {
+            id: out.session_id,
+            puts: out
+                .puts
+                .into_iter()
+                .map(|p| (p.chunk_hash, p.url))
+                .collect(),
+            expires_at: 0,
+        })
     }
 
-    async fn complete(&self, session: &str, receipts: &[UploadReceipt]) -> Result<CompleteOut, CairnError> {
+    async fn complete(
+        &self,
+        session: &str,
+        receipts: &[UploadReceipt],
+    ) -> Result<CompleteOut, CairnError> {
         if let Some(e) = partitioned(&self.faults) {
             return Err(e);
         }
@@ -78,18 +98,31 @@ impl cairn_sync::plane::Plane for InProcPlane {
             tenant_id: self.tenant_id.clone(),
             scopes: "sync".into(),
         };
-        let out = cairn_server::upload::complete(&self.state, &identity, session, receipts.to_vec()).await?;
-        Ok(CompleteOut { verified: out.verified, rejected: out.rejected })
+        let out =
+            cairn_server::upload::complete(&self.state, &identity, session, receipts.to_vec())
+                .await?;
+        Ok(CompleteOut {
+            verified: out.verified,
+            rejected: out.rejected,
+        })
     }
 
-    async fn put_presigned(&self, url: &str, bytes: &[u8], checksum_hex: &str) -> Result<(), CairnError> {
+    async fn put_presigned(
+        &self,
+        url: &str,
+        bytes: &[u8],
+        checksum_hex: &str,
+    ) -> Result<(), CairnError> {
         if let Some(e) = partitioned(&self.faults) {
             return Err(e);
         }
         // bucket semantics: reject corrupt uploads
         let digest = cairn_core::hash::hex_encode(&Sha256::digest(bytes));
         if digest != checksum_hex {
-            return Err(CairnError::new(ErrorKind::ChecksumMismatch, "sim bucket: checksum mismatch"));
+            return Err(CairnError::new(
+                ErrorKind::ChecksumMismatch,
+                "sim bucket: checksum mismatch",
+            ));
         }
         // store at the key the presigned URL names (prefix = ".../objects/")
         let path = url.split("/objects/").nth(1).unwrap_or("");
@@ -100,12 +133,20 @@ impl cairn_sync::plane::Plane for InProcPlane {
         self.state.store.put(key, bytes).await
     }
 
-    async fn put_manifest(&self, tenant: &str, manifest_hash: &str, bytes: &[u8]) -> Result<(), CairnError> {
+    async fn put_manifest(
+        &self,
+        tenant: &str,
+        manifest_hash: &str,
+        bytes: &[u8],
+    ) -> Result<(), CairnError> {
         if let Some(e) = partitioned(&self.faults) {
             return Err(e);
         }
         if Hash::of(bytes).hex() != manifest_hash {
-            return Err(CairnError::new(ErrorKind::ChecksumMismatch, "manifest hash mismatch"));
+            return Err(CairnError::new(
+                ErrorKind::ChecksumMismatch,
+                "manifest hash mismatch",
+            ));
         }
         cairn_server::upload::register_manifest(&self.state, tenant, manifest_hash, bytes).await
     }
@@ -114,7 +155,10 @@ impl cairn_sync::plane::Plane for InProcPlane {
         if let Some(e) = partitioned(&self.faults) {
             return Err(e);
         }
-        self.state.store.get(&LocalFsStore::object_key(tenant, manifest_hash)).await
+        self.state
+            .store
+            .get(&LocalFsStore::object_key(tenant, manifest_hash))
+            .await
     }
 
     async fn append(
@@ -129,17 +173,38 @@ impl cairn_sync::plane::Plane for InProcPlane {
         if let Some(e) = partitioned(&self.faults) {
             return Err(e);
         }
-        cairn_server::journal::append(&self.state.db, &self.state.clock, tenant, project, device, request_id, op, lease_token).await
+        cairn_server::journal::append(
+            &self.state.db,
+            &self.state.clock,
+            tenant,
+            project,
+            device,
+            request_id,
+            op,
+            lease_token,
+        )
+        .await
     }
 
-    async fn fetch_batch(&self, tenant: &str, project: &str, after: u64, limit: u32) -> Result<Vec<Entry>, CairnError> {
+    async fn fetch_batch(
+        &self,
+        tenant: &str,
+        project: &str,
+        after: u64,
+        limit: u32,
+    ) -> Result<Vec<Entry>, CairnError> {
         if let Some(e) = partitioned(&self.faults) {
             return Err(e);
         }
         cairn_server::journal::batch(&self.state.db, tenant, project, after, limit)
             .await?
             .into_iter()
-            .map(|e| Entry { seq: e.seq, device_id: e.device_id, op: e.op, server_ts: e.server_ts })
+            .map(|e| Entry {
+                seq: e.seq,
+                device_id: e.device_id,
+                op: e.op,
+                server_ts: e.server_ts,
+            })
             .map(Ok)
             .collect()
     }

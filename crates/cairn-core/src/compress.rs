@@ -49,8 +49,8 @@ pub fn train_project_dict(project_id: &str, previous_version: &[u8]) -> Option<P
 
 /// Extension sniff table (SPEC §6).
 const MEDIA_EXTS: &[&str] = &[
-    "braw", "prores", "mxf", "r3d", "wav", "mp4", "mov", "m4v", "avi", "mkv", "aac", "aif",
-    "aiff", "bwf", "gpr", "arw", "dng", "cr2", "cr3", "nef",
+    "braw", "prores", "mxf", "r3d", "wav", "mp4", "mov", "m4v", "avi", "mkv", "aac", "aif", "aiff",
+    "bwf", "gpr", "arw", "dng", "cr2", "cr3", "nef",
 ];
 const NLE_EXTS: &[&str] = &["prproj", "drp", "fcpxmld", "avp", "veg", "aep", "nle"];
 const TEXTISH_EXTS: &[&str] = &[
@@ -94,13 +94,20 @@ impl DictRegistry {
 
     /// Insert/replace a project dictionary.
     pub fn put(&self, dict: ProjectDict) {
-        self.inner.lock().expect("dict registry poisoned").insert(dict.project_id.clone(), dict);
+        self.inner
+            .lock()
+            .expect("dict registry poisoned")
+            .insert(dict.project_id.clone(), dict);
     }
 
     /// Fetch a project dictionary.
     #[must_use]
     pub fn get(&self, project_id: &str) -> Option<ProjectDict> {
-        self.inner.lock().expect("dict registry poisoned").get(project_id).cloned()
+        self.inner
+            .lock()
+            .expect("dict registry poisoned")
+            .get(project_id)
+            .cloned()
     }
 }
 
@@ -113,10 +120,12 @@ pub fn compress_chunk(
 ) -> Result<Vec<u8>, crate::error::CairnError> {
     let out = match policy {
         Compression::None => raw.to_vec(),
-        Compression::Zstd3 => zstd::bulk::compress(raw, 3).map_err(|e| crate::error::CairnError {
-            kind: crate::error::ErrorKind::Compression,
-            message: format!("zstd compress: {e}"),
-        })?,
+        Compression::Zstd3 => {
+            zstd::bulk::compress(raw, 3).map_err(|e| crate::error::CairnError {
+                kind: crate::error::ErrorKind::Compression,
+                message: format!("zstd compress: {e}"),
+            })?
+        }
         Compression::ZstdDict => {
             match dict {
                 Some(d) => zstd::bulk::Compressor::with_dictionary(3, &d.bytes)
@@ -146,11 +155,12 @@ pub fn decompress_chunk(
 ) -> Result<Vec<u8>, crate::error::CairnError> {
     let out = match policy {
         Compression::None => stored.to_vec(),
-        Compression::Zstd3 => zstd::bulk::decompress(stored, crate::CHUNK_MAX)
-            .map_err(|e| crate::error::CairnError {
+        Compression::Zstd3 => zstd::bulk::decompress(stored, crate::CHUNK_MAX).map_err(|e| {
+            crate::error::CairnError {
                 kind: crate::error::ErrorKind::Compression,
                 message: format!("zstd decompress: {e}"),
-            })?,
+            }
+        })?,
         Compression::ZstdDict => match dict {
             Some(d) => zstd::bulk::Decompressor::with_dictionary(&d.bytes)
                 .and_then(|mut dec| dec.decompress(stored, crate::CHUNK_MAX))
@@ -158,11 +168,12 @@ pub fn decompress_chunk(
                     kind: crate::error::ErrorKind::Compression,
                     message: format!("zstd dict decompress: {e}"),
                 })?,
-            None => zstd::bulk::decompress(stored, crate::CHUNK_MAX)
-                .map_err(|e| crate::error::CairnError {
+            None => zstd::bulk::decompress(stored, crate::CHUNK_MAX).map_err(|e| {
+                crate::error::CairnError {
                     kind: crate::error::ErrorKind::Compression,
                     message: format!("zstd decompress (no dict): {e}"),
-                })?,
+                }
+            })?,
         },
     };
     Ok(out)
@@ -190,7 +201,10 @@ mod tests {
     fn zstd_roundtrip_and_integrity() {
         let raw = vec![7u8; 2 * 1024 * 1024];
         let stored = compress_chunk(&raw, Compression::Zstd3, None).unwrap();
-        assert!(stored.len() < 100 * 1024, "repetitive chunk should compress hard");
+        assert!(
+            stored.len() < 100 * 1024,
+            "repetitive chunk should compress hard"
+        );
         let back = decompress_chunk(&stored, Compression::Zstd3, None).unwrap();
         assert_eq!(raw, back);
         assert_eq!(Hash::of(&back), Hash::of(&raw));
@@ -209,11 +223,14 @@ mod tests {
         }
         let dict = train_project_dict("p1", &prev).expect("dict trains on structured sample");
         let dict2 = dict.clone();
-        let raw: Vec<u8> = prev.iter().take(512 * 1024).cloned().collect();
+        let raw: Vec<u8> = prev.iter().take(512 * 1024).copied().collect();
         let stored = compress_chunk(&raw, Compression::ZstdDict, Some(&dict)).unwrap();
         let back = decompress_chunk(&stored, Compression::ZstdDict, Some(&dict2)).unwrap();
         assert_eq!(raw, back);
-        assert!(stored.len() < raw.len(), "dict-compressed structured data must shrink");
+        assert!(
+            stored.len() < raw.len(),
+            "dict-compressed structured data must shrink"
+        );
     }
 
     #[test]

@@ -22,7 +22,11 @@ impl Bloom {
         let num_bits = (m.ceil() as u64).max(64);
         let words = (num_bits / 64 + 1) as usize;
         let k = ((num_bits as f64 / expected_items.max(1) as f64) * ln2).ceil() as u32;
-        Bloom { bits: vec![0u64; words], num_bits, k: k.clamp(1, 16) }
+        Bloom {
+            bits: vec![0u64; words],
+            num_bits,
+            k: k.clamp(1, 16),
+        }
     }
 }
 
@@ -30,7 +34,11 @@ impl Bloom {
     /// Empty bloom (everything "maybe present" → always authoritative check).
     #[must_use]
     pub fn empty() -> Self {
-        Bloom { bits: vec![0u64; 1], num_bits: 64, k: 1 }
+        Bloom {
+            bits: vec![0u64; 1],
+            num_bits: 64,
+            k: 1,
+        }
     }
 
     /// Insert an item (hex hash string or any bytes).
@@ -76,12 +84,12 @@ impl Bloom {
     }
 
     /// Adversarial-test helper: set every bit (worst-case "maybe present" for all items).
-/// Used by §15.2 to prove the authoritative check can never be skipped.
-pub fn corrupt_all_bits(&mut self) {
-    for w in self.bits.iter_mut() {
-        *w = u64::MAX;
+    /// Used by §15.2 to prove the authoritative check can never be skipped.
+    pub fn corrupt_all_bits(&mut self) {
+        for w in self.bits.iter_mut() {
+            *w = u64::MAX;
+        }
     }
-}
 
     /// Parse a serialized bloom.
     #[must_use]
@@ -95,11 +103,18 @@ pub fn corrupt_all_bits(&mut self) {
         if rest.len() % 8 != 0 {
             return None;
         }
-        let words = rest
-            .chunks_exact(8)
-            .map(|w| u64::from_le_bytes(w.try_into().expect("chunk of 8")))
+        let words: Vec<u64> = rest
+            .chunks(8)
+            .map(|w| {
+                let arr: [u8; 8] = w.try_into().expect("chunk of 8");
+                u64::from_le_bytes(arr)
+            })
             .collect();
-        Some(Bloom { bits: words, num_bits, k: k.clamp(1, 16) })
+        Some(Bloom {
+            bits: words,
+            num_bits,
+            k: k.clamp(1, 16),
+        })
     }
 }
 
@@ -111,17 +126,26 @@ mod tests {
     #[test]
     fn negatives_are_certain() {
         let mut b = Bloom::with_fpp(10_000, 0.01);
-        let present: Vec<Hash> = (0..1000).map(|i| Hash::of(format!("chunk-{i}").as_bytes())).collect();
+        let present: Vec<Hash> = (0..1000)
+            .map(|i| Hash::of(format!("chunk-{i}").as_bytes()))
+            .collect();
         for h in &present {
             b.insert(h.hex().as_bytes());
         }
         for h in &present {
-            assert!(b.might_contain(h.hex().as_bytes()), "no false negatives allowed");
+            assert!(
+                b.might_contain(h.hex().as_bytes()),
+                "no false negatives allowed"
+            );
         }
         // absent items: overwhelmingly negative (fpp 1%)
-        let absent: Vec<Hash> =
-            (1000..2000).map(|i| Hash::of(format!("chunk-{i}").as_bytes())).collect();
-        let positives = absent.iter().filter(|h| b.might_contain(h.hex().as_bytes())).count();
+        let absent: Vec<Hash> = (1000..2000)
+            .map(|i| Hash::of(format!("chunk-{i}").as_bytes()))
+            .collect();
+        let positives = absent
+            .iter()
+            .filter(|h| b.might_contain(h.hex().as_bytes()))
+            .count();
         assert!(positives < 60, "fpp too high: {positives}/1000");
     }
 
@@ -133,11 +157,15 @@ mod tests {
         for w in b.bits.iter_mut() {
             *w = u64::MAX; // worst case: everything "maybe present"
         }
-        let missing: Vec<Hash> = (0..50).map(|i| Hash::of(format!("m-{i}").as_bytes())).collect();
+        let missing: Vec<Hash> = (0..50)
+            .map(|i| Hash::of(format!("m-{i}").as_bytes()))
+            .collect();
         // authoritative check returns exact missing set regardless of bloom answers
         let authoritative_missing = missing.clone();
-        let bloom_says_missing: Vec<&Hash> =
-            missing.iter().filter(|h| !b.might_contain(h.hex().as_bytes())).collect();
+        let bloom_says_missing: Vec<&Hash> = missing
+            .iter()
+            .filter(|h| !b.might_contain(h.hex().as_bytes()))
+            .collect();
         assert!(bloom_says_missing.is_empty());
         assert_eq!(authoritative_missing.len(), missing.len());
     }
@@ -152,7 +180,10 @@ mod tests {
         let b2 = Bloom::parse(&bytes).unwrap();
         for i in 0..200u32 {
             let h = Hash::of(&i.to_le_bytes()).hex();
-            assert_eq!(b.might_contain(h.as_bytes()), b2.might_contain(h.as_bytes()));
+            assert_eq!(
+                b.might_contain(h.as_bytes()),
+                b2.might_contain(h.as_bytes())
+            );
         }
         assert!(Bloom::parse(b"garbage").is_none());
     }

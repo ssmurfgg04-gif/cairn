@@ -4,14 +4,13 @@
 //! Every root/lookup is tenant-scoped (I3).
 
 use std::collections::HashSet;
-use std::sync::Arc;
 
+use crate::ServerState;
 use cairn_core::clock::SystemClock;
-use prost::Message as _;
 use cairn_core::hash::Hash;
 use cairn_core::manifest::Manifest;
 use cairn_core::{CairnError, ErrorKind};
-use crate::ServerState;
+use prost::Message as _;
 use sqlx::Row;
 
 use super::bump_epoch;
@@ -23,44 +22,57 @@ pub async fn mark(state: &ServerState, tenant_id: &str) -> Result<HashSet<String
     let mut live = HashSet::new();
 
     // root 1: refs → commits → trees → manifests
-    let refs: Vec<String> = sqlx::query(
-        "SELECT commit_hash FROM refs WHERE tenant_id=?1",
-    )
-    .bind(tenant_id)
-    .fetch_all(&state.db)
-    .await
-    .map_err(db_err)?
-    .into_iter()
-    .map(|r| r.get(0))
-    .collect();
+    let refs: Vec<String> = sqlx::query("SELECT commit_hash FROM refs WHERE tenant_id=?1")
+        .bind(tenant_id)
+        .fetch_all(&state.db)
+        .await
+        .map_err(db_err)?
+        .into_iter()
+        .map(|r| r.get(0))
+        .collect();
     for commit_hex in refs {
         let commit_bytes = state
             .store
-            .get(&crate::storage::LocalFsStore::object_key(tenant_id, &commit_hex))
+            .get(&crate::storage::LocalFsStore::object_key(
+                tenant_id,
+                &commit_hex,
+            ))
             .await
             .unwrap_or_default();
         // commit layout: magic(4) ver(1) tree(32) parent(32) ...
         if commit_bytes.len() >= 37 {
-            let tree_hex = Hash::from_slice(&commit_bytes[5..37]).map(|h| h.hex()).unwrap_or_default();
+            let tree_hex = Hash::from_slice(&commit_bytes[5..37])
+                .map(|h| h.hex())
+                .unwrap_or_default();
             if let Ok(tree_bytes) = state
                 .store
-                .get(&crate::storage::LocalFsStore::object_key(tenant_id, &tree_hex))
+                .get(&crate::storage::LocalFsStore::object_key(
+                    tenant_id, &tree_hex,
+                ))
                 .await
             {
                 // tree layout: magic(4) ver(1) u32 n | (u16 len, name, u8 kind, hash 32)*
                 if tree_bytes.len() > 9 {
-                    let n = u32::from_le_bytes([tree_bytes[5], tree_bytes[6], tree_bytes[7], tree_bytes[8]]) as usize;
+                    let n = u32::from_le_bytes([
+                        tree_bytes[5],
+                        tree_bytes[6],
+                        tree_bytes[7],
+                        tree_bytes[8],
+                    ]) as usize;
                     let mut pos = 9;
                     for _ in 0..n {
                         if pos + 2 > tree_bytes.len() {
                             break;
                         }
-                        let name_len = u16::from_le_bytes([tree_bytes[pos], tree_bytes[pos + 1]]) as usize;
+                        let name_len =
+                            u16::from_le_bytes([tree_bytes[pos], tree_bytes[pos + 1]]) as usize;
                         pos += 2 + name_len + 1;
                         if pos + 32 > tree_bytes.len() {
                             break;
                         }
-                        let mh = Hash::from_slice(&tree_bytes[pos..pos + 32]).map(|h| h.hex()).unwrap_or_default();
+                        let mh = Hash::from_slice(&tree_bytes[pos..pos + 32])
+                            .map(|h| h.hex())
+                            .unwrap_or_default();
                         pos += 32;
                         live.insert(mh.clone());
                         collect_manifest_chunks(state, tenant_id, &mh, &mut live).await;
@@ -71,14 +83,15 @@ pub async fn mark(state: &ServerState, tenant_id: &str) -> Result<HashSet<String
     }
 
     // root 2: trash tombstones protect their content until purge
-    let trash: Vec<String> = sqlx::query("SELECT manifest_hash FROM trash WHERE tenant_id=?1 AND manifest_hash<>''")
-        .bind(tenant_id)
-        .fetch_all(&state.db)
-        .await
-        .map_err(db_err)?
-        .into_iter()
-        .map(|r| r.get(0))
-        .collect();
+    let trash: Vec<String> =
+        sqlx::query("SELECT manifest_hash FROM trash WHERE tenant_id=?1 AND manifest_hash<>''")
+            .bind(tenant_id)
+            .fetch_all(&state.db)
+            .await
+            .map_err(db_err)?
+            .into_iter()
+            .map(|r| r.get(0))
+            .collect();
     for mh in trash {
         live.insert(mh.clone());
         collect_manifest_chunks(state, tenant_id, &mh, &mut live).await;
@@ -159,7 +172,10 @@ async fn collect_manifest_chunks(
 ) {
     let bytes = match state
         .store
-        .get(&crate::storage::LocalFsStore::object_key(tenant_id, manifest_hex))
+        .get(&crate::storage::LocalFsStore::object_key(
+            tenant_id,
+            manifest_hex,
+        ))
         .await
     {
         Ok(b) => b,
@@ -184,22 +200,21 @@ pub async fn gc_pass(
     let live = mark(state, tenant_id).await?;
 
     // scan all chunk rows for the tenant
-    let rows: Vec<(String, String, i64)> = sqlx::query(
-        "SELECT hash, state, last_touched FROM chunks WHERE tenant_id=?1",
-    )
-    .bind(tenant_id)
-    .fetch_all(&state.db)
-    .await
-    .map_err(db_err)?
-    .into_iter()
-    .map(|r| (r.get(0), r.get(1), r.get(2)))
-    .collect();
+    let rows: Vec<(String, String, i64)> =
+        sqlx::query("SELECT hash, state, last_touched FROM chunks WHERE tenant_id=?1")
+            .bind(tenant_id)
+            .fetch_all(&state.db)
+            .await
+            .map_err(db_err)?
+            .into_iter()
+            .map(|r| (r.get(0), r.get(1), r.get(2)))
+            .collect();
     let scanned = rows.len() as u64;
 
     let mut removed = 0u64;
     let mut violations = 0u64;
     for (hash, tier_state, last_touched) in &rows {
-        let reachable = live.contains(hash) || tier_state == "deleting";
+        let _reachable = live.contains(hash) || tier_state == "deleting";
         if live.contains(hash) {
             // (d): reachable objects must NEVER be swept
             if tier_state == "deleting" {

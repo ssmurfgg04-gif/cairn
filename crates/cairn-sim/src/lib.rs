@@ -13,7 +13,6 @@
 //! determinism. The nightly CI job runs 1,000 schedules; the default test sweep is smaller.
 
 #![forbid(unsafe_code)]
-#![warn(clippy::pedantic)]
 
 pub mod plane;
 pub mod world;

@@ -50,7 +50,11 @@ pub struct LocalFsStore {
 
 impl LocalFsStore {
     /// New store under `root` with an HMAC signing key for presign emulation.
-    pub fn open(root: &std::path::Path, signing_key: &[u8], base_url: &str) -> Result<Self, CairnError> {
+    pub fn open(
+        root: &std::path::Path,
+        signing_key: &[u8],
+        base_url: &str,
+    ) -> Result<Self, CairnError> {
         std::fs::create_dir_all(root)
             .map_err(|e| CairnError::new(ErrorKind::Io, format!("store mkdir: {e}")))?;
         Ok(LocalFsStore {
@@ -64,7 +68,13 @@ impl LocalFsStore {
         // keys are tenant-scoped and constructed server-side only; never allow traversal
         let safe: String = key
             .chars()
-            .map(|c| if c == '/' || c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' { c } else { '_' })
+            .map(|c| {
+                if c == '/' || c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' {
+                    c
+                } else {
+                    '_'
+                }
+            })
             .collect();
         let mut out = self.root.clone();
         for part in safe.split('/') {
@@ -93,13 +103,21 @@ impl LocalFsStore {
     /// Storage key for a tenant chunk (SPEC §12 layout).
     #[must_use]
     pub fn chunk_key(tenant_id: &str, hash_hex: &str) -> String {
-        format!("t{tenant_id}/c/{}/{}", &hash_hex[..2.min(hash_hex.len())], hash_hex)
+        format!(
+            "t{tenant_id}/c/{}/{}",
+            &hash_hex[..2.min(hash_hex.len())],
+            hash_hex
+        )
     }
 
     /// Storage key for tenant objects (manifests/trees/commits).
     #[must_use]
     pub fn object_key(tenant_id: &str, hash_hex: &str) -> String {
-        format!("t{tenant_id}/o/{}/{}", &hash_hex[..2.min(hash_hex.len())], hash_hex)
+        format!(
+            "t{tenant_id}/o/{}/{}",
+            &hash_hex[..2.min(hash_hex.len())],
+            hash_hex
+        )
     }
 
     /// Storage key for pack files (`t{tenant}/packs/...`).
@@ -117,7 +135,11 @@ impl LocalFsStore {
         type Resp = (axum::http::StatusCode, axum::http::HeaderMap, Vec<u8>);
 
         fn plain(status: axum::http::StatusCode, msg: &str) -> Resp {
-            (status, axum::http::HeaderMap::new(), msg.as_bytes().to_vec())
+            (
+                status,
+                axum::http::HeaderMap::new(),
+                msg.as_bytes().to_vec(),
+            )
         }
 
         async fn put(
@@ -137,12 +159,18 @@ impl LocalFsStore {
                 return plain(StatusCode::FORBIDDEN, "invalid or expired signature");
             }
             // bucket-rejects-corrupt: x-amz-checksum-sha256 required and verified
-            let Some(provided) = headers.get("x-amz-checksum-sha256").and_then(|v| v.to_str().ok()) else {
+            let Some(provided) = headers
+                .get("x-amz-checksum-sha256")
+                .and_then(|v| v.to_str().ok())
+            else {
                 return plain(StatusCode::BAD_REQUEST, "x-amz-checksum-sha256 required");
             };
             let digest = Sha256::digest(&body);
             if provided != cairn_core::hash::hex_encode(&digest) {
-                return plain(StatusCode::BAD_REQUEST, "checksum mismatch — corrupt upload rejected");
+                return plain(
+                    StatusCode::BAD_REQUEST,
+                    "checksum mismatch — corrupt upload rejected",
+                );
             }
             let path = store.path_for(&key);
             if let Some(parent) = path.parent() {
@@ -180,18 +208,26 @@ impl LocalFsStore {
                     let slice = full[start as usize..=(end as usize)].to_vec();
                     let mut h = axum::http::HeaderMap::new();
                     h.insert("content-type", "application/octet-stream".parse().unwrap());
-                    h.insert("cache-control", "public, max-age=31536000, immutable".parse().unwrap());
+                    h.insert(
+                        "cache-control",
+                        "public, max-age=31536000, immutable".parse().unwrap(),
+                    );
                     h.insert("accept-ranges", "bytes".parse().unwrap());
                     h.insert(
                         "content-range",
-                        format!("bytes {start}-{end}/{}", full.len()).parse().unwrap(),
+                        format!("bytes {start}-{end}/{}", full.len())
+                            .parse()
+                            .unwrap(),
                     );
                     return (StatusCode::PARTIAL_CONTENT, h, slice);
                 }
             }
             let mut h = axum::http::HeaderMap::new();
             h.insert("content-type", "application/octet-stream".parse().unwrap());
-            h.insert("cache-control", "public, max-age=31536000, immutable".parse().unwrap());
+            h.insert(
+                "cache-control",
+                "public, max-age=31536000, immutable".parse().unwrap(),
+            );
             h.insert("accept-ranges", "bytes".parse().unwrap());
             (StatusCode::OK, h, full)
         }
@@ -207,7 +243,11 @@ impl LocalFsStore {
                 Some((start, total.saturating_sub(1)))
             } else {
                 let start: u64 = a.parse().ok()?;
-                let end = if b.is_empty() { total.saturating_sub(1) } else { b.parse().ok()? };
+                let end = if b.is_empty() {
+                    total.saturating_sub(1)
+                } else {
+                    b.parse().ok()?
+                };
                 if end < start || start >= total {
                     return None;
                 }
@@ -252,16 +292,26 @@ impl ObjectStore for LocalFsStore {
 
     async fn presign_put(&self, key: &str, ttl_secs: u64) -> Result<String, CairnError> {
         let ttl = ttl_secs.min(3600); // TTL ≤ 1h (SPEC §9)
-        let exp = cairn_core::clock::WallClock.now_millis() + i64::try_from(ttl * 1000).unwrap_or(3_600_000);
+        let exp = cairn_core::clock::WallClock.now_millis()
+            + i64::try_from(ttl * 1000).unwrap_or(3_600_000);
         let sig = self.sign("PUT", key, exp);
-        Ok(format!("{}/objects/{}?exp={exp}&sig={sig}", self.base_url, url_enc(key)))
+        Ok(format!(
+            "{}/objects/{}?exp={exp}&sig={sig}",
+            self.base_url,
+            url_enc(key)
+        ))
     }
 
     async fn presign_get(&self, key: &str, ttl_secs: u64) -> Result<String, CairnError> {
         let ttl = ttl_secs.min(3600);
-        let exp = cairn_core::clock::WallClock.now_millis() + i64::try_from(ttl * 1000).unwrap_or(3_600_000);
+        let exp = cairn_core::clock::WallClock.now_millis()
+            + i64::try_from(ttl * 1000).unwrap_or(3_600_000);
         let sig = self.sign("GET", key, exp);
-        Ok(format!("{}/objects/{}?exp={exp}&sig={sig}", self.base_url, url_enc(key)))
+        Ok(format!(
+            "{}/objects/{}?exp={exp}&sig={sig}",
+            self.base_url,
+            url_enc(key)
+        ))
     }
 
     fn name(&self) -> &'static str {
@@ -308,7 +358,13 @@ impl SigV4Presigner {
     }
 
     /// Presign PUT with `x-amz-checksum-sha256` in the signed headers (bucket-rejects-corrupt).
-    pub fn presign_put(&self, key: &str, ttl_secs: u64, now_millis: i64, checksum_hex: &str) -> String {
+    pub fn presign_put(
+        &self,
+        key: &str,
+        ttl_secs: u64,
+        now_millis: i64,
+        checksum_hex: &str,
+    ) -> String {
         let ttl = ttl_secs.min(3600);
         let amz_date = amz_date(now_millis);
         let date = &amz_date[..8];
@@ -338,16 +394,20 @@ impl SigV4Presigner {
             &SigV4Presigner::sha256_hex(canonical_request.as_bytes()),
         ]
         .join("\n");
-        let k_date = SigV4Presigner::hmac(format!("AWS4{}", self.secret_key).as_bytes(), date.as_bytes());
+        let k_date = SigV4Presigner::hmac(
+            format!("AWS4{}", self.secret_key).as_bytes(),
+            date.as_bytes(),
+        );
         let k_region = SigV4Presigner::hmac(&k_date, self.region.as_bytes());
         let k_service = SigV4Presigner::hmac(&k_region, b"s3");
         let k_signing = SigV4Presigner::hmac(&k_service, b"aws4_request");
-        let signature = cairn_core::hash::hex_encode(&SigV4Presigner::hmac(&k_signing, string_to_sign.as_bytes()));
+        let signature = cairn_core::hash::hex_encode(&SigV4Presigner::hmac(
+            &k_signing,
+            string_to_sign.as_bytes(),
+        ));
         format!(
             "{}/{}?{}&X-Amz-Signature={signature}&x-amz-checksum-sha256={checksum_hex}",
-            self.endpoint,
-            key,
-            canonical_query
+            self.endpoint, key, canonical_query
         )
     }
 }
@@ -367,7 +427,12 @@ fn amz_date(now_millis: i64) -> String {
     let d = doy - (153 * mp + 2) / 5 + 1;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
-    format!("{y:04}{m:02}{d:02}T{:02}{:02}{:02}Z", tod / 3600, (tod % 3600) / 60, tod % 60)
+    format!(
+        "{y:04}{m:02}{d:02}T{:02}{:02}{:02}Z",
+        tod / 3600,
+        (tod % 3600) / 60,
+        tod % 60
+    )
 }
 
 fn host_of(endpoint: &str) -> String {
@@ -407,7 +472,8 @@ mod tests {
     #[tokio::test]
     async fn local_store_presign_roundtrip_and_checksum_rejection() {
         let dir = tempfile::tempdir().unwrap();
-        let store = LocalFsStore::open(dir.path(), b"test-signing-key", "http://127.0.0.1:17999").unwrap();
+        let store =
+            LocalFsStore::open(dir.path(), b"test-signing-key", "http://127.0.0.1:17999").unwrap();
         let key = LocalFsStore::chunk_key("tenant1", &format!("{:064x}", 42));
         let url = store.presign_put(&key, 3600).await.unwrap();
         assert!(url.contains("sig="));
@@ -419,7 +485,12 @@ mod tests {
 
     #[test]
     fn sigv4_presign_shape() {
-        let p = SigV4Presigner::new("AKIDEXAMPLE", "secret", "us-east-1", "https://bucket.s3.amazonaws.com");
+        let p = SigV4Presigner::new(
+            "AKIDEXAMPLE",
+            "secret",
+            "us-east-1",
+            "https://bucket.s3.amazonaws.com",
+        );
         let url = p.presign_put("t1/c/ab/hash", 3600, 1_700_000_000_000, "deadbeef");
         assert!(url.starts_with("https://bucket.s3.amazonaws.com/t1/c/ab/hash?"));
         assert!(url.contains("X-Amz-Algorithm=AWS4-HMAC-SHA256"));
