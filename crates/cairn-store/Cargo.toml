@@ -3,10 +3,30 @@ name = "cairn-store"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Cairn cairn-store"
+description = "Cairn local store: chunk CAS + client SQLite (WAL) + outbox + header cache"
 
 [dependencies]
 cairn-core = { path = "../cairn-core" }
+rusqlite = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+hex = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+proptest = { workspace = true }
 
 [lints.rust]
 unsafe_code = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+doc_markdown = "allow"

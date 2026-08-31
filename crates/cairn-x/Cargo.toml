@@ -3,10 +3,23 @@ name = "cairn-x"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Cairn cairn-x"
+description = "Cairn e2e + fault-injection harness: kill -9 at every step, crash recovery, corpus"
 
 [dependencies]
 cairn-core = { path = "../cairn-core" }
+cairn-store = { path = "../cairn-store" }
+cairn-sync = { path = "../cairn-sync" }
+cairn-server = { path = "../cairn-server" }
+clap = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tempfile = { workspace = true }
+rand = { workspace = true }
+
+[dev-dependencies]
+proptest = { workspace = true }
 
 [lints.rust]
 unsafe_code = "deny"

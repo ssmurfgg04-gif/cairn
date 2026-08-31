@@ -3,10 +3,42 @@ name = "cairn-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Cairn cairn-cli"
+description = "Cairn CLI + local daemon (ctl gRPC :17777, local dashboard :17778)"
+
+[[bin]]
+name = "cairn"
+path = "src/main.rs"
 
 [dependencies]
 cairn-core = { path = "../cairn-core" }
+cairn-store = { path = "../cairn-store" }
+cairn-proto = { path = "../cairn-proto" }
+tonic = { workspace = true }
+prost = { workspace = true }
+tokio = { workspace = true }
+clap = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde_json = { workspace = true }
+axum = { workspace = true }
+futures = { workspace = true }
+dirs = "5"
+keyring = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
 
 [lints.rust]
 unsafe_code = "deny"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+cast_possible_wrap = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+must_use_candidate = "allow"
+doc_markdown = "allow"
