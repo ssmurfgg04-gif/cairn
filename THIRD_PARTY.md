@@ -30,9 +30,13 @@ SQLite) · blake3 (hashing) · zstd (compression) · notify (fs watching) · fus
 keyring (OS keychain) · pasetors (PASETO v4 tokens) · uuid v7 (request ids) · thiserror /
 anyhow (error taxonomy per ADR-0010) · tracing / tracing-subscriber (observability per
 ADR-0007) · proptest (property tests) · memmap2 (large-file mmap) · unicode-normalization
-(NFC paths).
+(NFC paths) · flate2 (gzip container normalization) · zip (zip container normalization, deflate-only feature set).
 
 ## Deleted-code guarantee
 No GPL code is copied into this repository. Git's pack format knowledge is used at the format/
 spec level only. restic/syncthing/rclone/kopia are studied as references; direct ports of
 non-trivial code blocks (if ever introduced) must add a provenance header and a row above.
+
+## WO2 additions (2026-08-31)
+windows / windows-core (Microsoft-maintained Rust bindings for the Win32 CloudFilters API,
+MIT) · rcgen (dev-dependency only: self-signed TLS test certificates, MIT/Apache-2.0).

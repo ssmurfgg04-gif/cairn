@@ -158,3 +158,22 @@ made WITHOUT breaking it (the recipe every future change must follow):
 5. **Process** → every additive change ships with: regenerated stubs, a truth
    table/round-trip test, a STATUS.md row, and a minor-version note here.
    Breaking changes additionally require an ADR + UI-team migration note.
+
+### Additive changes applied (WO1 round, 2026-08-31)
+
+Following the recipe above, the WO1 AttachRoot walking skeleton added:
+
+1. **New RPCs** (new methods on existing services; old clients see `UNIMPLEMENTED`
+   and degrade — nothing repurposed):
+   - `Journal.FetchBatch(FetchBatchRequest) → FetchBatchResponse` — bounded
+     cursor-replay pull (the guarantee side of §7.1; Watch remains the hint stream).
+     Server caps `limit` at 512.
+   - `Upload.RegisterManifest(RegisterManifestRequest) → Ack` — manifests live at the
+     tenant object key (`t{n}/o/…`) while sessions presign the chunk key
+     (`t{n}/c/…`); this exposes the existing server-side registration with auth.
+2. **New message fields** (appended, existing numbers immutable):
+   - `ProjectStatus.files_synced = 6` — synced FILE rows for `cairn status`.
+   - `GetDownloadUrlRequest.chunk = 4` — presign the chunk-key namespace for
+     hydration GETs (default `false` preserves the frozen manifest semantics).
+3. **Semantics unchanged**: ports, handshake, error codes, auth model, journal
+   conflict rule, presign TTL cap — all untouched.
