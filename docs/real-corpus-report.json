@@ -1,0 +1,3674 @@
+{
+  "files": [
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/ApplyEyeMakeup/v_ApplyEyeMakeup_g03_c01.avi",
+      "bytes": 359004,
+      "chunks": 1,
+      "avg_chunk": 359004,
+      "ingest_mib_s": 1062.8176654252984,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/ApplyEyeMakeup/v_ApplyEyeMakeup_g03_c03.avi",
+      "bytes": 216930,
+      "chunks": 1,
+      "avg_chunk": 216930,
+      "ingest_mib_s": 1040.1653634032934,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/ApplyEyeMakeup/v_ApplyEyeMakeup_g03_c05.avi",
+      "bytes": 279860,
+      "chunks": 1,
+      "avg_chunk": 279860,
+      "ingest_mib_s": 1141.4659871757226,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/ApplyEyeMakeup/v_ApplyEyeMakeup_g23_c02.avi",
+      "bytes": 191528,
+      "chunks": 1,
+      "avg_chunk": 191528,
+      "ingest_mib_s": 1114.8124708421196,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/ApplyEyeMakeup/v_ApplyEyeMakeup_g23_c04.avi",
+      "bytes": 285328,
+      "chunks": 1,
+      "avg_chunk": 285328,
+      "ingest_mib_s": 1111.3016387179557,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/ApplyEyeMakeup/v_ApplyEyeMakeup_g23_c06.avi",
+      "bytes": 211672,
+      "chunks": 1,
+      "avg_chunk": 211672,
+      "ingest_mib_s": 1104.669227161929,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/ApplyLipstick/v_ApplyLipstick_g14_c01.avi",
+      "bytes": 338778,
+      "chunks": 1,
+      "avg_chunk": 338778,
+      "ingest_mib_s": 1137.7434775045042,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/ApplyLipstick/v_ApplyLipstick_g14_c03.avi",
+      "bytes": 340458,
+      "chunks": 1,
+      "avg_chunk": 340458,
+      "ingest_mib_s": 1144.7279273965191,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/ApplyLipstick/v_ApplyLipstick_g16_c02.avi",
+      "bytes": 233886,
+      "chunks": 1,
+      "avg_chunk": 233886,
+      "ingest_mib_s": 1084.6519024085048,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/ApplyLipstick/v_ApplyLipstick_g16_c04.avi",
+      "bytes": 259316,
+      "chunks": 1,
+      "avg_chunk": 259316,
+      "ingest_mib_s": 1113.0800347161664,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/Archery/v_Archery_g16_c01.avi",
+      "bytes": 663504,
+      "chunks": 1,
+      "avg_chunk": 663504,
+      "ingest_mib_s": 1008.2550019165701,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/Archery/v_Archery_g16_c03.avi",
+      "bytes": 727616,
+      "chunks": 1,
+      "avg_chunk": 727616,
+      "ingest_mib_s": 1095.1962717489776,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/Archery/v_Archery_g16_c05.avi",
+      "bytes": 1117968,
+      "chunks": 1,
+      "avg_chunk": 1117968,
+      "ingest_mib_s": 1075.113713349423,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/Archery/v_Archery_g17_c02.avi",
+      "bytes": 318948,
+      "chunks": 1,
+      "avg_chunk": 318948,
+      "ingest_mib_s": 1016.5038594181832,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/Archery/v_Archery_g17_c04.avi",
+      "bytes": 242184,
+      "chunks": 1,
+      "avg_chunk": 242184,
+      "ingest_mib_s": 1132.9016561756573,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/Archery/v_Archery_g21_c02.avi",
+      "bytes": 497768,
+      "chunks": 1,
+      "avg_chunk": 497768,
+      "ingest_mib_s": 1078.785013019058,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/Archery/v_Archery_g21_c04.avi",
+      "bytes": 586430,
+      "chunks": 1,
+      "avg_chunk": 586430,
+      "ingest_mib_s": 1137.2316448344718,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BabyCrawling/v_BabyCrawling_g03_c01.avi",
+      "bytes": 845316,
+      "chunks": 1,
+      "avg_chunk": 845316,
+      "ingest_mib_s": 1084.6045033948078,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BabyCrawling/v_BabyCrawling_g03_c03.avi",
+      "bytes": 788912,
+      "chunks": 1,
+      "avg_chunk": 788912,
+      "ingest_mib_s": 1098.219780119151,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BabyCrawling/v_BabyCrawling_g04_c01.avi",
+      "bytes": 226530,
+      "chunks": 1,
+      "avg_chunk": 226530,
+      "ingest_mib_s": 1122.4098864554244,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BabyCrawling/v_BabyCrawling_g04_c03.avi",
+      "bytes": 294966,
+      "chunks": 1,
+      "avg_chunk": 294966,
+      "ingest_mib_s": 1060.8745603148511,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BabyCrawling/v_BabyCrawling_g19_c02.avi",
+      "bytes": 309938,
+      "chunks": 1,
+      "avg_chunk": 309938,
+      "ingest_mib_s": 1136.0549397470234,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BabyCrawling/v_BabyCrawling_g19_c04.avi",
+      "bytes": 208152,
+      "chunks": 1,
+      "avg_chunk": 208152,
+      "ingest_mib_s": 1121.774504456339,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BabyCrawling/v_BabyCrawling_g22_c02.avi",
+      "bytes": 534928,
+      "chunks": 1,
+      "avg_chunk": 534928,
+      "ingest_mib_s": 1113.4790218322198,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BabyCrawling/v_BabyCrawling_g22_c04.avi",
+      "bytes": 371632,
+      "chunks": 1,
+      "avg_chunk": 371632,
+      "ingest_mib_s": 1140.4663781991721,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BabyCrawling/v_BabyCrawling_g22_c06.avi",
+      "bytes": 198262,
+      "chunks": 1,
+      "avg_chunk": 198262,
+      "ingest_mib_s": 1108.7306260845921,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BalanceBeam/v_BalanceBeam_g11_c02.avi",
+      "bytes": 229996,
+      "chunks": 1,
+      "avg_chunk": 229996,
+      "ingest_mib_s": 1092.2228157223192,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BalanceBeam/v_BalanceBeam_g11_c04.avi",
+      "bytes": 267458,
+      "chunks": 1,
+      "avg_chunk": 267458,
+      "ingest_mib_s": 1086.1021231584086,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BalanceBeam/v_BalanceBeam_g20_c01.avi",
+      "bytes": 178044,
+      "chunks": 1,
+      "avg_chunk": 178044,
+      "ingest_mib_s": 1051.9285191509682,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BalanceBeam/v_BalanceBeam_g20_c03.avi",
+      "bytes": 297080,
+      "chunks": 1,
+      "avg_chunk": 297080,
+      "ingest_mib_s": 1147.6991372250684,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BandMarching/v_BandMarching_g05_c02.avi",
+      "bytes": 392032,
+      "chunks": 1,
+      "avg_chunk": 392032,
+      "ingest_mib_s": 1083.118516743076,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BandMarching/v_BandMarching_g05_c04.avi",
+      "bytes": 397856,
+      "chunks": 1,
+      "avg_chunk": 397856,
+      "ingest_mib_s": 1145.5655254885844,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BandMarching/v_BandMarching_g05_c06.avi",
+      "bytes": 368568,
+      "chunks": 1,
+      "avg_chunk": 368568,
+      "ingest_mib_s": 1137.5536357020715,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BandMarching/v_BandMarching_g11_c01.avi",
+      "bytes": 1304574,
+      "chunks": 1,
+      "avg_chunk": 1304574,
+      "ingest_mib_s": 1024.7685612761125,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BandMarching/v_BandMarching_g11_c03.avi",
+      "bytes": 1705946,
+      "chunks": 2,
+      "avg_chunk": 852973,
+      "ingest_mib_s": 1022.848268944235,
+      "unique_chunks": 2,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BandMarching/v_BandMarching_g11_c05.avi",
+      "bytes": 1940268,
+      "chunks": 1,
+      "avg_chunk": 1940268,
+      "ingest_mib_s": 1095.656922402083,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BandMarching/v_BandMarching_g11_c07.avi",
+      "bytes": 1139520,
+      "chunks": 1,
+      "avg_chunk": 1139520,
+      "ingest_mib_s": 1097.8643999107449,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BandMarching/v_BandMarching_g22_c02.avi",
+      "bytes": 736262,
+      "chunks": 1,
+      "avg_chunk": 736262,
+      "ingest_mib_s": 1136.5119971931701,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BandMarching/v_BandMarching_g22_c04.avi",
+      "bytes": 1226860,
+      "chunks": 1,
+      "avg_chunk": 1226860,
+      "ingest_mib_s": 1119.3785876289023,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BaseballPitch/v_BaseballPitch_g11_c02.avi",
+      "bytes": 179396,
+      "chunks": 1,
+      "avg_chunk": 179396,
+      "ingest_mib_s": 1108.9132735252047,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BaseballPitch/v_BaseballPitch_g11_c04.avi",
+      "bytes": 118436,
+      "chunks": 1,
+      "avg_chunk": 118436,
+      "ingest_mib_s": 1098.5476267338147,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BaseballPitch/v_BaseballPitch_g20_c02.avi",
+      "bytes": 293460,
+      "chunks": 1,
+      "avg_chunk": 293460,
+      "ingest_mib_s": 1127.7977404678509,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BaseballPitch/v_BaseballPitch_g20_c04.avi",
+      "bytes": 268152,
+      "chunks": 1,
+      "avg_chunk": 268152,
+      "ingest_mib_s": 1050.4877003806653,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BaseballPitch/v_BaseballPitch_g22_c02.avi",
+      "bytes": 232660,
+      "chunks": 1,
+      "avg_chunk": 232660,
+      "ingest_mib_s": 1110.8200737690775,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BaseballPitch/v_BaseballPitch_g22_c04.avi",
+      "bytes": 212504,
+      "chunks": 1,
+      "avg_chunk": 212504,
+      "ingest_mib_s": 1114.1448563395425,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BaseballPitch/v_BaseballPitch_g22_c06.avi",
+      "bytes": 124614,
+      "chunks": 1,
+      "avg_chunk": 124614,
+      "ingest_mib_s": 1101.4010311830255,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BaseballPitch/v_BaseballPitch_g24_c02.avi",
+      "bytes": 310606,
+      "chunks": 1,
+      "avg_chunk": 310606,
+      "ingest_mib_s": 1133.554130506931,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BaseballPitch/v_BaseballPitch_g24_c04.avi",
+      "bytes": 295736,
+      "chunks": 1,
+      "avg_chunk": 295736,
+      "ingest_mib_s": 1105.420291044171,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BaseballPitch/v_BaseballPitch_g24_c06.avi",
+      "bytes": 307026,
+      "chunks": 1,
+      "avg_chunk": 307026,
+      "ingest_mib_s": 1107.876177368007,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/Basketball/v_Basketball_g02_c02.avi",
+      "bytes": 114802,
+      "chunks": 1,
+      "avg_chunk": 114802,
+      "ingest_mib_s": 1136.053198772157,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/Basketball/v_Basketball_g02_c04.avi",
+      "bytes": 159926,
+      "chunks": 1,
+      "avg_chunk": 159926,
+      "ingest_mib_s": 1128.6209353953493,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/Basketball/v_Basketball_g02_c06.avi",
+      "bytes": 238056,
+      "chunks": 1,
+      "avg_chunk": 238056,
+      "ingest_mib_s": 1071.3967176173849,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/Basketball/v_Basketball_g05_c02.avi",
+      "bytes": 268852,
+      "chunks": 1,
+      "avg_chunk": 268852,
+      "ingest_mib_s": 1140.6383341984,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/Basketball/v_Basketball_g05_c04.avi",
+      "bytes": 117498,
+      "chunks": 1,
+      "avg_chunk": 117498,
+      "ingest_mib_s": 1113.2121800246532,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/Basketball/v_Basketball_g06_c02.avi",
+      "bytes": 203958,
+      "chunks": 1,
+      "avg_chunk": 203958,
+      "ingest_mib_s": 1125.855239026116,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/Basketball/v_Basketball_g06_c04.avi",
+      "bytes": 175300,
+      "chunks": 1,
+      "avg_chunk": 175300,
+      "ingest_mib_s": 1117.074313875741,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/Basketball/v_Basketball_g18_c02.avi",
+      "bytes": 290450,
+      "chunks": 1,
+      "avg_chunk": 290450,
+      "ingest_mib_s": 1072.5378791230394,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/Basketball/v_Basketball_g18_c04.avi",
+      "bytes": 397732,
+      "chunks": 1,
+      "avg_chunk": 397732,
+      "ingest_mib_s": 1151.2600296016662,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/Basketball/v_Basketball_g24_c02.avi",
+      "bytes": 257996,
+      "chunks": 1,
+      "avg_chunk": 257996,
+      "ingest_mib_s": 1119.084511809894,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/Basketball/v_Basketball_g24_c04.avi",
+      "bytes": 238156,
+      "chunks": 1,
+      "avg_chunk": 238156,
+      "ingest_mib_s": 1050.5773212237757,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BasketballDunk/v_BasketballDunk_g12_c01.avi",
+      "bytes": 237892,
+      "chunks": 1,
+      "avg_chunk": 237892,
+      "ingest_mib_s": 1139.8801718250704,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BasketballDunk/v_BasketballDunk_g12_c03.avi",
+      "bytes": 368168,
+      "chunks": 1,
+      "avg_chunk": 368168,
+      "ingest_mib_s": 1139.4942580166041,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BasketballDunk/v_BasketballDunk_g12_c05.avi",
+      "bytes": 308918,
+      "chunks": 1,
+      "avg_chunk": 308918,
+      "ingest_mib_s": 1136.6806432375163,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BasketballDunk/v_BasketballDunk_g14_c02.avi",
+      "bytes": 347614,
+      "chunks": 1,
+      "avg_chunk": 347614,
+      "ingest_mib_s": 1108.9237721049888,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BasketballDunk/v_BasketballDunk_g14_c04.avi",
+      "bytes": 378650,
+      "chunks": 1,
+      "avg_chunk": 378650,
+      "ingest_mib_s": 1089.1631651235768,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BasketballDunk/v_BasketballDunk_g14_c06.avi",
+      "bytes": 545862,
+      "chunks": 1,
+      "avg_chunk": 545862,
+      "ingest_mib_s": 1110.746279804273,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BenchPress/v_BenchPress_g05_c02.avi",
+      "bytes": 234516,
+      "chunks": 1,
+      "avg_chunk": 234516,
+      "ingest_mib_s": 1135.8595740312549,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BenchPress/v_BenchPress_g05_c04.avi",
+      "bytes": 885744,
+      "chunks": 1,
+      "avg_chunk": 885744,
+      "ingest_mib_s": 1126.1721241944952,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BenchPress/v_BenchPress_g05_c06.avi",
+      "bytes": 607366,
+      "chunks": 1,
+      "avg_chunk": 607366,
+      "ingest_mib_s": 1134.6447849698498,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BenchPress/v_BenchPress_g09_c02.avi",
+      "bytes": 226106,
+      "chunks": 1,
+      "avg_chunk": 226106,
+      "ingest_mib_s": 1069.9137395634218,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BenchPress/v_BenchPress_g09_c04.avi",
+      "bytes": 232376,
+      "chunks": 1,
+      "avg_chunk": 232376,
+      "ingest_mib_s": 1134.9360756990252,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BenchPress/v_BenchPress_g09_c06.avi",
+      "bytes": 638968,
+      "chunks": 1,
+      "avg_chunk": 638968,
+      "ingest_mib_s": 1112.7863525816394,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BenchPress/v_BenchPress_g25_c02.avi",
+      "bytes": 318458,
+      "chunks": 1,
+      "avg_chunk": 318458,
+      "ingest_mib_s": 1131.3287966254481,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BenchPress/v_BenchPress_g25_c04.avi",
+      "bytes": 617242,
+      "chunks": 1,
+      "avg_chunk": 617242,
+      "ingest_mib_s": 1135.7828226467157,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/test/BenchPress/v_BenchPress_g25_c06.avi",
+      "bytes": 365974,
+      "chunks": 1,
+      "avg_chunk": 365974,
+      "ingest_mib_s": 1142.5971291763326,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyEyeMakeup/v_ApplyEyeMakeup_g02_c03.avi",
+      "bytes": 374406,
+      "chunks": 1,
+      "avg_chunk": 374406,
+      "ingest_mib_s": 1139.7006840488436,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyEyeMakeup/v_ApplyEyeMakeup_g04_c07.avi",
+      "bytes": 279230,
+      "chunks": 1,
+      "avg_chunk": 279230,
+      "ingest_mib_s": 1075.5679034275793,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyEyeMakeup/v_ApplyEyeMakeup_g05_c02.avi",
+      "bytes": 404490,
+      "chunks": 1,
+      "avg_chunk": 404490,
+      "ingest_mib_s": 1143.3576603677225,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyEyeMakeup/v_ApplyEyeMakeup_g05_c06.avi",
+      "bytes": 217834,
+      "chunks": 1,
+      "avg_chunk": 217834,
+      "ingest_mib_s": 1137.692722015548,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyEyeMakeup/v_ApplyEyeMakeup_g06_c03.avi",
+      "bytes": 406788,
+      "chunks": 1,
+      "avg_chunk": 406788,
+      "ingest_mib_s": 1076.3942948926658,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyEyeMakeup/v_ApplyEyeMakeup_g07_c04.avi",
+      "bytes": 252624,
+      "chunks": 1,
+      "avg_chunk": 252624,
+      "ingest_mib_s": 1132.7811158862921,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyEyeMakeup/v_ApplyEyeMakeup_g07_c06.avi",
+      "bytes": 250314,
+      "chunks": 1,
+      "avg_chunk": 250314,
+      "ingest_mib_s": 1125.3383907835482,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyEyeMakeup/v_ApplyEyeMakeup_g08_c01.avi",
+      "bytes": 165124,
+      "chunks": 1,
+      "avg_chunk": 165124,
+      "ingest_mib_s": 1132.185275774976,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyEyeMakeup/v_ApplyEyeMakeup_g09_c02.avi",
+      "bytes": 568884,
+      "chunks": 1,
+      "avg_chunk": 568884,
+      "ingest_mib_s": 1112.8639115962264,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyEyeMakeup/v_ApplyEyeMakeup_g09_c06.avi",
+      "bytes": 326330,
+      "chunks": 1,
+      "avg_chunk": 326330,
+      "ingest_mib_s": 1137.4519459543924,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyEyeMakeup/v_ApplyEyeMakeup_g10_c01.avi",
+      "bytes": 224866,
+      "chunks": 1,
+      "avg_chunk": 224866,
+      "ingest_mib_s": 1122.4871698892835,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyEyeMakeup/v_ApplyEyeMakeup_g10_c05.avi",
+      "bytes": 178662,
+      "chunks": 1,
+      "avg_chunk": 178662,
+      "ingest_mib_s": 1032.5133966656979,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyEyeMakeup/v_ApplyEyeMakeup_g11_c02.avi",
+      "bytes": 270512,
+      "chunks": 1,
+      "avg_chunk": 270512,
+      "ingest_mib_s": 1140.3252679954714,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyEyeMakeup/v_ApplyEyeMakeup_g11_c04.avi",
+      "bytes": 200102,
+      "chunks": 1,
+      "avg_chunk": 200102,
+      "ingest_mib_s": 1125.129787107544,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyEyeMakeup/v_ApplyEyeMakeup_g12_c05.avi",
+      "bytes": 174024,
+      "chunks": 1,
+      "avg_chunk": 174024,
+      "ingest_mib_s": 1118.381476722809,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyEyeMakeup/v_ApplyEyeMakeup_g13_c05.avi",
+      "bytes": 190266,
+      "chunks": 1,
+      "avg_chunk": 190266,
+      "ingest_mib_s": 1121.7693269781557,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyEyeMakeup/v_ApplyEyeMakeup_g15_c06.avi",
+      "bytes": 269508,
+      "chunks": 1,
+      "avg_chunk": 269508,
+      "ingest_mib_s": 1100.7921472361252,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyEyeMakeup/v_ApplyEyeMakeup_g16_c03.avi",
+      "bytes": 156390,
+      "chunks": 1,
+      "avg_chunk": 156390,
+      "ingest_mib_s": 1127.274094468682,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyEyeMakeup/v_ApplyEyeMakeup_g17_c04.avi",
+      "bytes": 166260,
+      "chunks": 1,
+      "avg_chunk": 166260,
+      "ingest_mib_s": 1076.1141815064382,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyEyeMakeup/v_ApplyEyeMakeup_g18_c01.avi",
+      "bytes": 197574,
+      "chunks": 1,
+      "avg_chunk": 197574,
+      "ingest_mib_s": 1139.8261984649678,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyEyeMakeup/v_ApplyEyeMakeup_g18_c03.avi",
+      "bytes": 181062,
+      "chunks": 1,
+      "avg_chunk": 181062,
+      "ingest_mib_s": 1137.630969516869,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyEyeMakeup/v_ApplyEyeMakeup_g19_c02.avi",
+      "bytes": 402658,
+      "chunks": 1,
+      "avg_chunk": 402658,
+      "ingest_mib_s": 1127.3032905575028,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyEyeMakeup/v_ApplyEyeMakeup_g21_c04.avi",
+      "bytes": 568584,
+      "chunks": 1,
+      "avg_chunk": 568584,
+      "ingest_mib_s": 1118.683842744063,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyEyeMakeup/v_ApplyEyeMakeup_g22_c01.avi",
+      "bytes": 145308,
+      "chunks": 1,
+      "avg_chunk": 145308,
+      "ingest_mib_s": 1005.3796754696513,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyEyeMakeup/v_ApplyEyeMakeup_g22_c05.avi",
+      "bytes": 226898,
+      "chunks": 1,
+      "avg_chunk": 226898,
+      "ingest_mib_s": 1125.1627271987006,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyEyeMakeup/v_ApplyEyeMakeup_g24_c02.avi",
+      "bytes": 168930,
+      "chunks": 1,
+      "avg_chunk": 168930,
+      "ingest_mib_s": 1130.1671865148671,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyEyeMakeup/v_ApplyEyeMakeup_g25_c01.avi",
+      "bytes": 378228,
+      "chunks": 1,
+      "avg_chunk": 378228,
+      "ingest_mib_s": 1146.8944390608258,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyEyeMakeup/v_ApplyEyeMakeup_g25_c03.avi",
+      "bytes": 221474,
+      "chunks": 1,
+      "avg_chunk": 221474,
+      "ingest_mib_s": 1095.8496708091616,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyEyeMakeup/v_ApplyEyeMakeup_g25_c05.avi",
+      "bytes": 170978,
+      "chunks": 1,
+      "avg_chunk": 170978,
+      "ingest_mib_s": 1102.304746156863,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyEyeMakeup/v_ApplyEyeMakeup_g25_c07.avi",
+      "bytes": 225986,
+      "chunks": 1,
+      "avg_chunk": 225986,
+      "ingest_mib_s": 1090.3587733669074,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyLipstick/v_ApplyLipstick_g01_c02.avi",
+      "bytes": 205322,
+      "chunks": 1,
+      "avg_chunk": 205322,
+      "ingest_mib_s": 1116.9693847475203,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyLipstick/v_ApplyLipstick_g01_c04.avi",
+      "bytes": 461860,
+      "chunks": 1,
+      "avg_chunk": 461860,
+      "ingest_mib_s": 1079.4337467017374,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyLipstick/v_ApplyLipstick_g02_c01.avi",
+      "bytes": 132506,
+      "chunks": 1,
+      "avg_chunk": 132506,
+      "ingest_mib_s": 1125.8692887538004,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyLipstick/v_ApplyLipstick_g02_c03.avi",
+      "bytes": 122164,
+      "chunks": 1,
+      "avg_chunk": 122164,
+      "ingest_mib_s": 1098.2200046137825,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyLipstick/v_ApplyLipstick_g03_c01.avi",
+      "bytes": 265166,
+      "chunks": 1,
+      "avg_chunk": 265166,
+      "ingest_mib_s": 1132.5982361927825,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyLipstick/v_ApplyLipstick_g03_c03.avi",
+      "bytes": 271342,
+      "chunks": 1,
+      "avg_chunk": 271342,
+      "ingest_mib_s": 1064.7471829782612,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyLipstick/v_ApplyLipstick_g04_c01.avi",
+      "bytes": 158036,
+      "chunks": 1,
+      "avg_chunk": 158036,
+      "ingest_mib_s": 1122.083386820567,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyLipstick/v_ApplyLipstick_g04_c05.avi",
+      "bytes": 304038,
+      "chunks": 1,
+      "avg_chunk": 304038,
+      "ingest_mib_s": 1105.8855254815132,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyLipstick/v_ApplyLipstick_g05_c02.avi",
+      "bytes": 218814,
+      "chunks": 1,
+      "avg_chunk": 218814,
+      "ingest_mib_s": 1129.1389141886423,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyLipstick/v_ApplyLipstick_g06_c03.avi",
+      "bytes": 212204,
+      "chunks": 1,
+      "avg_chunk": 212204,
+      "ingest_mib_s": 1021.9387293713136,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyLipstick/v_ApplyLipstick_g07_c02.avi",
+      "bytes": 173358,
+      "chunks": 1,
+      "avg_chunk": 173358,
+      "ingest_mib_s": 1124.2150968553972,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyLipstick/v_ApplyLipstick_g08_c02.avi",
+      "bytes": 375756,
+      "chunks": 1,
+      "avg_chunk": 375756,
+      "ingest_mib_s": 1108.927604403996,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyLipstick/v_ApplyLipstick_g09_c04.avi",
+      "bytes": 235920,
+      "chunks": 1,
+      "avg_chunk": 235920,
+      "ingest_mib_s": 1132.5593597334223,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyLipstick/v_ApplyLipstick_g11_c04.avi",
+      "bytes": 288148,
+      "chunks": 1,
+      "avg_chunk": 288148,
+      "ingest_mib_s": 1046.5875259412953,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyLipstick/v_ApplyLipstick_g12_c04.avi",
+      "bytes": 271222,
+      "chunks": 1,
+      "avg_chunk": 271222,
+      "ingest_mib_s": 1119.080081010738,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyLipstick/v_ApplyLipstick_g13_c03.avi",
+      "bytes": 209350,
+      "chunks": 1,
+      "avg_chunk": 209350,
+      "ingest_mib_s": 1133.309406072922,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyLipstick/v_ApplyLipstick_g15_c03.avi",
+      "bytes": 288982,
+      "chunks": 1,
+      "avg_chunk": 288982,
+      "ingest_mib_s": 1088.7778325308682,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyLipstick/v_ApplyLipstick_g17_c01.avi",
+      "bytes": 157576,
+      "chunks": 1,
+      "avg_chunk": 157576,
+      "ingest_mib_s": 1060.0223188896657,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyLipstick/v_ApplyLipstick_g17_c03.avi",
+      "bytes": 140464,
+      "chunks": 1,
+      "avg_chunk": 140464,
+      "ingest_mib_s": 1120.5938479658653,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyLipstick/v_ApplyLipstick_g18_c02.avi",
+      "bytes": 345024,
+      "chunks": 1,
+      "avg_chunk": 345024,
+      "ingest_mib_s": 1134.6929372986945,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyLipstick/v_ApplyLipstick_g18_c04.avi",
+      "bytes": 321062,
+      "chunks": 1,
+      "avg_chunk": 321062,
+      "ingest_mib_s": 1139.1368107966198,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyLipstick/v_ApplyLipstick_g19_c02.avi",
+      "bytes": 197106,
+      "chunks": 1,
+      "avg_chunk": 197106,
+      "ingest_mib_s": 1073.4064059477519,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyLipstick/v_ApplyLipstick_g19_c04.avi",
+      "bytes": 295108,
+      "chunks": 1,
+      "avg_chunk": 295108,
+      "ingest_mib_s": 1138.9826591635428,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyLipstick/v_ApplyLipstick_g21_c01.avi",
+      "bytes": 254562,
+      "chunks": 1,
+      "avg_chunk": 254562,
+      "ingest_mib_s": 1137.7426038907845,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyLipstick/v_ApplyLipstick_g21_c03.avi",
+      "bytes": 391370,
+      "chunks": 1,
+      "avg_chunk": 391370,
+      "ingest_mib_s": 1095.6718417253949,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyLipstick/v_ApplyLipstick_g22_c02.avi",
+      "bytes": 309560,
+      "chunks": 1,
+      "avg_chunk": 309560,
+      "ingest_mib_s": 1138.801256713813,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyLipstick/v_ApplyLipstick_g22_c04.avi",
+      "bytes": 322688,
+      "chunks": 1,
+      "avg_chunk": 322688,
+      "ingest_mib_s": 1135.1335937961078,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyLipstick/v_ApplyLipstick_g22_c06.avi",
+      "bytes": 303288,
+      "chunks": 1,
+      "avg_chunk": 303288,
+      "ingest_mib_s": 1090.9453470207325,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyLipstick/v_ApplyLipstick_g23_c03.avi",
+      "bytes": 328266,
+      "chunks": 1,
+      "avg_chunk": 328266,
+      "ingest_mib_s": 1150.7951240067125,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/ApplyLipstick/v_ApplyLipstick_g24_c05.avi",
+      "bytes": 937918,
+      "chunks": 1,
+      "avg_chunk": 937918,
+      "ingest_mib_s": 1078.6525439919121,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Archery/v_Archery_g01_c04.avi",
+      "bytes": 491142,
+      "chunks": 1,
+      "avg_chunk": 491142,
+      "ingest_mib_s": 1133.9228486900488,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Archery/v_Archery_g02_c01.avi",
+      "bytes": 655712,
+      "chunks": 1,
+      "avg_chunk": 655712,
+      "ingest_mib_s": 1059.3774769507918,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Archery/v_Archery_g02_c05.avi",
+      "bytes": 519860,
+      "chunks": 1,
+      "avg_chunk": 519860,
+      "ingest_mib_s": 1096.6288501609254,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Archery/v_Archery_g03_c02.avi",
+      "bytes": 406632,
+      "chunks": 1,
+      "avg_chunk": 406632,
+      "ingest_mib_s": 1144.0985585832398,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Archery/v_Archery_g04_c01.avi",
+      "bytes": 722702,
+      "chunks": 1,
+      "avg_chunk": 722702,
+      "ingest_mib_s": 1111.25282087422,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Archery/v_Archery_g04_c03.avi",
+      "bytes": 602408,
+      "chunks": 1,
+      "avg_chunk": 602408,
+      "ingest_mib_s": 1147.87027510406,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Archery/v_Archery_g05_c04.avi",
+      "bytes": 139898,
+      "chunks": 1,
+      "avg_chunk": 139898,
+      "ingest_mib_s": 1044.5327961277515,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Archery/v_Archery_g06_c01.avi",
+      "bytes": 327752,
+      "chunks": 1,
+      "avg_chunk": 327752,
+      "ingest_mib_s": 1153.466520103849,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Archery/v_Archery_g06_c03.avi",
+      "bytes": 353304,
+      "chunks": 1,
+      "avg_chunk": 353304,
+      "ingest_mib_s": 1143.030958132792,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Archery/v_Archery_g06_c05.avi",
+      "bytes": 509106,
+      "chunks": 1,
+      "avg_chunk": 509106,
+      "ingest_mib_s": 1065.0713961986414,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Archery/v_Archery_g07_c01.avi",
+      "bytes": 170064,
+      "chunks": 1,
+      "avg_chunk": 170064,
+      "ingest_mib_s": 1100.6383787922616,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Archery/v_Archery_g07_c05.avi",
+      "bytes": 107272,
+      "chunks": 1,
+      "avg_chunk": 107272,
+      "ingest_mib_s": 1103.3136467708255,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Archery/v_Archery_g08_c01.avi",
+      "bytes": 1556486,
+      "chunks": 1,
+      "avg_chunk": 1556486,
+      "ingest_mib_s": 1024.9160026416569,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Archery/v_Archery_g09_c02.avi",
+      "bytes": 121978,
+      "chunks": 1,
+      "avg_chunk": 121978,
+      "ingest_mib_s": 1055.927289423248,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Archery/v_Archery_g10_c03.avi",
+      "bytes": 813656,
+      "chunks": 1,
+      "avg_chunk": 813656,
+      "ingest_mib_s": 1084.5710002988917,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Archery/v_Archery_g10_c05.avi",
+      "bytes": 735092,
+      "chunks": 1,
+      "avg_chunk": 735092,
+      "ingest_mib_s": 1116.7797094870155,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Archery/v_Archery_g11_c04.avi",
+      "bytes": 608122,
+      "chunks": 1,
+      "avg_chunk": 608122,
+      "ingest_mib_s": 1145.7823353470567,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Archery/v_Archery_g11_c06.avi",
+      "bytes": 285436,
+      "chunks": 1,
+      "avg_chunk": 285436,
+      "ingest_mib_s": 1053.688244611754,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Archery/v_Archery_g13_c03.avi",
+      "bytes": 225024,
+      "chunks": 1,
+      "avg_chunk": 225024,
+      "ingest_mib_s": 1120.5075677474936,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Archery/v_Archery_g13_c07.avi",
+      "bytes": 255818,
+      "chunks": 1,
+      "avg_chunk": 255818,
+      "ingest_mib_s": 1128.818634844554,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Archery/v_Archery_g14_c04.avi",
+      "bytes": 281638,
+      "chunks": 1,
+      "avg_chunk": 281638,
+      "ingest_mib_s": 1140.8138326184535,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Archery/v_Archery_g15_c02.avi",
+      "bytes": 347664,
+      "chunks": 1,
+      "avg_chunk": 347664,
+      "ingest_mib_s": 1086.7305399235736,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Archery/v_Archery_g19_c03.avi",
+      "bytes": 335618,
+      "chunks": 1,
+      "avg_chunk": 335618,
+      "ingest_mib_s": 1129.4378635855055,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Archery/v_Archery_g20_c05.avi",
+      "bytes": 160688,
+      "chunks": 1,
+      "avg_chunk": 160688,
+      "ingest_mib_s": 1110.6570603198202,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Archery/v_Archery_g22_c02.avi",
+      "bytes": 210064,
+      "chunks": 1,
+      "avg_chunk": 210064,
+      "ingest_mib_s": 1045.7903310254305,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Archery/v_Archery_g22_c04.avi",
+      "bytes": 213076,
+      "chunks": 1,
+      "avg_chunk": 213076,
+      "ingest_mib_s": 1048.9250782935683,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Archery/v_Archery_g23_c05.avi",
+      "bytes": 139600,
+      "chunks": 1,
+      "avg_chunk": 139600,
+      "ingest_mib_s": 1132.0538980324693,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Archery/v_Archery_g24_c04.avi",
+      "bytes": 246770,
+      "chunks": 1,
+      "avg_chunk": 246770,
+      "ingest_mib_s": 1142.6181811363651,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Archery/v_Archery_g24_c06.avi",
+      "bytes": 244878,
+      "chunks": 1,
+      "avg_chunk": 244878,
+      "ingest_mib_s": 1126.6860897499923,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Archery/v_Archery_g25_c04.avi",
+      "bytes": 401620,
+      "chunks": 1,
+      "avg_chunk": 401620,
+      "ingest_mib_s": 1091.701332665639,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BabyCrawling/v_BabyCrawling_g01_c03.avi",
+      "bytes": 497218,
+      "chunks": 1,
+      "avg_chunk": 497218,
+      "ingest_mib_s": 1147.5146499499858,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BabyCrawling/v_BabyCrawling_g02_c01.avi",
+      "bytes": 140948,
+      "chunks": 1,
+      "avg_chunk": 140948,
+      "ingest_mib_s": 1082.3790345993825,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BabyCrawling/v_BabyCrawling_g02_c03.avi",
+      "bytes": 192276,
+      "chunks": 1,
+      "avg_chunk": 192276,
+      "ingest_mib_s": 1023.9198305906588,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BabyCrawling/v_BabyCrawling_g02_c05.avi",
+      "bytes": 107980,
+      "chunks": 1,
+      "avg_chunk": 107980,
+      "ingest_mib_s": 1094.1810217985303,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BabyCrawling/v_BabyCrawling_g05_c01.avi",
+      "bytes": 583208,
+      "chunks": 1,
+      "avg_chunk": 583208,
+      "ingest_mib_s": 1149.0993004932745,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BabyCrawling/v_BabyCrawling_g06_c04.avi",
+      "bytes": 385114,
+      "chunks": 1,
+      "avg_chunk": 385114,
+      "ingest_mib_s": 1101.8243993630272,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BabyCrawling/v_BabyCrawling_g07_c02.avi",
+      "bytes": 253498,
+      "chunks": 1,
+      "avg_chunk": 253498,
+      "ingest_mib_s": 1126.7350782540784,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BabyCrawling/v_BabyCrawling_g07_c06.avi",
+      "bytes": 394584,
+      "chunks": 1,
+      "avg_chunk": 394584,
+      "ingest_mib_s": 1141.4965963763882,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BabyCrawling/v_BabyCrawling_g08_c02.avi",
+      "bytes": 578780,
+      "chunks": 1,
+      "avg_chunk": 578780,
+      "ingest_mib_s": 1112.8177530036944,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BabyCrawling/v_BabyCrawling_g08_c04.avi",
+      "bytes": 262720,
+      "chunks": 1,
+      "avg_chunk": 262720,
+      "ingest_mib_s": 1150.559628615743,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BabyCrawling/v_BabyCrawling_g10_c04.avi",
+      "bytes": 393768,
+      "chunks": 1,
+      "avg_chunk": 393768,
+      "ingest_mib_s": 1069.9429258319788,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BabyCrawling/v_BabyCrawling_g11_c01.avi",
+      "bytes": 364730,
+      "chunks": 1,
+      "avg_chunk": 364730,
+      "ingest_mib_s": 1149.992506340718,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BabyCrawling/v_BabyCrawling_g11_c03.avi",
+      "bytes": 455564,
+      "chunks": 1,
+      "avg_chunk": 455564,
+      "ingest_mib_s": 1146.7885259807915,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BabyCrawling/v_BabyCrawling_g12_c03.avi",
+      "bytes": 194790,
+      "chunks": 1,
+      "avg_chunk": 194790,
+      "ingest_mib_s": 1030.3859385692529,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BabyCrawling/v_BabyCrawling_g14_c01.avi",
+      "bytes": 262198,
+      "chunks": 1,
+      "avg_chunk": 262198,
+      "ingest_mib_s": 1152.8742077378163,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BabyCrawling/v_BabyCrawling_g14_c03.avi",
+      "bytes": 625302,
+      "chunks": 1,
+      "avg_chunk": 625302,
+      "ingest_mib_s": 1134.6454174379785,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BabyCrawling/v_BabyCrawling_g15_c01.avi",
+      "bytes": 478790,
+      "chunks": 1,
+      "avg_chunk": 478790,
+      "ingest_mib_s": 1128.2253584674363,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BabyCrawling/v_BabyCrawling_g15_c03.avi",
+      "bytes": 217426,
+      "chunks": 1,
+      "avg_chunk": 217426,
+      "ingest_mib_s": 1141.186526796617,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BabyCrawling/v_BabyCrawling_g15_c05.avi",
+      "bytes": 420540,
+      "chunks": 1,
+      "avg_chunk": 420540,
+      "ingest_mib_s": 1103.3480709932664,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BabyCrawling/v_BabyCrawling_g16_c05.avi",
+      "bytes": 616680,
+      "chunks": 1,
+      "avg_chunk": 616680,
+      "ingest_mib_s": 1152.2206933979464,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BabyCrawling/v_BabyCrawling_g17_c01.avi",
+      "bytes": 186184,
+      "chunks": 1,
+      "avg_chunk": 186184,
+      "ingest_mib_s": 1122.0364299214598,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BabyCrawling/v_BabyCrawling_g17_c05.avi",
+      "bytes": 176890,
+      "chunks": 1,
+      "avg_chunk": 176890,
+      "ingest_mib_s": 1010.6244223595545,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BabyCrawling/v_BabyCrawling_g18_c02.avi",
+      "bytes": 506462,
+      "chunks": 1,
+      "avg_chunk": 506462,
+      "ingest_mib_s": 1146.4809231566508,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BabyCrawling/v_BabyCrawling_g20_c03.avi",
+      "bytes": 550536,
+      "chunks": 1,
+      "avg_chunk": 550536,
+      "ingest_mib_s": 1103.3260485833764,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BabyCrawling/v_BabyCrawling_g20_c05.avi",
+      "bytes": 399916,
+      "chunks": 1,
+      "avg_chunk": 399916,
+      "ingest_mib_s": 1146.9950495618862,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BabyCrawling/v_BabyCrawling_g20_c07.avi",
+      "bytes": 460032,
+      "chunks": 1,
+      "avg_chunk": 460032,
+      "ingest_mib_s": 1080.0235913213232,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BabyCrawling/v_BabyCrawling_g23_c01.avi",
+      "bytes": 197204,
+      "chunks": 1,
+      "avg_chunk": 197204,
+      "ingest_mib_s": 1132.8397427496197,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BabyCrawling/v_BabyCrawling_g24_c01.avi",
+      "bytes": 297602,
+      "chunks": 1,
+      "avg_chunk": 297602,
+      "ingest_mib_s": 1144.7492171563229,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BabyCrawling/v_BabyCrawling_g24_c05.avi",
+      "bytes": 255636,
+      "chunks": 1,
+      "avg_chunk": 255636,
+      "ingest_mib_s": 1132.201198868828,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BabyCrawling/v_BabyCrawling_g25_c01.avi",
+      "bytes": 915910,
+      "chunks": 1,
+      "avg_chunk": 915910,
+      "ingest_mib_s": 1086.746172213304,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BalanceBeam/v_BalanceBeam_g01_c03.avi",
+      "bytes": 174130,
+      "chunks": 1,
+      "avg_chunk": 174130,
+      "ingest_mib_s": 1127.3739398634111,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BalanceBeam/v_BalanceBeam_g02_c03.avi",
+      "bytes": 261334,
+      "chunks": 1,
+      "avg_chunk": 261334,
+      "ingest_mib_s": 929.6239161629682,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BalanceBeam/v_BalanceBeam_g03_c01.avi",
+      "bytes": 424160,
+      "chunks": 1,
+      "avg_chunk": 424160,
+      "ingest_mib_s": 1144.7092826491903,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BalanceBeam/v_BalanceBeam_g03_c03.avi",
+      "bytes": 266660,
+      "chunks": 1,
+      "avg_chunk": 266660,
+      "ingest_mib_s": 1147.3453097383717,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BalanceBeam/v_BalanceBeam_g04_c01.avi",
+      "bytes": 548284,
+      "chunks": 1,
+      "avg_chunk": 548284,
+      "ingest_mib_s": 1112.4323593599745,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BalanceBeam/v_BalanceBeam_g04_c03.avi",
+      "bytes": 564880,
+      "chunks": 1,
+      "avg_chunk": 564880,
+      "ingest_mib_s": 1107.4459555583107,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BalanceBeam/v_BalanceBeam_g05_c01.avi",
+      "bytes": 360574,
+      "chunks": 1,
+      "avg_chunk": 360574,
+      "ingest_mib_s": 1138.639153393092,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BalanceBeam/v_BalanceBeam_g05_c03.avi",
+      "bytes": 359260,
+      "chunks": 1,
+      "avg_chunk": 359260,
+      "ingest_mib_s": 1138.8187417513184,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BalanceBeam/v_BalanceBeam_g06_c01.avi",
+      "bytes": 186056,
+      "chunks": 1,
+      "avg_chunk": 186056,
+      "ingest_mib_s": 1052.175835892748,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BalanceBeam/v_BalanceBeam_g06_c03.avi",
+      "bytes": 241798,
+      "chunks": 1,
+      "avg_chunk": 241798,
+      "ingest_mib_s": 1136.5090136392905,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BalanceBeam/v_BalanceBeam_g06_c05.avi",
+      "bytes": 282624,
+      "chunks": 1,
+      "avg_chunk": 282624,
+      "ingest_mib_s": 1148.8187080165037,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BalanceBeam/v_BalanceBeam_g07_c02.avi",
+      "bytes": 235404,
+      "chunks": 1,
+      "avg_chunk": 235404,
+      "ingest_mib_s": 1130.0139869798352,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BalanceBeam/v_BalanceBeam_g08_c02.avi",
+      "bytes": 387128,
+      "chunks": 1,
+      "avg_chunk": 387128,
+      "ingest_mib_s": 1087.1822053833432,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BalanceBeam/v_BalanceBeam_g08_c04.avi",
+      "bytes": 368028,
+      "chunks": 1,
+      "avg_chunk": 368028,
+      "ingest_mib_s": 1139.7119417781857,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BalanceBeam/v_BalanceBeam_g09_c02.avi",
+      "bytes": 275800,
+      "chunks": 1,
+      "avg_chunk": 275800,
+      "ingest_mib_s": 1136.557946188305,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BalanceBeam/v_BalanceBeam_g10_c02.avi",
+      "bytes": 214234,
+      "chunks": 1,
+      "avg_chunk": 214234,
+      "ingest_mib_s": 1051.8782261560937,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BalanceBeam/v_BalanceBeam_g10_c04.avi",
+      "bytes": 295886,
+      "chunks": 1,
+      "avg_chunk": 295886,
+      "ingest_mib_s": 1147.2551584980472,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BalanceBeam/v_BalanceBeam_g12_c04.avi",
+      "bytes": 235642,
+      "chunks": 1,
+      "avg_chunk": 235642,
+      "ingest_mib_s": 1137.333484825151,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BalanceBeam/v_BalanceBeam_g14_c01.avi",
+      "bytes": 352702,
+      "chunks": 1,
+      "avg_chunk": 352702,
+      "ingest_mib_s": 1148.211571268044,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BalanceBeam/v_BalanceBeam_g14_c03.avi",
+      "bytes": 623774,
+      "chunks": 1,
+      "avg_chunk": 623774,
+      "ingest_mib_s": 1140.057116271478,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BalanceBeam/v_BalanceBeam_g15_c03.avi",
+      "bytes": 503500,
+      "chunks": 1,
+      "avg_chunk": 503500,
+      "ingest_mib_s": 1096.6580526125135,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BalanceBeam/v_BalanceBeam_g17_c01.avi",
+      "bytes": 412188,
+      "chunks": 1,
+      "avg_chunk": 412188,
+      "ingest_mib_s": 1149.2774398259226,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BalanceBeam/v_BalanceBeam_g18_c03.avi",
+      "bytes": 591828,
+      "chunks": 1,
+      "avg_chunk": 591828,
+      "ingest_mib_s": 1093.398405130731,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BalanceBeam/v_BalanceBeam_g19_c01.avi",
+      "bytes": 705912,
+      "chunks": 1,
+      "avg_chunk": 705912,
+      "ingest_mib_s": 1146.2349406424894,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BalanceBeam/v_BalanceBeam_g19_c03.avi",
+      "bytes": 315534,
+      "chunks": 1,
+      "avg_chunk": 315534,
+      "ingest_mib_s": 1083.8493131424475,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BalanceBeam/v_BalanceBeam_g21_c03.avi",
+      "bytes": 403408,
+      "chunks": 1,
+      "avg_chunk": 403408,
+      "ingest_mib_s": 1131.7453296448218,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BalanceBeam/v_BalanceBeam_g21_c05.avi",
+      "bytes": 374688,
+      "chunks": 1,
+      "avg_chunk": 374688,
+      "ingest_mib_s": 1137.9910327216314,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BalanceBeam/v_BalanceBeam_g23_c04.avi",
+      "bytes": 364848,
+      "chunks": 1,
+      "avg_chunk": 364848,
+      "ingest_mib_s": 1087.3453636676318,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BalanceBeam/v_BalanceBeam_g24_c03.avi",
+      "bytes": 213808,
+      "chunks": 1,
+      "avg_chunk": 213808,
+      "ingest_mib_s": 1125.2190707137909,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BalanceBeam/v_BalanceBeam_g25_c01.avi",
+      "bytes": 195940,
+      "chunks": 1,
+      "avg_chunk": 195940,
+      "ingest_mib_s": 1075.9655988751115,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BandMarching/v_BandMarching_g01_c01.avi",
+      "bytes": 670608,
+      "chunks": 1,
+      "avg_chunk": 670608,
+      "ingest_mib_s": 1090.6848884343126,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BandMarching/v_BandMarching_g02_c02.avi",
+      "bytes": 732364,
+      "chunks": 1,
+      "avg_chunk": 732364,
+      "ingest_mib_s": 1111.8116403939318,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BandMarching/v_BandMarching_g02_c06.avi",
+      "bytes": 569378,
+      "chunks": 1,
+      "avg_chunk": 569378,
+      "ingest_mib_s": 1148.8149564101998,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BandMarching/v_BandMarching_g03_c01.avi",
+      "bytes": 1819530,
+      "chunks": 1,
+      "avg_chunk": 1819530,
+      "ingest_mib_s": 1036.8314427542718,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BandMarching/v_BandMarching_g03_c03.avi",
+      "bytes": 1268322,
+      "chunks": 1,
+      "avg_chunk": 1268322,
+      "ingest_mib_s": 1071.5580162979609,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BandMarching/v_BandMarching_g03_c05.avi",
+      "bytes": 1181814,
+      "chunks": 2,
+      "avg_chunk": 590907,
+      "ingest_mib_s": 1064.7601534311582,
+      "unique_chunks": 2,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BandMarching/v_BandMarching_g04_c02.avi",
+      "bytes": 946994,
+      "chunks": 1,
+      "avg_chunk": 946994,
+      "ingest_mib_s": 1045.6537862305474,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BandMarching/v_BandMarching_g04_c04.avi",
+      "bytes": 753916,
+      "chunks": 1,
+      "avg_chunk": 753916,
+      "ingest_mib_s": 1103.0351916342083,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BandMarching/v_BandMarching_g06_c01.avi",
+      "bytes": 308574,
+      "chunks": 1,
+      "avg_chunk": 308574,
+      "ingest_mib_s": 1118.6086853637055,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BandMarching/v_BandMarching_g07_c03.avi",
+      "bytes": 473626,
+      "chunks": 1,
+      "avg_chunk": 473626,
+      "ingest_mib_s": 1090.2101126746315,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BandMarching/v_BandMarching_g07_c05.avi",
+      "bytes": 522486,
+      "chunks": 1,
+      "avg_chunk": 522486,
+      "ingest_mib_s": 1146.4471675555492,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BandMarching/v_BandMarching_g07_c07.avi",
+      "bytes": 646064,
+      "chunks": 1,
+      "avg_chunk": 646064,
+      "ingest_mib_s": 1136.9476003002057,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BandMarching/v_BandMarching_g08_c02.avi",
+      "bytes": 627484,
+      "chunks": 1,
+      "avg_chunk": 627484,
+      "ingest_mib_s": 1115.6556447963371,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BandMarching/v_BandMarching_g09_c03.avi",
+      "bytes": 402644,
+      "chunks": 1,
+      "avg_chunk": 402644,
+      "ingest_mib_s": 1144.483082589685,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BandMarching/v_BandMarching_g09_c07.avi",
+      "bytes": 561034,
+      "chunks": 1,
+      "avg_chunk": 561034,
+      "ingest_mib_s": 1108.2511701568494,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BandMarching/v_BandMarching_g10_c02.avi",
+      "bytes": 651238,
+      "chunks": 1,
+      "avg_chunk": 651238,
+      "ingest_mib_s": 1128.2685352808612,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BandMarching/v_BandMarching_g10_c06.avi",
+      "bytes": 633268,
+      "chunks": 1,
+      "avg_chunk": 633268,
+      "ingest_mib_s": 1133.3283797793383,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BandMarching/v_BandMarching_g12_c02.avi",
+      "bytes": 2211166,
+      "chunks": 1,
+      "avg_chunk": 2211166,
+      "ingest_mib_s": 948.8826257781205,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BandMarching/v_BandMarching_g13_c04.avi",
+      "bytes": 1620860,
+      "chunks": 1,
+      "avg_chunk": 1620860,
+      "ingest_mib_s": 1061.3245800012046,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BandMarching/v_BandMarching_g14_c05.avi",
+      "bytes": 1578596,
+      "chunks": 2,
+      "avg_chunk": 789298,
+      "ingest_mib_s": 1064.2129216788576,
+      "unique_chunks": 2,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BandMarching/v_BandMarching_g15_c05.avi",
+      "bytes": 2782482,
+      "chunks": 1,
+      "avg_chunk": 2782482,
+      "ingest_mib_s": 988.3353641709916,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BandMarching/v_BandMarching_g16_c06.avi",
+      "bytes": 559282,
+      "chunks": 1,
+      "avg_chunk": 559282,
+      "ingest_mib_s": 1093.793073169988,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BandMarching/v_BandMarching_g18_c03.avi",
+      "bytes": 1827524,
+      "chunks": 1,
+      "avg_chunk": 1827524,
+      "ingest_mib_s": 1047.97663929327,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BandMarching/v_BandMarching_g19_c03.avi",
+      "bytes": 884336,
+      "chunks": 1,
+      "avg_chunk": 884336,
+      "ingest_mib_s": 1115.9343888045632,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BandMarching/v_BandMarching_g19_c05.avi",
+      "bytes": 1486498,
+      "chunks": 1,
+      "avg_chunk": 1486498,
+      "ingest_mib_s": 1092.9610480242286,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BandMarching/v_BandMarching_g21_c02.avi",
+      "bytes": 2246472,
+      "chunks": 2,
+      "avg_chunk": 1123236,
+      "ingest_mib_s": 1099.542584345693,
+      "unique_chunks": 2,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BandMarching/v_BandMarching_g21_c06.avi",
+      "bytes": 2804094,
+      "chunks": 1,
+      "avg_chunk": 2804094,
+      "ingest_mib_s": 1081.0360660026768,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BandMarching/v_BandMarching_g24_c01.avi",
+      "bytes": 1294730,
+      "chunks": 1,
+      "avg_chunk": 1294730,
+      "ingest_mib_s": 1125.0607042029856,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BandMarching/v_BandMarching_g25_c05.avi",
+      "bytes": 608928,
+      "chunks": 1,
+      "avg_chunk": 608928,
+      "ingest_mib_s": 1104.7573097473523,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BandMarching/v_BandMarching_g25_c07.avi",
+      "bytes": 1344518,
+      "chunks": 1,
+      "avg_chunk": 1344518,
+      "ingest_mib_s": 1125.3485662706705,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BaseballPitch/v_BaseballPitch_g01_c02.avi",
+      "bytes": 289150,
+      "chunks": 1,
+      "avg_chunk": 289150,
+      "ingest_mib_s": 1069.3314949389132,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BaseballPitch/v_BaseballPitch_g01_c04.avi",
+      "bytes": 320434,
+      "chunks": 1,
+      "avg_chunk": 320434,
+      "ingest_mib_s": 1133.8335178719137,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BaseballPitch/v_BaseballPitch_g02_c02.avi",
+      "bytes": 172652,
+      "chunks": 1,
+      "avg_chunk": 172652,
+      "ingest_mib_s": 1127.0091176893036,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BaseballPitch/v_BaseballPitch_g02_c04.avi",
+      "bytes": 197638,
+      "chunks": 1,
+      "avg_chunk": 197638,
+      "ingest_mib_s": 1117.216739944984,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BaseballPitch/v_BaseballPitch_g03_c02.avi",
+      "bytes": 276488,
+      "chunks": 1,
+      "avg_chunk": 276488,
+      "ingest_mib_s": 1075.3167859293883,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BaseballPitch/v_BaseballPitch_g03_c04.avi",
+      "bytes": 209348,
+      "chunks": 1,
+      "avg_chunk": 209348,
+      "ingest_mib_s": 1113.7940485518468,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BaseballPitch/v_BaseballPitch_g04_c01.avi",
+      "bytes": 512564,
+      "chunks": 1,
+      "avg_chunk": 512564,
+      "ingest_mib_s": 1149.7081678641223,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BaseballPitch/v_BaseballPitch_g05_c06.avi",
+      "bytes": 309158,
+      "chunks": 1,
+      "avg_chunk": 309158,
+      "ingest_mib_s": 1045.3436636855681,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BaseballPitch/v_BaseballPitch_g06_c05.avi",
+      "bytes": 144742,
+      "chunks": 1,
+      "avg_chunk": 144742,
+      "ingest_mib_s": 1110.9327574004124,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BaseballPitch/v_BaseballPitch_g06_c07.avi",
+      "bytes": 182602,
+      "chunks": 1,
+      "avg_chunk": 182602,
+      "ingest_mib_s": 1133.0195417273749,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BaseballPitch/v_BaseballPitch_g08_c01.avi",
+      "bytes": 262526,
+      "chunks": 1,
+      "avg_chunk": 262526,
+      "ingest_mib_s": 1151.6827066050287,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BaseballPitch/v_BaseballPitch_g08_c05.avi",
+      "bytes": 258452,
+      "chunks": 1,
+      "avg_chunk": 258452,
+      "ingest_mib_s": 1064.4881359889273,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BaseballPitch/v_BaseballPitch_g08_c07.avi",
+      "bytes": 249486,
+      "chunks": 1,
+      "avg_chunk": 249486,
+      "ingest_mib_s": 1129.2389605166147,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BaseballPitch/v_BaseballPitch_g10_c03.avi",
+      "bytes": 342970,
+      "chunks": 1,
+      "avg_chunk": 342970,
+      "ingest_mib_s": 1137.5606644820227,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BaseballPitch/v_BaseballPitch_g13_c03.avi",
+      "bytes": 366654,
+      "chunks": 1,
+      "avg_chunk": 366654,
+      "ingest_mib_s": 1095.9642903724396,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BaseballPitch/v_BaseballPitch_g13_c05.avi",
+      "bytes": 191328,
+      "chunks": 1,
+      "avg_chunk": 191328,
+      "ingest_mib_s": 1121.0584821264,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BaseballPitch/v_BaseballPitch_g13_c07.avi",
+      "bytes": 279218,
+      "chunks": 1,
+      "avg_chunk": 279218,
+      "ingest_mib_s": 1148.945410951361,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BaseballPitch/v_BaseballPitch_g14_c02.avi",
+      "bytes": 363460,
+      "chunks": 1,
+      "avg_chunk": 363460,
+      "ingest_mib_s": 1144.089366009003,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BaseballPitch/v_BaseballPitch_g14_c04.avi",
+      "bytes": 291246,
+      "chunks": 1,
+      "avg_chunk": 291246,
+      "ingest_mib_s": 1109.5817402158598,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BaseballPitch/v_BaseballPitch_g15_c06.avi",
+      "bytes": 186906,
+      "chunks": 1,
+      "avg_chunk": 186906,
+      "ingest_mib_s": 1125.6264558029893,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BaseballPitch/v_BaseballPitch_g16_c03.avi",
+      "bytes": 348992,
+      "chunks": 1,
+      "avg_chunk": 348992,
+      "ingest_mib_s": 1146.1300562390234,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BaseballPitch/v_BaseballPitch_g17_c05.avi",
+      "bytes": 182668,
+      "chunks": 1,
+      "avg_chunk": 182668,
+      "ingest_mib_s": 1089.4193501803977,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BaseballPitch/v_BaseballPitch_g18_c04.avi",
+      "bytes": 214142,
+      "chunks": 1,
+      "avg_chunk": 214142,
+      "ingest_mib_s": 1078.8543039375957,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BaseballPitch/v_BaseballPitch_g18_c06.avi",
+      "bytes": 178668,
+      "chunks": 1,
+      "avg_chunk": 178668,
+      "ingest_mib_s": 1086.7817888425034,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BaseballPitch/v_BaseballPitch_g19_c03.avi",
+      "bytes": 343870,
+      "chunks": 1,
+      "avg_chunk": 343870,
+      "ingest_mib_s": 1118.6458741791703,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BaseballPitch/v_BaseballPitch_g19_c05.avi",
+      "bytes": 237230,
+      "chunks": 1,
+      "avg_chunk": 237230,
+      "ingest_mib_s": 1086.8883522827075,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BaseballPitch/v_BaseballPitch_g21_c02.avi",
+      "bytes": 236954,
+      "chunks": 1,
+      "avg_chunk": 236954,
+      "ingest_mib_s": 1119.5512617031131,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BaseballPitch/v_BaseballPitch_g23_c01.avi",
+      "bytes": 290408,
+      "chunks": 1,
+      "avg_chunk": 290408,
+      "ingest_mib_s": 1120.6704522621674,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BaseballPitch/v_BaseballPitch_g23_c03.avi",
+      "bytes": 202062,
+      "chunks": 1,
+      "avg_chunk": 202062,
+      "ingest_mib_s": 1114.4410178626229,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BaseballPitch/v_BaseballPitch_g25_c01.avi",
+      "bytes": 351020,
+      "chunks": 1,
+      "avg_chunk": 351020,
+      "ingest_mib_s": 1066.8275769543288,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Basketball/v_Basketball_g01_c01.avi",
+      "bytes": 287972,
+      "chunks": 1,
+      "avg_chunk": 287972,
+      "ingest_mib_s": 1119.0995266749549,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Basketball/v_Basketball_g01_c03.avi",
+      "bytes": 381248,
+      "chunks": 1,
+      "avg_chunk": 381248,
+      "ingest_mib_s": 1138.003492327736,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Basketball/v_Basketball_g01_c05.avi",
+      "bytes": 266872,
+      "chunks": 1,
+      "avg_chunk": 266872,
+      "ingest_mib_s": 1063.3427986361646,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Basketball/v_Basketball_g01_c07.avi",
+      "bytes": 211852,
+      "chunks": 1,
+      "avg_chunk": 211852,
+      "ingest_mib_s": 1121.9461082380794,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Basketball/v_Basketball_g03_c04.avi",
+      "bytes": 202444,
+      "chunks": 1,
+      "avg_chunk": 202444,
+      "ingest_mib_s": 1127.1207670604226,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Basketball/v_Basketball_g03_c06.avi",
+      "bytes": 220784,
+      "chunks": 1,
+      "avg_chunk": 220784,
+      "ingest_mib_s": 1122.7738747170483,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Basketball/v_Basketball_g04_c02.avi",
+      "bytes": 194880,
+      "chunks": 1,
+      "avg_chunk": 194880,
+      "ingest_mib_s": 1123.6996171618507,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Basketball/v_Basketball_g04_c04.avi",
+      "bytes": 152862,
+      "chunks": 1,
+      "avg_chunk": 152862,
+      "ingest_mib_s": 1064.9234318372173,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Basketball/v_Basketball_g07_c02.avi",
+      "bytes": 199050,
+      "chunks": 1,
+      "avg_chunk": 199050,
+      "ingest_mib_s": 1135.6322061335395,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Basketball/v_Basketball_g08_c04.avi",
+      "bytes": 200092,
+      "chunks": 1,
+      "avg_chunk": 200092,
+      "ingest_mib_s": 1111.3203887900354,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Basketball/v_Basketball_g09_c02.avi",
+      "bytes": 256466,
+      "chunks": 1,
+      "avg_chunk": 256466,
+      "ingest_mib_s": 1133.4663541555035,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Basketball/v_Basketball_g09_c04.avi",
+      "bytes": 248766,
+      "chunks": 1,
+      "avg_chunk": 248766,
+      "ingest_mib_s": 1068.8683567694372,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Basketball/v_Basketball_g11_c02.avi",
+      "bytes": 315970,
+      "chunks": 1,
+      "avg_chunk": 315970,
+      "ingest_mib_s": 1144.210734429258,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Basketball/v_Basketball_g12_c01.avi",
+      "bytes": 659894,
+      "chunks": 1,
+      "avg_chunk": 659894,
+      "ingest_mib_s": 1130.379262291865,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Basketball/v_Basketball_g13_c02.avi",
+      "bytes": 746076,
+      "chunks": 1,
+      "avg_chunk": 746076,
+      "ingest_mib_s": 1151.3964875988286,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Basketball/v_Basketball_g13_c04.avi",
+      "bytes": 699288,
+      "chunks": 1,
+      "avg_chunk": 699288,
+      "ingest_mib_s": 1092.3933072740067,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Basketball/v_Basketball_g14_c02.avi",
+      "bytes": 255176,
+      "chunks": 1,
+      "avg_chunk": 255176,
+      "ingest_mib_s": 1131.5775156621992,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Basketball/v_Basketball_g14_c04.avi",
+      "bytes": 180364,
+      "chunks": 1,
+      "avg_chunk": 180364,
+      "ingest_mib_s": 1143.7116553362603,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Basketball/v_Basketball_g15_c01.avi",
+      "bytes": 222868,
+      "chunks": 1,
+      "avg_chunk": 222868,
+      "ingest_mib_s": 1051.2223216568234,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Basketball/v_Basketball_g15_c07.avi",
+      "bytes": 266818,
+      "chunks": 1,
+      "avg_chunk": 266818,
+      "ingest_mib_s": 1122.6543797671495,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Basketball/v_Basketball_g16_c02.avi",
+      "bytes": 1211374,
+      "chunks": 1,
+      "avg_chunk": 1211374,
+      "ingest_mib_s": 1081.5618889358805,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Basketball/v_Basketball_g16_c06.avi",
+      "bytes": 851058,
+      "chunks": 1,
+      "avg_chunk": 851058,
+      "ingest_mib_s": 1102.6202582442872,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Basketball/v_Basketball_g17_c04.avi",
+      "bytes": 215606,
+      "chunks": 1,
+      "avg_chunk": 215606,
+      "ingest_mib_s": 1133.1994371040123,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Basketball/v_Basketball_g19_c05.avi",
+      "bytes": 312802,
+      "chunks": 1,
+      "avg_chunk": 312802,
+      "ingest_mib_s": 1074.186409228753,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Basketball/v_Basketball_g19_c07.avi",
+      "bytes": 293704,
+      "chunks": 1,
+      "avg_chunk": 293704,
+      "ingest_mib_s": 1120.7146115112403,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Basketball/v_Basketball_g21_c03.avi",
+      "bytes": 415494,
+      "chunks": 1,
+      "avg_chunk": 415494,
+      "ingest_mib_s": 1143.7023036517983,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Basketball/v_Basketball_g22_c05.avi",
+      "bytes": 239518,
+      "chunks": 1,
+      "avg_chunk": 239518,
+      "ingest_mib_s": 1042.2763813932122,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Basketball/v_Basketball_g23_c04.avi",
+      "bytes": 287754,
+      "chunks": 1,
+      "avg_chunk": 287754,
+      "ingest_mib_s": 1140.1584586049385,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Basketball/v_Basketball_g23_c06.avi",
+      "bytes": 244902,
+      "chunks": 1,
+      "avg_chunk": 244902,
+      "ingest_mib_s": 955.5784342816837,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/Basketball/v_Basketball_g25_c02.avi",
+      "bytes": 384096,
+      "chunks": 1,
+      "avg_chunk": 384096,
+      "ingest_mib_s": 1074.711417841834,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BasketballDunk/v_BasketballDunk_g01_c02.avi",
+      "bytes": 303314,
+      "chunks": 1,
+      "avg_chunk": 303314,
+      "ingest_mib_s": 1147.5721405448805,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BasketballDunk/v_BasketballDunk_g01_c04.avi",
+      "bytes": 273760,
+      "chunks": 1,
+      "avg_chunk": 273760,
+      "ingest_mib_s": 1131.5004197844073,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BasketballDunk/v_BasketballDunk_g02_c03.avi",
+      "bytes": 303742,
+      "chunks": 1,
+      "avg_chunk": 303742,
+      "ingest_mib_s": 1097.6209293157738,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BasketballDunk/v_BasketballDunk_g03_c03.avi",
+      "bytes": 316462,
+      "chunks": 1,
+      "avg_chunk": 316462,
+      "ingest_mib_s": 1139.7043186870237,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BasketballDunk/v_BasketballDunk_g04_c01.avi",
+      "bytes": 262676,
+      "chunks": 1,
+      "avg_chunk": 262676,
+      "ingest_mib_s": 1142.908947442916,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BasketballDunk/v_BasketballDunk_g06_c01.avi",
+      "bytes": 169422,
+      "chunks": 1,
+      "avg_chunk": 169422,
+      "ingest_mib_s": 1123.918572292376,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BasketballDunk/v_BasketballDunk_g07_c03.avi",
+      "bytes": 262422,
+      "chunks": 1,
+      "avg_chunk": 262422,
+      "ingest_mib_s": 1122.9953174035177,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BasketballDunk/v_BasketballDunk_g07_c05.avi",
+      "bytes": 164712,
+      "chunks": 1,
+      "avg_chunk": 164712,
+      "ingest_mib_s": 1134.6219699221797,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BasketballDunk/v_BasketballDunk_g08_c05.avi",
+      "bytes": 368938,
+      "chunks": 1,
+      "avg_chunk": 368938,
+      "ingest_mib_s": 1148.6396236118553,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BasketballDunk/v_BasketballDunk_g09_c02.avi",
+      "bytes": 308610,
+      "chunks": 1,
+      "avg_chunk": 308610,
+      "ingest_mib_s": 1136.4549890380647,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BasketballDunk/v_BasketballDunk_g10_c01.avi",
+      "bytes": 436346,
+      "chunks": 1,
+      "avg_chunk": 436346,
+      "ingest_mib_s": 1101.01222176932,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BasketballDunk/v_BasketballDunk_g11_c04.avi",
+      "bytes": 385612,
+      "chunks": 1,
+      "avg_chunk": 385612,
+      "ingest_mib_s": 1138.8779962405138,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BasketballDunk/v_BasketballDunk_g13_c02.avi",
+      "bytes": 317232,
+      "chunks": 1,
+      "avg_chunk": 317232,
+      "ingest_mib_s": 1073.3479885269653,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BasketballDunk/v_BasketballDunk_g15_c01.avi",
+      "bytes": 324998,
+      "chunks": 1,
+      "avg_chunk": 324998,
+      "ingest_mib_s": 1135.5774772417121,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BasketballDunk/v_BasketballDunk_g15_c03.avi",
+      "bytes": 528558,
+      "chunks": 1,
+      "avg_chunk": 528558,
+      "ingest_mib_s": 1139.1539136560355,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BasketballDunk/v_BasketballDunk_g15_c05.avi",
+      "bytes": 289088,
+      "chunks": 1,
+      "avg_chunk": 289088,
+      "ingest_mib_s": 1077.6944757300055,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BasketballDunk/v_BasketballDunk_g16_c02.avi",
+      "bytes": 336088,
+      "chunks": 1,
+      "avg_chunk": 336088,
+      "ingest_mib_s": 1148.0670018817318,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BasketballDunk/v_BasketballDunk_g16_c04.avi",
+      "bytes": 256532,
+      "chunks": 1,
+      "avg_chunk": 256532,
+      "ingest_mib_s": 1130.253909543497,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BasketballDunk/v_BasketballDunk_g16_c06.avi",
+      "bytes": 335070,
+      "chunks": 1,
+      "avg_chunk": 335070,
+      "ingest_mib_s": 1070.127804097835,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BasketballDunk/v_BasketballDunk_g17_c02.avi",
+      "bytes": 301016,
+      "chunks": 1,
+      "avg_chunk": 301016,
+      "ingest_mib_s": 1136.9337653956648,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BasketballDunk/v_BasketballDunk_g18_c05.avi",
+      "bytes": 346574,
+      "chunks": 1,
+      "avg_chunk": 346574,
+      "ingest_mib_s": 1144.9152794549739,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BasketballDunk/v_BasketballDunk_g19_c03.avi",
+      "bytes": 271658,
+      "chunks": 1,
+      "avg_chunk": 271658,
+      "ingest_mib_s": 1045.780349112303,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BasketballDunk/v_BasketballDunk_g20_c05.avi",
+      "bytes": 299406,
+      "chunks": 1,
+      "avg_chunk": 299406,
+      "ingest_mib_s": 1145.9615935413985,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BasketballDunk/v_BasketballDunk_g21_c01.avi",
+      "bytes": 302784,
+      "chunks": 1,
+      "avg_chunk": 302784,
+      "ingest_mib_s": 1113.6118451308919,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BasketballDunk/v_BasketballDunk_g21_c03.avi",
+      "bytes": 469568,
+      "chunks": 1,
+      "avg_chunk": 469568,
+      "ingest_mib_s": 1103.5904712066883,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BasketballDunk/v_BasketballDunk_g22_c03.avi",
+      "bytes": 449978,
+      "chunks": 1,
+      "avg_chunk": 449978,
+      "ingest_mib_s": 1032.618411384296,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BasketballDunk/v_BasketballDunk_g23_c01.avi",
+      "bytes": 394684,
+      "chunks": 1,
+      "avg_chunk": 394684,
+      "ingest_mib_s": 1084.6980738150432,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BasketballDunk/v_BasketballDunk_g23_c05.avi",
+      "bytes": 392850,
+      "chunks": 1,
+      "avg_chunk": 392850,
+      "ingest_mib_s": 1086.5999071909885,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BasketballDunk/v_BasketballDunk_g24_c04.avi",
+      "bytes": 674448,
+      "chunks": 1,
+      "avg_chunk": 674448,
+      "ingest_mib_s": 1091.7746247921746,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BasketballDunk/v_BasketballDunk_g25_c01.avi",
+      "bytes": 342490,
+      "chunks": 1,
+      "avg_chunk": 342490,
+      "ingest_mib_s": 1138.9076793089525,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BenchPress/v_BenchPress_g01_c05.avi",
+      "bytes": 294794,
+      "chunks": 1,
+      "avg_chunk": 294794,
+      "ingest_mib_s": 1124.5813540005684,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BenchPress/v_BenchPress_g02_c01.avi",
+      "bytes": 292506,
+      "chunks": 1,
+      "avg_chunk": 292506,
+      "ingest_mib_s": 1057.8154693041442,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BenchPress/v_BenchPress_g02_c03.avi",
+      "bytes": 703758,
+      "chunks": 1,
+      "avg_chunk": 703758,
+      "ingest_mib_s": 1137.934306030549,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BenchPress/v_BenchPress_g03_c02.avi",
+      "bytes": 296766,
+      "chunks": 1,
+      "avg_chunk": 296766,
+      "ingest_mib_s": 1048.1958192722996,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BenchPress/v_BenchPress_g03_c04.avi",
+      "bytes": 305532,
+      "chunks": 1,
+      "avg_chunk": 305532,
+      "ingest_mib_s": 1140.8916432985548,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BenchPress/v_BenchPress_g03_c06.avi",
+      "bytes": 241148,
+      "chunks": 1,
+      "avg_chunk": 241148,
+      "ingest_mib_s": 1106.588014207792,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BenchPress/v_BenchPress_g04_c01.avi",
+      "bytes": 214848,
+      "chunks": 1,
+      "avg_chunk": 214848,
+      "ingest_mib_s": 1092.9541392510228,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BenchPress/v_BenchPress_g04_c05.avi",
+      "bytes": 442262,
+      "chunks": 1,
+      "avg_chunk": 442262,
+      "ingest_mib_s": 1126.364407360173,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BenchPress/v_BenchPress_g06_c01.avi",
+      "bytes": 201140,
+      "chunks": 1,
+      "avg_chunk": 201140,
+      "ingest_mib_s": 1139.464738879634,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BenchPress/v_BenchPress_g06_c05.avi",
+      "bytes": 357662,
+      "chunks": 1,
+      "avg_chunk": 357662,
+      "ingest_mib_s": 1111.5302454296054,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BenchPress/v_BenchPress_g07_c02.avi",
+      "bytes": 233156,
+      "chunks": 1,
+      "avg_chunk": 233156,
+      "ingest_mib_s": 1125.4201640694198,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BenchPress/v_BenchPress_g07_c04.avi",
+      "bytes": 793404,
+      "chunks": 1,
+      "avg_chunk": 793404,
+      "ingest_mib_s": 1113.506785437912,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BenchPress/v_BenchPress_g08_c05.avi",
+      "bytes": 554018,
+      "chunks": 1,
+      "avg_chunk": 554018,
+      "ingest_mib_s": 1147.859275651557,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BenchPress/v_BenchPress_g10_c03.avi",
+      "bytes": 686714,
+      "chunks": 1,
+      "avg_chunk": 686714,
+      "ingest_mib_s": 1095.5120817468628,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BenchPress/v_BenchPress_g12_c06.avi",
+      "bytes": 243936,
+      "chunks": 1,
+      "avg_chunk": 243936,
+      "ingest_mib_s": 1100.5558617034487,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BenchPress/v_BenchPress_g13_c01.avi",
+      "bytes": 429988,
+      "chunks": 1,
+      "avg_chunk": 429988,
+      "ingest_mib_s": 1068.7857545875584,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BenchPress/v_BenchPress_g13_c05.avi",
+      "bytes": 430544,
+      "chunks": 1,
+      "avg_chunk": 430544,
+      "ingest_mib_s": 1148.4894349918675,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BenchPress/v_BenchPress_g13_c07.avi",
+      "bytes": 327154,
+      "chunks": 1,
+      "avg_chunk": 327154,
+      "ingest_mib_s": 1125.7220437358665,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BenchPress/v_BenchPress_g14_c02.avi",
+      "bytes": 310334,
+      "chunks": 1,
+      "avg_chunk": 310334,
+      "ingest_mib_s": 1073.5391437574078,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BenchPress/v_BenchPress_g15_c05.avi",
+      "bytes": 199990,
+      "chunks": 1,
+      "avg_chunk": 199990,
+      "ingest_mib_s": 1113.1720111949453,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BenchPress/v_BenchPress_g16_c05.avi",
+      "bytes": 403050,
+      "chunks": 1,
+      "avg_chunk": 403050,
+      "ingest_mib_s": 1144.45347561659,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BenchPress/v_BenchPress_g18_c03.avi",
+      "bytes": 780858,
+      "chunks": 1,
+      "avg_chunk": 780858,
+      "ingest_mib_s": 1105.7504389394423,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BenchPress/v_BenchPress_g19_c06.avi",
+      "bytes": 285670,
+      "chunks": 1,
+      "avg_chunk": 285670,
+      "ingest_mib_s": 1135.5433002570614,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BenchPress/v_BenchPress_g20_c04.avi",
+      "bytes": 631242,
+      "chunks": 1,
+      "avg_chunk": 631242,
+      "ingest_mib_s": 1117.5597864324257,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BenchPress/v_BenchPress_g21_c01.avi",
+      "bytes": 557758,
+      "chunks": 1,
+      "avg_chunk": 557758,
+      "ingest_mib_s": 1145.0209436446394,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BenchPress/v_BenchPress_g21_c03.avi",
+      "bytes": 297472,
+      "chunks": 1,
+      "avg_chunk": 297472,
+      "ingest_mib_s": 1128.5810011138958,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BenchPress/v_BenchPress_g22_c01.avi",
+      "bytes": 278410,
+      "chunks": 1,
+      "avg_chunk": 278410,
+      "ingest_mib_s": 1124.9908540235667,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BenchPress/v_BenchPress_g22_c03.avi",
+      "bytes": 242808,
+      "chunks": 1,
+      "avg_chunk": 242808,
+      "ingest_mib_s": 1125.2618215205764,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BenchPress/v_BenchPress_g23_c02.avi",
+      "bytes": 380760,
+      "chunks": 1,
+      "avg_chunk": 380760,
+      "ingest_mib_s": 1083.9854463452125,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/train/BenchPress/v_BenchPress_g24_c05.avi",
+      "bytes": 340338,
+      "chunks": 1,
+      "avg_chunk": 340338,
+      "ingest_mib_s": 1144.2800716985207,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/val/ApplyEyeMakeup/v_ApplyEyeMakeup_g01_c01.avi",
+      "bytes": 294566,
+      "chunks": 1,
+      "avg_chunk": 294566,
+      "ingest_mib_s": 1116.4233628873262,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/val/ApplyEyeMakeup/v_ApplyEyeMakeup_g14_c05.avi",
+      "bytes": 144436,
+      "chunks": 1,
+      "avg_chunk": 144436,
+      "ingest_mib_s": 1006.0687991326901,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/val/ApplyEyeMakeup/v_ApplyEyeMakeup_g20_c04.avi",
+      "bytes": 310234,
+      "chunks": 1,
+      "avg_chunk": 310234,
+      "ingest_mib_s": 1134.2887184464375,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/val/ApplyLipstick/v_ApplyLipstick_g10_c04.avi",
+      "bytes": 281422,
+      "chunks": 1,
+      "avg_chunk": 281422,
+      "ingest_mib_s": 1141.597192090379,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/val/ApplyLipstick/v_ApplyLipstick_g20_c04.avi",
+      "bytes": 331576,
+      "chunks": 1,
+      "avg_chunk": 331576,
+      "ingest_mib_s": 1086.9650178632965,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/val/ApplyLipstick/v_ApplyLipstick_g25_c02.avi",
+      "bytes": 274622,
+      "chunks": 1,
+      "avg_chunk": 274622,
+      "ingest_mib_s": 1140.709026020354,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/val/Archery/v_Archery_g12_c03.avi",
+      "bytes": 1955104,
+      "chunks": 1,
+      "avg_chunk": 1955104,
+      "ingest_mib_s": 1011.3541281748346,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/val/Archery/v_Archery_g18_c02.avi",
+      "bytes": 640158,
+      "chunks": 1,
+      "avg_chunk": 640158,
+      "ingest_mib_s": 1105.9863315482885,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/val/Archery/v_Archery_g18_c06.avi",
+      "bytes": 361150,
+      "chunks": 1,
+      "avg_chunk": 361150,
+      "ingest_mib_s": 1148.842314533225,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/val/BabyCrawling/v_BabyCrawling_g09_c06.avi",
+      "bytes": 389892,
+      "chunks": 1,
+      "avg_chunk": 389892,
+      "ingest_mib_s": 1142.921211719271,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/val/BabyCrawling/v_BabyCrawling_g13_c05.avi",
+      "bytes": 348028,
+      "chunks": 1,
+      "avg_chunk": 348028,
+      "ingest_mib_s": 1060.1431121843716,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/val/BabyCrawling/v_BabyCrawling_g21_c04.avi",
+      "bytes": 344112,
+      "chunks": 1,
+      "avg_chunk": 344112,
+      "ingest_mib_s": 1138.9479805201988,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/val/BalanceBeam/v_BalanceBeam_g13_c02.avi",
+      "bytes": 196466,
+      "chunks": 1,
+      "avg_chunk": 196466,
+      "ingest_mib_s": 1106.4989768386788,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/val/BalanceBeam/v_BalanceBeam_g16_c01.avi",
+      "bytes": 553880,
+      "chunks": 1,
+      "avg_chunk": 553880,
+      "ingest_mib_s": 1110.2657224343604,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/val/BalanceBeam/v_BalanceBeam_g22_c02.avi",
+      "bytes": 281984,
+      "chunks": 1,
+      "avg_chunk": 281984,
+      "ingest_mib_s": 1113.9961493173214,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/val/BandMarching/v_BandMarching_g17_c01.avi",
+      "bytes": 455480,
+      "chunks": 1,
+      "avg_chunk": 455480,
+      "ingest_mib_s": 1093.185834314962,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/val/BandMarching/v_BandMarching_g20_c04.avi",
+      "bytes": 1321822,
+      "chunks": 2,
+      "avg_chunk": 660911,
+      "ingest_mib_s": 1065.0903571971967,
+      "unique_chunks": 2,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/val/BandMarching/v_BandMarching_g23_c03.avi",
+      "bytes": 1762044,
+      "chunks": 2,
+      "avg_chunk": 881022,
+      "ingest_mib_s": 1034.791868782539,
+      "unique_chunks": 2,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/val/BaseballPitch/v_BaseballPitch_g07_c02.avi",
+      "bytes": 306258,
+      "chunks": 1,
+      "avg_chunk": 306258,
+      "ingest_mib_s": 1102.2855167187938,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/val/BaseballPitch/v_BaseballPitch_g09_c02.avi",
+      "bytes": 180470,
+      "chunks": 1,
+      "avg_chunk": 180470,
+      "ingest_mib_s": 1056.6780282287107,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/val/BaseballPitch/v_BaseballPitch_g12_c01.avi",
+      "bytes": 331374,
+      "chunks": 1,
+      "avg_chunk": 331374,
+      "ingest_mib_s": 1138.4150264403138,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/val/Basketball/v_Basketball_g10_c03.avi",
+      "bytes": 323222,
+      "chunks": 1,
+      "avg_chunk": 323222,
+      "ingest_mib_s": 1133.0208517176823,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/val/Basketball/v_Basketball_g20_c02.avi",
+      "bytes": 420092,
+      "chunks": 1,
+      "avg_chunk": 420092,
+      "ingest_mib_s": 1095.6468792549695,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/val/Basketball/v_Basketball_g20_c04.avi",
+      "bytes": 309376,
+      "chunks": 1,
+      "avg_chunk": 309376,
+      "ingest_mib_s": 1133.8075862045778,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/val/BasketballDunk/v_BasketballDunk_g05_c01.avi",
+      "bytes": 250346,
+      "chunks": 1,
+      "avg_chunk": 250346,
+      "ingest_mib_s": 1140.476783883898,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/val/BasketballDunk/v_BasketballDunk_g05_c03.avi",
+      "bytes": 277604,
+      "chunks": 1,
+      "avg_chunk": 277604,
+      "ingest_mib_s": 1098.5812717351585,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/val/BasketballDunk/v_BasketballDunk_g05_c05.avi",
+      "bytes": 243662,
+      "chunks": 1,
+      "avg_chunk": 243662,
+      "ingest_mib_s": 1082.159115940706,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/val/BenchPress/v_BenchPress_g11_c05.avi",
+      "bytes": 349636,
+      "chunks": 1,
+      "avg_chunk": 349636,
+      "ingest_mib_s": 1141.2651482068948,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/val/BenchPress/v_BenchPress_g17_c02.avi",
+      "bytes": 190492,
+      "chunks": 1,
+      "avg_chunk": 190492,
+      "ingest_mib_s": 1126.6679972517218,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/UCF101_subset/val/BenchPress/v_BenchPress_g17_c06.avi",
+      "bytes": 310610,
+      "chunks": 1,
+      "avg_chunk": 310610,
+      "ingest_mib_s": 1032.700274434078,
+      "unique_chunks": 1,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/sintel_720.mp4",
+      "bytes": 7608204,
+      "chunks": 2,
+      "avg_chunk": 3804102,
+      "ingest_mib_s": 961.4833791559056,
+      "unique_chunks": 2,
+      "shared_with_others": 0.0
+    },
+    {
+      "path": "/tmp/cairn-real-corpus/tears_720.mov",
+      "bytes": 372178639,
+      "chunks": 70,
+      "avg_chunk": 5316837,
+      "ingest_mib_s": 839.3560412119477,
+      "unique_chunks": 70,
+      "shared_with_others": 0.0
+    }
+  ],
+  "total_bytes": 550829435,
+  "total_chunks": 483,
+  "unique_chunks_total": 483,
+  "cross_file_dedup_pct": 0.0,
+  "ingest_throughput_mib_s": 670.4306779994063,
+  "mutation_reuse_pct": 97.14285714285714,
+  "mutation_delta_chunks": 2
+}

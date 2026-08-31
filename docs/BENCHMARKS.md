@@ -33,3 +33,22 @@ marketing figures. Re-run on target hardware before quoting absolute values.
   the bottleneck for 10 GbE-class deployments (2 Gb/s ≈ 250 MiB/s).
 - Bloom probe cost (110 ns) validates the BatchExists negative-prefilter
   design: negative lookups never touch the metadata KV store.
+
+## Real-corpus ingest (2026-08-31, same host)
+
+Real studio-grade media, NOT synthetic — source files deleted after measurement;
+JSON report: [`docs/real-corpus-report.json`](real-corpus-report.json).
+Repro: `bash scripts/fetch-real-corpus.sh /tmp/cairn-real-corpus real-corpus-report.json`.
+
+| metric | result | notes |
+|---|---|---|
+| Corpus | **525.3 MiB, 407 files** | Tears of Steel 720p (372 MB, Blender), Sintel trailer 720p, 405 real UCF101 .avi clips pulled from a Hugging Face LFS-hosted dataset |
+| Ingest throughput on real media | **670 MiB/s** | full chunk+hash pipeline over all 407 files |
+| Chunks (real bytes) | 483 chunks | avg ≈ 1.1 MB on dense camera motion; 483 unique — cross-file dedup 0.0% between unrelated footage (honest negative: distinct takes share no 1–16 MB regions) |
+| Save-shaped mutation reuse (REAL footage) | **97.1% chunk-hash identity, +2 chunks re-uploaded** | 64 KB re-render window + 64 KB append against the 372 MB real movie — the engine would move ~1.7 MB of a 372 MB "save", not the file |
+
+Reading it: on real editors' media, a realistic save reshapes only the edited
+region + tail — chunk-hash reuse ≫ the 70% acceptance gate, and content
+addressing turns "upload the file" into "upload the delta" without any diff
+format. Container formats (gzip'd .prproj / zip'd .drp) are excluded from these
+reuse guarantees until the flag-gated normalization soaks — see STATUS.md.

@@ -5,6 +5,7 @@
 
 pub mod bench;
 pub mod corpus;
+pub mod corpus_real;
 pub mod crash;
 mod http;
 #[cfg(test)]
@@ -62,6 +63,18 @@ pub enum Cmd {
         #[arg(long, default_value_t = 2026_0901)]
         seed: u64,
     },
+    /// Real-corpus ingest report (real studio media; honest numbers, JSON out).
+    CorpusReal {
+        /// Directory with the downloaded real-media files.
+        #[arg(long)]
+        dir: String,
+        /// JSON report output path.
+        #[arg(long, default_value = "real-corpus-report.json")]
+        out: String,
+        /// File (inside dir) to measure save-shaped mutation reuse on.
+        #[arg(long)]
+        mutation_file: Option<String>,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -77,6 +90,11 @@ fn main() -> anyhow::Result<()> {
             base_mb,
             seed,
         } => corpus::run(&out, sequences, saves, base_mb, seed),
+        Cmd::CorpusReal {
+            dir,
+            out,
+            mutation_file,
+        } => corpus_real::run(&dir, &out, mutation_file),
         Cmd::Bench { iters } => bench::run(iters),
     }
 }
