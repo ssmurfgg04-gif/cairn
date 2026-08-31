@@ -13,7 +13,7 @@ use cairn_core::{CairnError, ErrorKind};
 use cairn_proto::pb::download_client::DownloadClient;
 use cairn_proto::pb::journal_client::JournalClient;
 use cairn_proto::pb::upload_client::UploadClient;
-use cairn_proto::pb::{UploadReceipt};
+use cairn_proto::pb::UploadReceipt;
 use tonic::metadata::MetadataValue;
 use tonic::transport::{Channel, Endpoint};
 use tonic::Request;

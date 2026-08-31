@@ -289,9 +289,7 @@ impl Engine {
         let _base_seq = self.store.get_cursor(&self.device_id, &self.project_id);
         // manifest identity extracted up front (op is consumed by the append)
         let upsert_manifest: Option<String> = match op.op.as_ref() {
-            Some(cairn_proto::pb::journal_op::Op::FileUpsert(u)) => {
-                Some(u.manifest_hash.clone())
-            }
+            Some(cairn_proto::pb::journal_op::Op::FileUpsert(u)) => Some(u.manifest_hash.clone()),
             _ => None,
         };
         match self

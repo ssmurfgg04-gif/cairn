@@ -128,13 +128,15 @@ impl CtlProjects for CtlProjectsSvc {
             },
         )
         .await
-        .map_err(|e| Status::failed_precondition(e.message))?
-        ;
+        .map_err(|e| Status::failed_precondition(e.message))?;
         tracing::info!(project = %pid, root = %req.root_path, "attach_root accepted");
         Ok(Response::new(AttachRootResponse { project_id: pid }))
     }
 
-    async fn detach_root(&self, request: Request<DetachRootRequest>) -> Result<Response<Ack>, Status> {
+    async fn detach_root(
+        &self,
+        request: Request<DetachRootRequest>,
+    ) -> Result<Response<Ack>, Status> {
         let req = request.into_inner();
         projects::detach(&self.state.home, &req.project_id)
             .await

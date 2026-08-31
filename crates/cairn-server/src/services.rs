@@ -156,7 +156,9 @@ impl Journal for JournalSvc {
             .map_err(internal)?;
         let req = request.into_inner();
         if identity.tenant_id != req.tenant_id {
-            self.state.audit_denial(&identity, "journal.fetch_batch").await;
+            self.state
+                .audit_denial(&identity, "journal.fetch_batch")
+                .await;
             return Err(Status::permission_denied("tenant mismatch"));
         }
         let limit = req.limit.clamp(1, 512);
