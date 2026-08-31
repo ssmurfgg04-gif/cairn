@@ -1,0 +1,97 @@
+{
+  "files": [
+    {
+      "blake3": "2595d6eb9036a2d6e529bf80079ad87a3a2f5a5481b7171d6ea1a0cc7f0d26cd",
+      "bytes": 133957939,
+      "path": "seed-corpus-000/01.dat"
+    },
+    {
+      "blake3": "02a6834d58a2845ff2a4d304a1ca1cf0d1374d241a2df88e21cd3a28a08cc176",
+      "bytes": 133960269,
+      "path": "seed-corpus-000/02.dat"
+    },
+    {
+      "blake3": "11c13fd04a279e502aa779f133deace61c0430353f74ae494dcd9f04e4d4e7be",
+      "bytes": 133962648,
+      "path": "seed-corpus-000/03.dat"
+    },
+    {
+      "blake3": "94e89078641ea4db42b864729a102ef2e9713683d2074b64991e9e7603546b3b",
+      "bytes": 133965040,
+      "path": "seed-corpus-000/04.dat"
+    },
+    {
+      "blake3": "c5b69666c3953197e73bfcebd7571158c403c1748f25e2efaaf60b8653009058",
+      "bytes": 133967435,
+      "path": "seed-corpus-000/05.dat"
+    },
+    {
+      "blake3": "c2f868fd775a0fe756245b8c2cc91b48729e5773aa08b5ccf16875e35f2ada02",
+      "bytes": 133969825,
+      "path": "seed-corpus-000/06.dat"
+    },
+    {
+      "blake3": "95bcd131b6bcd6f9976843ae0463f8ae248556425489e01138e42c27c6da0907",
+      "bytes": 133972203,
+      "path": "seed-corpus-000/07.dat"
+    },
+    {
+      "blake3": "0c43eaf69eacaa5df898a44dcb180f6c17ee627619aa3c4370671ad56996180c",
+      "bytes": 133974596,
+      "path": "seed-corpus-000/08.dat"
+    },
+    {
+      "blake3": "7f7b78e20eacde396206320d77e30087e3b6cc3f7655811338eabc156e1f2139",
+      "bytes": 133957937,
+      "path": "seed-corpus-001/01.dat"
+    },
+    {
+      "blake3": "62be2f79bc3219720108daf89e2db18e2f73d00f8f6fdd0b9aea2babae80d98b",
+      "bytes": 133960270,
+      "path": "seed-corpus-001/02.dat"
+    },
+    {
+      "blake3": "705f077ac68da3e10ebd32d231fa4fcc0af95f8d67daba6f1055edb34e91905c",
+      "bytes": 133962657,
+      "path": "seed-corpus-001/03.dat"
+    },
+    {
+      "blake3": "440c85b911899d0ab42c585936c1372cbf20a6b82618ffbdfe6317580f935632",
+      "bytes": 133965029,
+      "path": "seed-corpus-001/04.dat"
+    },
+    {
+      "blake3": "d297b2bf6cf29ffe16dd388c4e3d4cda50ceed7da2dbbf23dfaea9c91360c96b",
+      "bytes": 133967424,
+      "path": "seed-corpus-001/05.dat"
+    },
+    {
+      "blake3": "675e8bfe666b821c061fedddf2e95140cb09e6bac01e2ab030e7937abaca5f82",
+      "bytes": 133969817,
+      "path": "seed-corpus-001/06.dat"
+    },
+    {
+      "blake3": "1d75c830d221e3c628a04b7a6371350b4d71194df475c083ec62c908793a3105",
+      "bytes": 133972208,
+      "path": "seed-corpus-001/07.dat"
+    },
+    {
+      "blake3": "e2c0f92e1cc412cbaf4e0213520d51b7399807d47809bb1b6ea78adb28cdf70f",
+      "bytes": 133974586,
+      "path": "seed-corpus-001/08.dat"
+    }
+  ],
+  "generator": "cairn-x corpus-gen (deterministic synthetic NLE autosaves)",
+  "reuse_report": [
+    {
+      "min_consecutive_reuse": "0.856",
+      "sequence": "seed-corpus-000"
+    },
+    {
+      "min_consecutive_reuse": "0.879",
+      "sequence": "seed-corpus-001"
+    }
+  ],
+  "saves_per_sequence": 8,
+  "seed": 20260901
+}

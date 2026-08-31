@@ -22,7 +22,6 @@ pub async fn state_at(dir: &std::path::Path) -> Arc<crate::ServerState> {
         db,
         auth,
         store: Arc::new(store),
-        s3: None,
         bloom: tokio::sync::RwLock::new(cairn_core::bloom::Bloom::empty()),
         clock: Arc::new(cairn_core::clock::WallClock),
         dev_insecure: true,

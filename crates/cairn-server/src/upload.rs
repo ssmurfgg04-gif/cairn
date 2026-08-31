@@ -157,7 +157,8 @@ pub async fn complete(
     let mut rejected = Vec::new();
     for (i, r) in receipts.iter().enumerate() {
         let is_big = r.size > BIG_CHUNK_BYTES;
-        let sample_hit = is_big || (n > 0 && (i as u64).is_multiple_of(100 / SAMPLE_PERCENT.max(1)));
+        let sample_hit =
+            is_big || (n > 0 && (i as u64).is_multiple_of(100 / SAMPLE_PERCENT.max(1)));
         let key = LocalFsStore::chunk_key(&tenant, &r.chunk_hash);
         let head = state.store.head(&key).await;
         match head {

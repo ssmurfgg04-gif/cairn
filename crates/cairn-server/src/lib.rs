@@ -31,7 +31,6 @@ pub struct ServerState {
     /// Object store backend (ADR-0005).
     pub store: Arc<dyn storage::ObjectStore>,
     /// Optional production SigV4 presigner (S3/R2/B2-compatible endpoints).
-    pub s3: Option<storage::SigV4Presigner>,
     /// Per-tenant bloom negative pre-filter (rebuilt by the control-plane job).
     pub bloom: tokio::sync::RwLock<cairn_core::bloom::Bloom>,
     /// Clock (server-authoritative, I4).

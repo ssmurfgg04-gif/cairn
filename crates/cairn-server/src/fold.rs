@@ -308,10 +308,10 @@ pub async fn compact(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
     use crate::journal;
     use cairn_proto::pb::journal_op::Op as OpKind;
     use cairn_proto::pb::FileUpsertOp;
+    use std::sync::Arc;
 
     async fn setup() -> (tempfile::TempDir, Arc<crate::ServerState>) {
         let dir = tempfile::tempdir().unwrap();
@@ -332,7 +332,6 @@ mod tests {
             db,
             auth,
             store: Arc::new(store),
-            s3: None,
             bloom: tokio::sync::RwLock::new(cairn_core::bloom::Bloom::empty()),
             clock: Arc::new(cairn_core::clock::WallClock),
             dev_insecure: true,

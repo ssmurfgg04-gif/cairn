@@ -26,16 +26,24 @@ pub struct Verdict {
     pub gc_shadow_clean: bool,
     pub ticks: u64,
     pub appends_acked: u64,
+    /// True when the fault script allowed ZERO appends the whole schedule
+    /// (e.g. partition from tick 0 / both devices crashed before any sync).
+    /// In that regime assertions (a)-(c) are vacuous — the schedule is
+    /// inconclusive, not green. `run_sweep_sharded` caps the vacuous ratio and
+    /// requires aggregate progress so a broken engine still fails the sweep.
+    pub vacuous: bool,
 }
 
 impl Verdict {
-    /// All invariants held?
+    /// All invariants held? (A vacuous schedule is inconclusive: `ok()` is
+    /// only meaningful per-schedule; the sweep applies the vacuous-ratio gate.)
     #[must_use]
-    pub const fn ok(&self) -> bool {
-        self.acked_appends_survived
-            && self.devices_converged
-            && self.no_corrupt_manifests
-            && self.gc_shadow_clean
+    pub fn ok(&self) -> bool {
+        self.vacuous
+            || (self.acked_appends_survived
+                && self.devices_converged
+                && self.no_corrupt_manifests
+                && self.gc_shadow_clean)
     }
 }
 
@@ -66,15 +74,30 @@ impl Shard {
         let total = total.max(1);
         let per = iters.div_ceil(total);
         let first = index * per + 1;
-        let last = if first > iters { 0 } else { ((index + 1) * per).min(iters) };
-        Shard { index, total, first_seed: first, last_seed: last }
+        let last = if first > iters {
+            0
+        } else {
+            ((index + 1) * per).min(iters)
+        };
+        Shard {
+            index,
+            total,
+            first_seed: first,
+            last_seed: last,
+        }
     }
 
     /// Resolve from the environment (absent → single full sweep).
     #[must_use]
     pub fn from_env(iters: u64) -> Self {
-        let index = std::env::var("CAIRN_SIM_SHARD_INDEX").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
-        let total = std::env::var("CAIRN_SIM_SHARD_TOTAL").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+        let index = std::env::var("CAIRN_SIM_SHARD_INDEX")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        let total = std::env::var("CAIRN_SIM_SHARD_TOTAL")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1);
         Self::new(index, total, iters)
     }
 
@@ -90,18 +113,29 @@ impl Shard {
 
 /// The I2 gate: run the randomized schedule sweep for the given seeds; panics with the
 /// SHARD + SEED on any violation (the CI job surfaces shard context directly).
+///
+/// Aggregate gates across the sweep (so a broken engine cannot hide behind
+/// vacuous schedules):
+/// - vacuous (no-progress) schedules must stay ≤ 20% of the sweep;
+/// - the sweep must ack at least one append in total.
 pub fn run_sweep_sharded(shard: Shard, ticks: u64) {
     let seeds = shard.seeds();
     if seeds.is_empty() {
         tracing::info!(shard = shard.index, "no schedules assigned to this shard");
         return;
     }
+    let mut vacuous = 0u64;
+    let mut total_acked = 0u64;
     for seed in seeds {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .expect("runtime");
         let verdict = rt.block_on(async { world::run_schedule(seed, ticks).await });
+        total_acked += verdict.appends_acked;
+        if verdict.vacuous {
+            vacuous += 1;
+        }
         assert!(
             verdict.ok(),
             "I2 VIOLATION in shard {}/{} schedule seed {seed}: {verdict:?}",
@@ -109,6 +143,20 @@ pub fn run_sweep_sharded(shard: Shard, ticks: u64) {
             shard.total
         );
     }
+    let swept = u64::try_from(shard.seeds().len()).unwrap_or(u64::MAX);
+    assert!(
+        vacuous * 5 <= swept,
+        "SWEEP INVALID in shard {}/{}: {vacuous}/{swept} schedules were vacuous \
+         (no progress allowed by the fault script) — gate inconclusive",
+        shard.index,
+        shard.total
+    );
+    assert!(
+        total_acked > 0,
+        "SWEEP INVALID in shard {}/{}: zero appends acked across {swept} schedules",
+        shard.index,
+        shard.total
+    );
 }
 
 /// Back-compat full sweep (local dev).
@@ -126,7 +174,10 @@ mod tests {
     #[test]
     fn sim_sweep_assertions_hold() {
         let iters = default_iters().max(2);
-        let ticks = std::env::var("CAIRN_SIM_TICKS").ok().and_then(|v| v.parse().ok()).unwrap_or(12);
+        let ticks = std::env::var("CAIRN_SIM_TICKS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(12);
         let shard = Shard::from_env(iters);
         run_sweep_sharded(shard, ticks);
     }
