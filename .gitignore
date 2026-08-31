@@ -12,3 +12,4 @@ fuzz/coverage
 Cargo.lock.orig
 .env
 .DS_Store
+.wo1-acceptance/

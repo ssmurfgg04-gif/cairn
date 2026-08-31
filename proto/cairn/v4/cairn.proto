@@ -137,6 +137,22 @@ service Journal {
   rpc Append(AppendRequest) returns (AppendResponse);
   rpc Watch(WatchRequest) returns (stream JournalBatch);
   rpc UpdateCursor(CursorUpdate) returns (Ack);
+  // ADDITIVE (post-freeze, documented in docs/ctl-api.md): bounded cursor-replay fetch.
+  // Watch stays a hint; FetchBatch is the pull-the-guarantee RPC.
+  rpc FetchBatch(FetchBatchRequest) returns (FetchBatchResponse);
+}
+
+message FetchBatchRequest {
+  string tenant_id = 1;
+  string project_id = 2;
+  uint64 after = 3;           // exclusive lower bound (cursor)
+  uint32 limit = 4;           // server caps at 512
+  reserved 100 to 199;
+}
+
+message FetchBatchResponse {
+  repeated JournalEntry entries = 1;  // ascending seq
+  reserved 100 to 199;
 }
 
 message AppendRequest {
@@ -249,6 +265,17 @@ service Upload {
   rpc BatchExists(BatchExistsRequest) returns (BatchExistsResponse);
   rpc CreateUploadSession(CreateUploadSessionRequest) returns (CreateUploadSessionResponse);
   rpc CompleteUpload(CompleteUploadRequest) returns (CompleteUploadResponse);
+  // ADDITIVE (post-freeze, documented in docs/ctl-api.md): manifests live at the
+  // tenant object key (t{n}/o/...) — not the chunk key — so they need a dedicated
+  // register call (server fn existed since M3; this exposes it with auth).
+  rpc RegisterManifest(RegisterManifestRequest) returns (Ack);
+}
+
+message RegisterManifestRequest {
+  string tenant_id = 1;
+  string manifest_hash = 2;
+  bytes body = 3;
+  reserved 100 to 199;
 }
 
 message BatchExistsRequest {
@@ -316,6 +343,10 @@ message GetDownloadUrlRequest {
   string tenant_id = 1;
   string manifest_hash = 2;
   string path = 3;
+  // ADDITIVE (post-freeze, docs/ctl-api.md): hydration fetches raw CHUNKS, which live at
+  // the tenant chunk key (t{n}/c/...), not the object key (t{n}/o/...). Set true to
+  // presign the chunk namespace. Default false keeps the frozen manifest semantics.
+  bool chunk = 4;
   reserved 100 to 199;
 }
 
@@ -471,6 +502,7 @@ message ProjectStatus {
   string state = 3;           // synced | syncing | error
   uint64 pending_outbox = 4;
   uint64 cursor = 5;
+  uint64 files_synced = 6;    // ADDITIVE (post-freeze): rows in synced/clean/pinned state
   reserved 100 to 199;
 }
 

@@ -9,6 +9,7 @@
 mod daemon;
 mod dashboard;
 mod doctor;
+mod projects;
 
 use clap::{Parser, Subcommand};
 
@@ -45,6 +46,35 @@ pub enum Cmd {
     },
     /// Remove the stored device token (revokes nothing server-side)
     Logout,
+    /// Attach a folder as a project root (scan → chunk → upload → sync loop)
+    Attach {
+        /// Folder to attach (becomes the project root)
+        path: String,
+        /// Project id (default: slug of the folder name)
+        #[arg(long)]
+        project: Option<String>,
+        /// Server addr override (host:port; default: the one stored at login)
+        #[arg(long)]
+        server: Option<String>,
+        /// Daemon ctl address (loopback)
+        #[arg(long, default_value = "http://127.0.0.1:17777")]
+        ctl: String,
+    },
+    /// Detach a project root (local files are NOT touched)
+    Detach {
+        /// Project id
+        #[arg(long)]
+        project: String,
+        /// Daemon ctl address (loopback)
+        #[arg(long, default_value = "http://127.0.0.1:17777")]
+        ctl: String,
+    },
+    /// List attached projects (live ctl view)
+    Projects {
+        /// Daemon ctl address (loopback)
+        #[arg(long, default_value = "http://127.0.0.1:17777")]
+        ctl: String,
+    },
     /// Show daemon + project sync status
     Status {
         /// Output JSON
@@ -101,6 +131,22 @@ pub enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// (hidden, dev) Issue an enrollment code against a dev-insecure server
+    #[command(hide = true)]
+    DevEnrollCode {
+        /// Server address (host:port)
+        #[arg(long)]
+        server: String,
+        /// Tenant id
+        #[arg(long, default_value = "t1")]
+        tenant: String,
+        /// Email for the code
+        #[arg(long, default_value = "editor@studio.tv")]
+        email: String,
+    },
+    /// (hidden) Count FastCDC chunks for a file (acceptance harness helper)
+    #[command(hide = true)]
+    ChunkCount { path: String },
     /// GC shadow-mode report (beta gate: must run clean)
     GcShadowReport {
         /// Tenant id
@@ -209,6 +255,51 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
         }
         Cmd::Daemon { ctl_addr, ui_addr } => daemon::run(home, ctl_addr, ui_addr).await,
         Cmd::Status { json } => {
+            // live daemon view first (projects + files_synced); doctor fallback offline.
+            // ctl endpoint comes from the home store (daemon persists it at boot), so
+            // multi-daemon machines poll THEIR daemon, not a hardcoded port.
+            let ctl = cairn_store::Store::open(&home, std::sync::Arc::new(cairn_core::clock::WallClock))
+                .ok()
+                .and_then(|s| s.meta_get("ctl/addr"))
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "http://127.0.0.1:17777".into());
+            if let Ok(mut c) = cairn_proto::pb::ctl_status_client::CtlStatusClient::connect(ctl).await
+            {
+                if let Ok(out) = c.status(cairn_proto::pb::StatusRequest {}).await {
+                    let s = out.into_inner();
+                    if json {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&serde_json::json!({
+                                "version": s.version,
+                                "server_reachable": s.server_reachable,
+                                "projects": s.projects.iter().map(|p| serde_json::json!({
+                                    "project_id": p.project_id,
+                                    "root_path": p.root_path,
+                                    "state": p.state,
+                                    "files_synced": p.files_synced,
+                                    "cursor": p.cursor,
+                                    "pending_outbox": p.pending_outbox,
+                                })).collect::<Vec<_>>(),
+                            }))?
+                        );
+                    } else {
+                        println!("daemon {}", s.version);
+                        println!("server {}", s.server_reachable);
+                        for p in &s.projects {
+                            println!(
+                                "   {:<24} {:<10} files={:<6} cursor={:<8} outbox={:<4} {}",
+                                p.project_id, p.state, p.files_synced, p.cursor,
+                                p.pending_outbox, p.root_path
+                            );
+                        }
+                        if s.projects.is_empty() {
+                            println!("   (no attached projects — `cairn attach <path>`)");
+                        }
+                    }
+                    return Ok(());
+                }
+            }
             let report = doctor::collect(&home);
             if json {
                 println!("{}", serde_json::to_string_pretty(&report.checks.iter()
@@ -231,15 +322,66 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
             report.print(json);
             std::process::exit(i32::from(!report.healthy()));
         }
+        Cmd::DevEnrollCode { server, tenant, email } => {
+            let mut auth = cairn_proto::pb::auth_client::AuthClient::connect(format!("http://{server}"))
+                .await
+                .map_err(|e| anyhow::anyhow!("cannot reach server {server}: {e}"))?;
+            let out = auth
+                .enroll_code(cairn_proto::pb::EnrollCodeRequest {
+                    tenant_id: tenant,
+                    email,
+                    scopes: "sync".into(),
+                })
+                .await?
+                .into_inner();
+            println!("{}", out.code);
+            Ok(())
+        }
+        Cmd::ChunkCount { path } => {
+            let bytes = std::fs::read(&path)?;
+            let sh = cairn_core::chunker::StreamHash::compute(&bytes);
+            println!("{}", sh.chunk_hashes.len());
+            Ok(())
+        }
         // Commands that require the sync engine / server land with M2–M5.
         Cmd::Login {
             server,
             code,
             name,
             allow_plaintext_file,
-        } => daemon::login(&home, &server, &code, &name, allow_plaintext_file).await,
+        } => daemon::login_full(&home, &server, &code, &name, allow_plaintext_file).await,
         Cmd::Logout => {
             daemon::logout(&home);
+            Ok(())
+        }
+        Cmd::Attach {
+            path,
+            project,
+            server,
+            ctl,
+        } => ctl_attach(&ctl, &path, project.as_deref(), server.as_deref()).await,
+        Cmd::Detach { project, ctl } => {
+            let mut c = cairn_proto::pb::ctl_projects_client::CtlProjectsClient::connect(ctl)
+                .await
+                .map_err(|e| anyhow::anyhow!("daemon not reachable (run `cairn daemon`): {e}"))?;
+            c.detach_root(cairn_proto::pb::DetachRootRequest {
+                project_id: project.clone(),
+            })
+            .await?;
+            println!("detached {project}");
+            Ok(())
+        }
+        Cmd::Projects { ctl } => {
+            let mut c = cairn_proto::pb::ctl_projects_client::CtlProjectsClient::connect(ctl)
+                .await
+                .map_err(|e| anyhow::anyhow!("daemon not reachable (run `cairn daemon`): {e}"))?;
+            let out = c
+                .list_projects(cairn_proto::pb::ListProjectsCtlRequest {})
+                .await?
+                .into_inner();
+            for p in out.projects {
+                println!("{:<24} {:<10} {}", p.project_id, p.state, p.root_path);
+            }
             Ok(())
         }
         Cmd::Sync { .. }
@@ -252,4 +394,29 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
             anyhow::bail!("this command needs a running daemon: `cairn daemon` (wired through ctl gRPC; see docs/ctl-api.md)")
         }
     }
+}
+
+async fn ctl_attach(
+    ctl: &str,
+    path: &str,
+    project: Option<&str>,
+    server: Option<&str>,
+) -> anyhow::Result<()> {
+    let root = std::fs::canonicalize(path)
+        .map_err(|e| anyhow::anyhow!("cannot open {path}: {e}"))?
+        .to_string_lossy()
+        .into_owned();
+    let mut c = cairn_proto::pb::ctl_projects_client::CtlProjectsClient::connect(ctl.to_string())
+        .await
+        .map_err(|e| anyhow::anyhow!("daemon not reachable (run `cairn daemon`): {e}"))?;
+    let out = c
+        .attach_root(cairn_proto::pb::AttachRootRequest {
+            root_path: root,
+            server_addr: server.unwrap_or("").to_string(),
+            project_id: project.unwrap_or("").to_string(),
+        })
+        .await?
+        .into_inner();
+    println!("attached {} as project `{}`", path, out.project_id);
+    Ok(())
 }

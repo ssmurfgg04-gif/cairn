@@ -144,6 +144,43 @@ impl Journal for JournalSvc {
         .map_err(internal)?;
         Ok(Response::new(cairn_proto::pb::Ack { ok: true }))
     }
+
+    async fn fetch_batch(
+        &self,
+        request: Request<cairn_proto::pb::FetchBatchRequest>,
+    ) -> Result<Response<cairn_proto::pb::FetchBatchResponse>, Status> {
+        let identity = self
+            .state
+            .authenticate_metadata(&request)
+            .await
+            .map_err(internal)?;
+        let req = request.into_inner();
+        if identity.tenant_id != req.tenant_id {
+            self.state.audit_denial(&identity, "journal.fetch_batch").await;
+            return Err(Status::permission_denied("tenant mismatch"));
+        }
+        let limit = req.limit.clamp(1, 512);
+        let entries = crate::journal::batch(
+            &self.state.db,
+            &req.tenant_id,
+            &req.project_id,
+            req.after,
+            limit,
+        )
+        .await
+        .map_err(internal)?;
+        Ok(Response::new(cairn_proto::pb::FetchBatchResponse {
+            entries: entries
+                .into_iter()
+                .map(|e| JournalEntry {
+                    seq: e.seq,
+                    device_id: e.device_id,
+                    op: Some(e.op),
+                    server_ts: e.server_ts,
+                })
+                .collect(),
+        }))
+    }
 }
 
 // ---------------- Upload (data plane control, M3) ----------------
@@ -225,6 +262,33 @@ impl Upload for UploadSvc {
             .map_err(internal)?;
         Ok(Response::new(out))
     }
+
+    async fn register_manifest(
+        &self,
+        request: Request<cairn_proto::pb::RegisterManifestRequest>,
+    ) -> Result<Response<cairn_proto::pb::Ack>, Status> {
+        let identity = self
+            .state
+            .authenticate_metadata(&request)
+            .await
+            .map_err(internal)?;
+        let req = request.into_inner();
+        if identity.tenant_id != req.tenant_id {
+            self.state
+                .audit_denial(&identity, "upload.register_manifest")
+                .await;
+            return Err(Status::permission_denied("tenant mismatch"));
+        }
+        crate::upload::register_manifest(
+            &self.state,
+            &req.tenant_id,
+            &req.manifest_hash,
+            &req.body,
+        )
+        .await
+        .map_err(internal)?;
+        Ok(Response::new(cairn_proto::pb::Ack { ok: true }))
+    }
 }
 
 // ---------------- Download (data plane control, M3) ----------------
@@ -249,7 +313,7 @@ impl cairn_proto::pb::download_server::Download for DownloadSvc {
             return Err(Status::permission_denied("tenant mismatch"));
         }
         let (url, expires_at) =
-            crate::upload::download_url(&self.state, &req.tenant_id, &req.manifest_hash)
+            crate::upload::download_url(&self.state, &req.tenant_id, &req.manifest_hash, req.chunk)
                 .await
                 .map_err(internal)?;
         Ok(Response::new(GetDownloadUrlResponse { url, expires_at }))

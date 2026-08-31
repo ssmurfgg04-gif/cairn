@@ -21,6 +21,24 @@ pub fn apply_entry(
     };
     match op {
         OpKind::FileUpsert(u) => {
+            // Local dirty rows keep their state: local edits win locally and the server's
+            // conflict rule resolves at append time (§7.1). Otherwise the remote manifest
+            // becomes authoritative: a fresh row or a stale local copy is a PLACEHOLDER
+            // that the hydrator materializes (missing or overwritten on disk).
+            let local_state = match store.get_file(project_id, &u.path) {
+                Some(e)
+                    if matches!(
+                        LocalState::parse(&e.local_state),
+                        Some(LocalState::Dirty) | Some(LocalState::Conflict)
+                    ) =>
+                {
+                    e.local_state.clone()
+                }
+                Some(e) if e.manifest_hash.as_deref() == Some(u.manifest_hash.as_str()) => {
+                    e.local_state.clone()
+                }
+                _ => LocalState::Placeholder.as_str().into(),
+            };
             store.put_file(&FileRow {
                 path: u.path.clone(),
                 project_id: project_id.into(),
@@ -28,7 +46,7 @@ pub fn apply_entry(
                 size: u.size,
                 mode: "file".into(),
                 mtime: entry.server_ts, // informational only (I4)
-                local_state: LocalState::Clean.as_str().into(),
+                local_state,
             })?;
         }
         OpKind::FileDelete(d) => {

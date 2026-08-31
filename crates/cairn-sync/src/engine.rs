@@ -22,6 +22,7 @@ use cairn_store::{Cas, HeaderCache, Outbox, Store};
 use crate::aimd::Gate;
 use crate::plane::{upsert_op, Plane};
 use crate::retry::{backoff_millis, should_retry};
+use crate::workspace::workspace_dir;
 
 /// Engine context for one device + project.
 pub struct Engine {
@@ -114,6 +115,12 @@ impl Engine {
                 .plane
                 .create_session(&self.tenant_id, &self.device_id, &self.project_id, &missing)
                 .await?;
+            // receipts must report the size the BUCKET holds — the compressed/stored bytes —
+            // because CompleteUpload sample-verifies via HEAD against the object key.
+            // (Raw span sizes are only correct for Compression::None; reporting them for
+            // zstd-stored chunks rejects every upload.)
+            let mut stored_sizes: std::collections::HashMap<String, u64> =
+                std::collections::HashMap::new();
             for (hash_hex, url) in &session.puts {
                 let h = Hash::from_hex(hash_hex)
                     .ok_or_else(|| CairnError::new(ErrorKind::Internal, "bad hash in session"))?;
@@ -131,23 +138,15 @@ impl Engine {
                 let stored = compress::compress_chunk(raw, policy, dict.as_ref())?;
                 let checksum = cairn_core::hash::hex_encode(&Sha256::digest(&stored));
                 self.upload_with_aimd(url, &stored, &checksum).await?;
+                stored_sizes.insert(hash_hex.clone(), stored.len() as u64);
             }
             let receipts: Vec<UploadReceipt> = session
                 .puts
                 .iter()
-                .map(|(hash_hex, _)| {
-                    let size = sh
-                        .chunk_hashes
-                        .iter()
-                        .position(|c| c.hex() == *hash_hex)
-                        .and_then(|i| sh.spans.get(i))
-                        .map(|s| u64::from(s.len))
-                        .unwrap_or(0);
-                    UploadReceipt {
-                        chunk_hash: hash_hex.clone(),
-                        size,
-                        etag: String::new(),
-                    }
+                .map(|(hash_hex, _)| UploadReceipt {
+                    chunk_hash: hash_hex.clone(),
+                    size: stored_sizes.get(hash_hex).copied().unwrap_or(0),
+                    etag: String::new(),
                 })
                 .collect();
             let out = self.plane.complete(&session.id, &receipts).await?;
@@ -197,6 +196,11 @@ impl Engine {
             created_at: self.store.clock().now_millis(),
         };
         self.outbox.enqueue(entry)?;
+        // durable before the send: a crash between enqueue and append leaves the row
+        // outbox_pending (NOT dirty), so recovery resends the SAME request_id (server
+        // dedup) instead of re-chunking and double-appending (I2, §9.1)
+        self.store
+            .set_file_state(&self.project_id, path, LocalState::OutboxPending.as_str())?;
         self.send_outbox_entry(&request_id, op, lease_token, path, stats)
             .await?;
 
@@ -218,7 +222,7 @@ impl Engine {
         )?;
 
         self.store
-            .set_file_state(&self.project_id, path, LocalState::Synced.as_str())?;
+            .mark_synced(&self.project_id, path, &manifest_hash.hex())?;
         Ok(())
     }
 
@@ -283,6 +287,13 @@ impl Engine {
         stats: &mut PassStats,
     ) -> Result<(), CairnError> {
         let _base_seq = self.store.get_cursor(&self.device_id, &self.project_id);
+        // manifest identity extracted up front (op is consumed by the append)
+        let upsert_manifest: Option<String> = match op.op.as_ref() {
+            Some(cairn_proto::pb::journal_op::Op::FileUpsert(u)) => {
+                Some(u.manifest_hash.clone())
+            }
+            _ => None,
+        };
         match self
             .plane
             .append(
@@ -297,6 +308,12 @@ impl Engine {
         {
             Ok((_seq, _dedup)) => {
                 self.outbox.ack(request_id)?;
+                // complete the row's pipeline for FileUpserts: content identity lands with
+                // the synced state so the self-pull never mistakes our own entry for a
+                // remote update (fresh or deduplicated — both mean the server has it)
+                if let Some(mh) = upsert_manifest {
+                    self.store.mark_synced(&self.project_id, path, &mh)?;
+                }
                 stats.appended += 1;
                 Ok(())
             }
@@ -367,7 +384,7 @@ impl Engine {
     }
 
     fn rooted(&self, path: &str) -> std::path::PathBuf {
-        self.store.root().join("workspace").join(path)
+        workspace_dir(&self.store, &self.project_id).join(path)
     }
 }
 
