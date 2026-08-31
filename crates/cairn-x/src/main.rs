@@ -4,6 +4,9 @@
 #![forbid(unsafe_code)]
 
 pub mod crash;
+mod http;
+#[cfg(test)]
+mod m3;
 
 use clap::{Parser, Subcommand};
 

@@ -75,6 +75,14 @@ impl Bloom {
         out
     }
 
+    /// Adversarial-test helper: set every bit (worst-case "maybe present" for all items).
+/// Used by §15.2 to prove the authoritative check can never be skipped.
+pub fn corrupt_all_bits(&mut self) {
+    for w in self.bits.iter_mut() {
+        *w = u64::MAX;
+    }
+}
+
     /// Parse a serialized bloom.
     #[must_use]
     pub fn parse(bytes: &[u8]) -> Option<Self> {

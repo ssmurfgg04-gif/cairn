@@ -108,6 +108,21 @@ pub enum Cmd {
         #[arg(long)]
         project: Option<String>,
     },
+    /// Run the storage server (metadata + data planes)
+    Server {
+        /// Data dir
+        #[arg(long, default_value = "./.cairn-server")]
+        data_dir: String,
+        /// gRPC address
+        #[arg(long, default_value = "127.0.0.1:7443")]
+        grpc_addr: String,
+        /// Object-store HTTP address (dev backend)
+        #[arg(long, default_value = "127.0.0.1:7444")]
+        objects_addr: String,
+        /// Dev bootstrap: enroll codes without an admin token (DEV ONLY)
+        #[arg(long)]
+        dev_insecure: bool,
+    },
     /// Run the local daemon (ctl gRPC :17777 + dashboard :17778)
     Daemon {
         /// Bind address for ctl gRPC (loopback only)
@@ -171,6 +186,19 @@ fn default_home() -> String {
 
 async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
     match cli.cmd {
+        Cmd::Server { data_dir, grpc_addr, objects_addr, dev_insecure } => {
+            if dev_insecure {
+                tracing::warn!("DEV-INSECURE mode: enrollment codes issued without admin auth");
+            }
+            cairn_server::run::run(cairn_server::run::ServerConfig {
+                data_dir: data_dir.into(),
+                grpc_addr,
+                objects_addr,
+                dev_insecure,
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("{e}"))
+        }
         Cmd::Daemon { ctl_addr, ui_addr } => daemon::run(home, ctl_addr, ui_addr).await,
         Cmd::Status { json } => {
             let report = doctor::collect(&home).await;

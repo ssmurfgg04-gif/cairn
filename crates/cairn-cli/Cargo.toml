@@ -13,6 +13,7 @@ path = "src/main.rs"
 cairn-core = { path = "../cairn-core" }
 cairn-store = { path = "../cairn-store" }
 cairn-proto = { path = "../cairn-proto" }
+cairn-server = { path = "../cairn-server" }
 tonic = { workspace = true }
 prost = { workspace = true }
 tokio = { workspace = true }
