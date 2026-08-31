@@ -9,6 +9,7 @@ pub mod apply;
 pub mod engine;
 pub mod plane;
 pub mod retry;
+pub mod watch;
 
 pub use aimd::Gate;
 pub use engine::{Engine, PassStats};

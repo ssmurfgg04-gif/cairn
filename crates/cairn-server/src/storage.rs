@@ -102,6 +102,12 @@ impl LocalFsStore {
         format!("t{tenant_id}/o/{}/{}", &hash_hex[..2.min(hash_hex.len())], hash_hex)
     }
 
+    /// Storage key for pack files (`t{tenant}/packs/...`).
+    #[must_use]
+    pub fn pack_key(tenant_id: &str, pack_key: &str) -> String {
+        format!("t{tenant_id}/{pack_key}")
+    }
+
     /// Dev HTTP router: implements the presigned PUT/GET semantics the data plane relies on
     /// (bucket-rejects-corrupt + immutable Range GETs).
     pub fn router(self: std::sync::Arc<Self>) -> axum::Router {

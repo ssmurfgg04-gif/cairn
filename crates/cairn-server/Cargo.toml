@@ -26,6 +26,7 @@ tokio-stream = "0.1"
 uuid = { workspace = true }
 axum = { workspace = true }
 bytes = { workspace = true }
+zstd = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -149,6 +149,8 @@ impl Engine {
             .collect();
         let manifest = Manifest::build(entries, policy, dict.as_ref().map(|d| d.dict_hash));
         let (manifest_hash, manifest_bytes) = manifest.serialize();
+        // mirror the manifest object into the local CAS (hydration path reads it offline)
+        self.cas.put(&manifest_hash, &manifest_bytes)?;
         self.plane
             .put_manifest(&self.tenant_id, &manifest_hash.hex(), &manifest_bytes)
             .await?;

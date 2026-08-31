@@ -13,6 +13,7 @@ pub mod leases;
 pub mod run;
 pub mod services;
 pub mod storage;
+pub mod tests_support;
 pub mod upload;
 pub mod jobs;
 
