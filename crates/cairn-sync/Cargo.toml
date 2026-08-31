@@ -1,0 +1,12 @@
+[package]
+name = "cairn-sync"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Cairn cairn-sync"
+
+[dependencies]
+cairn-core = { path = "../cairn-core" }
+
+[lints.rust]
+unsafe_code = "deny"

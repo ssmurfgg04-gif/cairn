@@ -1,0 +1,14 @@
+/target
+**/target
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db
+*.db-wal
+*.db-shm
+fuzz/corpus
+fuzz/artifacts
+fuzz/coverage
+Cargo.lock.orig
+.env
+.DS_Store

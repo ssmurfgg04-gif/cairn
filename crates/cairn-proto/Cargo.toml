@@ -1,0 +1,16 @@
+[package]
+name = "cairn-proto"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Cairn v4 wire protocol (package cairn.v4); fields 100-199 reserved"
+
+[dependencies]
+tonic = { workspace = true }
+prost = { workspace = true }
+serde_json = { workspace = true }
+bytes = { workspace = true }
+
+[build-dependencies]
+tonic-build = { workspace = true }
+protoc-bin-vendored = { workspace = true }

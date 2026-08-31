@@ -1,0 +1,12 @@
+[package]
+name = "cairn-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Cairn cairn-cli"
+
+[dependencies]
+cairn-core = { path = "../cairn-core" }
+
+[lints.rust]
+unsafe_code = "deny"

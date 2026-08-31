@@ -1,0 +1,12 @@
+[package]
+name = "cairn-fs-linux"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Cairn cairn-fs-linux"
+
+[dependencies]
+cairn-core = { path = "../cairn-core" }
+
+[lints.rust]
+unsafe_code = "deny"

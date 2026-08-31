@@ -1,0 +1,666 @@
+// Cairn v4 wire protocol — source of truth.
+// Package cairn.v4. Field numbers 100-199 reserved in EVERY message (§18).
+// Hashes are BLAKE3-256 hex strings. Timestamps are UTC i64 millis, server-authoritative (I4).
+// Paths are UTF-8 NFC. Query strings of signed URLs are NEVER logged.
+syntax = "proto3";
+
+package cairn.v4;
+
+// ---------- common ----------
+
+message ErrorDetail {
+  string code = 1;            // stable string code, see ADR-0010 / docs/ctl-api.md
+  RetryClass retry = 2;
+  string message = 3;
+  reserved 100 to 199;
+}
+
+enum RetryClass {
+  RETRY_CLASS_UNSPECIFIED = 0;
+  RETRY_AUTO = 1;             // idempotent ops only, full jitter, max 5
+  RETRY_NEVER = 2;            // fatal-client; surface via doctor
+  RETRY_CONFLICT = 3;         // explicit resolution (CONFLICT, STALE_LEASE, REF_CAS)
+  RETRY_SERVER = 4;           // structured server error; no blind retry
+}
+
+message Ack {
+  bool ok = 1;
+  reserved 100 to 199;
+}
+
+message HandshakeRequest {
+  int32 client_min_proto = 1;
+  int32 client_max_proto = 2;
+  string client_version = 3;
+  reserved 100 to 199;
+}
+
+message HandshakeResponse {
+  int32 negotiated_proto = 1;
+  string server_version = 2;
+  reserved 100 to 199;
+}
+
+// ---------- journal ops ----------
+
+message FileUpsertOp {
+  string path = 1;
+  string manifest_hash = 2;
+  uint64 size = 3;
+  uint64 base_seq = 4;
+  reserved 100 to 199;
+}
+
+message FileDeleteOp {
+  string path = 1;
+  uint64 base_seq = 2;
+  reserved 100 to 199;
+}
+
+message RenameOp {
+  string old_path = 1;
+  string new_path = 2;
+  string manifest_hash = 3;
+  uint64 base_seq = 4;
+  reserved 100 to 199;
+}
+
+message LeaseEventOp {
+  string path = 1;
+  string kind = 2;            // acquired | renewed | released | expired (informational)
+  string device_id = 3;
+  reserved 100 to 199;
+}
+
+message JournalOp {
+  oneof op {
+    FileUpsertOp file_upsert = 1;
+    FileDeleteOp file_delete = 2;
+    RenameOp rename = 3;
+    LeaseEventOp lease_event = 4;
+  }
+  reserved 100 to 199;
+}
+
+message JournalEntry {
+  uint64 seq = 1;
+  string device_id = 2;
+  JournalOp op = 3;
+  int64 server_ts = 4;        // i64 millis UTC
+  reserved 100 to 199;
+}
+
+// ---------- auth ----------
+
+service Auth {
+  rpc EnrollCode(EnrollCodeRequest) returns (EnrollCodeResponse);
+  rpc Enroll(EnrollRequest) returns (EnrollResponse);
+  rpc Revoke(RevokeRequest) returns (Ack);
+}
+
+message EnrollCodeRequest {
+  string tenant_id = 1;
+  string email = 2;
+  string scopes = 3;          // 'sync' | 'admin'
+  reserved 100 to 199;
+}
+
+message EnrollCodeResponse {
+  string code = 1;
+  int64 expires_at = 2;
+  reserved 100 to 199;
+}
+
+message EnrollRequest {
+  string code = 1;
+  string device_pubkey = 2;   // ed25519 hex
+  string device_name = 3;
+  reserved 100 to 199;
+}
+
+message EnrollResponse {
+  string paseto = 1;
+  int64 expires_at = 2;
+  string device_id = 3;
+  string tenant_id = 4;
+  reserved 100 to 199;
+}
+
+message RevokeRequest {
+  string device_id = 1;
+  reserved 100 to 199;
+}
+
+// ---------- journal ----------
+
+service Journal {
+  rpc Append(AppendRequest) returns (AppendResponse);
+  rpc Watch(WatchRequest) returns (stream JournalBatch);
+  rpc UpdateCursor(CursorUpdate) returns (Ack);
+}
+
+message AppendRequest {
+  string tenant_id = 1;
+  string project_id = 2;
+  string device_id = 3;
+  string request_id = 4;      // UUIDv7, idempotency
+  JournalOp op = 5;
+  uint64 lease_token = 6;     // fencing token when path is leased
+  reserved 100 to 199;
+}
+
+message AppendResponse {
+  uint64 seq = 1;
+  bool deduplicated = 2;      // request_id already seen
+  reserved 100 to 199;
+}
+
+message WatchRequest {
+  string tenant_id = 1;
+  string project_id = 2;
+  string device_id = 3;
+  uint64 cursor = 4;          // hint-only stream; replay is the guarantee
+  reserved 100 to 199;
+}
+
+message JournalBatch {
+  repeated JournalEntry entries = 1;
+  reserved 100 to 199;
+}
+
+message CursorUpdate {
+  string device_id = 1;
+  string project_id = 2;
+  string tenant_id = 3;
+  uint64 last_seq = 4;
+  reserved 100 to 199;
+}
+
+// ---------- leases ----------
+
+service Lease {
+  rpc Acquire(AcquireRequest) returns (AcquireResponse);
+  rpc Renew(RenewRequest) returns (RenewResponse);
+  rpc Release(ReleaseRequest) returns (Ack);
+  rpc ListLeases(ListLeasesRequest) returns (ListLeasesResponse);
+}
+
+message AcquireRequest {
+  string tenant_id = 1;
+  string project_id = 2;
+  string path = 3;
+  string device_id = 4;
+  uint64 ttl_ms = 5;          // default 60000
+  reserved 100 to 199;
+}
+
+message AcquireResponse {
+  uint64 token = 1;           // from projects.next_lease_token (DB seq, restart-safe)
+  int64 expires_at = 2;
+  reserved 100 to 199;
+}
+
+message RenewRequest {
+  string tenant_id = 1;
+  string project_id = 2;
+  string path = 3;
+  string device_id = 4;
+  uint64 token = 5;
+  uint64 ttl_ms = 6;
+  reserved 100 to 199;
+}
+
+message RenewResponse {
+  int64 expires_at = 1;
+  reserved 100 to 199;
+}
+
+message ReleaseRequest {
+  string tenant_id = 1;
+  string project_id = 2;
+  string path = 3;
+  string device_id = 4;
+  uint64 token = 5;
+  reserved 100 to 199;
+}
+
+message LeaseInfo {
+  string path = 1;
+  string device_id = 2;
+  uint64 token = 3;
+  int64 expires_at = 4;
+  reserved 100 to 199;
+}
+
+message ListLeasesRequest {
+  string tenant_id = 1;
+  string project_id = 2;
+  reserved 100 to 199;
+}
+
+message ListLeasesResponse {
+  repeated LeaseInfo leases = 1;
+  reserved 100 to 199;
+}
+
+// ---------- upload / data plane ----------
+
+service Upload {
+  rpc BatchExists(BatchExistsRequest) returns (BatchExistsResponse);
+  rpc CreateUploadSession(CreateUploadSessionRequest) returns (CreateUploadSessionResponse);
+  rpc CompleteUpload(CompleteUploadRequest) returns (CompleteUploadResponse);
+}
+
+message BatchExistsRequest {
+  string tenant_id = 1;
+  repeated string chunk_hashes = 2;   // cap 10k per batch
+  reserved 100 to 199;
+}
+
+message BatchExistsResponse {
+  repeated string missing = 1;        // exact missing set (bloom is pre-filter ONLY)
+  reserved 100 to 199;
+}
+
+message UploadPut {
+  string chunk_hash = 1;
+  string url = 2;                     // presigned PUT; x-amz-checksum-sha256 required
+  int64 expires_at = 3;
+  reserved 100 to 199;
+}
+
+message CreateUploadSessionRequest {
+  string tenant_id = 1;
+  string device_id = 2;
+  string project_id = 3;
+  repeated string missing = 4;
+  reserved 100 to 199;
+}
+
+message CreateUploadSessionResponse {
+  string session_id = 1;
+  repeated UploadPut puts = 2;
+  reserved 100 to 199;
+}
+
+message UploadReceipt {
+  string chunk_hash = 1;
+  uint64 size = 2;
+  string etag = 3;
+  reserved 100 to 199;
+}
+
+message CompleteUploadRequest {
+  string session_id = 1;
+  string tenant_id = 2;
+  repeated UploadReceipt receipts = 3;
+  reserved 100 to 199;
+}
+
+message CompleteUploadResponse {
+  repeated string verified = 1;
+  repeated string rejected = 2;
+  reserved 100 to 199;
+}
+
+// ---------- download / data plane ----------
+
+service Download {
+  rpc GetDownloadUrl(GetDownloadUrlRequest) returns (GetDownloadUrlResponse);
+  rpc GetManifest(GetManifestRequest) returns (ManifestObject);
+}
+
+message GetDownloadUrlRequest {
+  string tenant_id = 1;
+  string manifest_hash = 2;
+  string path = 3;
+  reserved 100 to 199;
+}
+
+message GetDownloadUrlResponse {
+  string url = 1;                     // immutable, Range-capable, 1h TTL; renew on 403
+  int64 expires_at = 2;
+  reserved 100 to 199;
+}
+
+message GetManifestRequest {
+  string tenant_id = 1;
+  string manifest_hash = 2;
+  reserved 100 to 199;
+}
+
+message ManifestObject {
+  bytes body = 1;                     // versioned manifest bytes (see cairn-core::manifest)
+  reserved 100 to 199;
+}
+
+// ---------- projects / snapshots (server) ----------
+
+service Project {
+  rpc CreateProject(CreateProjectRequest) returns (ProjectInfo);
+  rpc ListProjects(ListProjectsServerRequest) returns (ListProjectsServerResponse);
+  rpc GetProject(GetProjectRequest) returns (ProjectInfo);
+}
+
+service Snapshot {
+  rpc FoldNow(FoldNowRequest) returns (FoldNowResponse);
+  rpc GetRef(GetRefRequest) returns (GetRefResponse);
+  rpc ListRefs(ListRefsRequest) returns (ListRefsResponse);
+}
+
+message CreateProjectRequest {
+  string tenant_id = 1;
+  string project_id = 2;
+  string name = 3;
+  reserved 100 to 199;
+}
+
+message ProjectInfo {
+  string tenant_id = 1;
+  string project_id = 2;
+  string name = 3;
+  uint64 next_lease_token = 4;
+  uint64 fold_seq = 5;
+  reserved 100 to 199;
+}
+
+message ListProjectsServerRequest {
+  string tenant_id = 1;
+  reserved 100 to 199;
+}
+
+message ListProjectsServerResponse {
+  repeated ProjectInfo projects = 1;
+  reserved 100 to 199;
+}
+
+message GetProjectRequest {
+  string tenant_id = 1;
+  string project_id = 2;
+  reserved 100 to 199;
+}
+
+message FoldNowRequest {
+  string tenant_id = 1;
+  string project_id = 2;
+  reserved 100 to 199;
+}
+
+message FoldNowResponse {
+  string commit_hash = 1;
+  uint64 snapshot_seq = 2;
+  reserved 100 to 199;
+}
+
+message GetRefRequest {
+  string tenant_id = 1;
+  string project_id = 2;
+  string ref_name = 3;
+  reserved 100 to 199;
+}
+
+message GetRefResponse {
+  string commit_hash = 1;
+  uint64 version = 2;                 // CAS version, updated at fold only
+  reserved 100 to 199;
+}
+
+message ListRefsRequest {
+  string tenant_id = 1;
+  string project_id = 2;
+  reserved 100 to 199;
+}
+
+message RefInfo {
+  string ref_name = 1;
+  string commit_hash = 2;
+  uint64 version = 3;
+  reserved 100 to 199;
+}
+
+message ListRefsResponse {
+  repeated RefInfo refs = 1;
+  reserved 100 to 199;
+}
+
+// ---------- ctl (daemon, 127.0.0.1:17777) ----------
+
+service CtlStatus {
+  rpc Status(StatusRequest) returns (StatusResponse);
+}
+
+service CtlProjects {
+  rpc AttachRoot(AttachRootRequest) returns (AttachRootResponse);
+  rpc DetachRoot(DetachRootRequest) returns (Ack);
+  rpc ListProjects(ListProjectsCtlRequest) returns (ListProjectsCtlResponse);
+}
+
+service CtlSnapshots {
+  rpc CreateSnapshot(CreateSnapshotRequest) returns (CreateSnapshotResponse);
+  rpc ListSnapshots(ListSnapshotsRequest) returns (ListSnapshotsResponse);
+  rpc RestoreSnapshot(RestoreSnapshotRequest) returns (RestoreSnapshotResponse);
+}
+
+service CtlPins {
+  rpc Pin(PinRequest) returns (Ack);
+  rpc Unpin(UnpinRequest) returns (Ack);
+  rpc ListPins(ListPinsRequest) returns (ListPinsResponse);
+}
+
+service CtlRecall {
+  rpc StartRecall(StartRecallRequest) returns (StartRecallResponse);
+  rpc RecallStatus(RecallStatusRequest) returns (RecallStatusResponse);
+}
+
+service CtlDiagnostics {
+  rpc Doctor(DoctorRequest) returns (DoctorReport);
+  rpc GcShadowReport(GcShadowReportRequest) returns (GcShadowReportResponse);
+  rpc SetFlag(SetFlagRequest) returns (Ack);
+  rpc GetFlags(GetFlagsRequest) returns (GetFlagsResponse);
+}
+
+message StatusRequest {
+  reserved 100 to 199;
+}
+
+message ProjectStatus {
+  string project_id = 1;
+  string root_path = 2;
+  string state = 3;           // synced | syncing | error
+  uint64 pending_outbox = 4;
+  uint64 cursor = 5;
+  reserved 100 to 199;
+}
+
+message StatusResponse {
+  string version = 1;
+  int32 proto = 2;
+  uint64 uptime_ms = 3;
+  repeated ProjectStatus projects = 4;
+  string server_reachable = 5;   // "ok" | detail
+  reserved 100 to 199;
+}
+
+message AttachRootRequest {
+  string root_path = 1;
+  string server_addr = 2;
+  string project_id = 3;
+  reserved 100 to 199;
+}
+
+message AttachRootResponse {
+  string project_id = 1;
+  reserved 100 to 199;
+}
+
+message DetachRootRequest {
+  string project_id = 1;
+  reserved 100 to 199;
+}
+
+message ListProjectsCtlRequest {
+  reserved 100 to 199;
+}
+
+message ProjectInfoCtl {
+  string project_id = 1;
+  string root_path = 2;
+  string state = 3;
+  reserved 100 to 199;
+}
+
+message ListProjectsCtlResponse {
+  repeated ProjectInfoCtl projects = 1;
+  reserved 100 to 199;
+}
+
+message CreateSnapshotRequest {
+  string project_id = 1;
+  string label = 2;
+  reserved 100 to 199;
+}
+
+message CreateSnapshotResponse {
+  string commit_hash = 1;
+  reserved 100 to 199;
+}
+
+message SnapshotInfo {
+  string commit_hash = 1;
+  string parent = 2;
+  string label = 3;
+  string author = 4;
+  uint64 snapshot_seq = 5;
+  int64 server_ts = 6;
+  reserved 100 to 199;
+}
+
+message ListSnapshotsRequest {
+  string project_id = 1;
+  reserved 100 to 199;
+}
+
+message ListSnapshotsResponse {
+  repeated SnapshotInfo snapshots = 1;
+  reserved 100 to 199;
+}
+
+message RestoreSnapshotRequest {
+  string project_id = 1;
+  string commit_hash = 2;
+  string target_path = 3;     // optional
+  reserved 100 to 199;
+}
+
+message RestoreSnapshotResponse {
+  uint64 restored_files = 1;
+  uint64 bytes = 2;
+  reserved 100 to 199;
+}
+
+message PinRequest {
+  string project_id = 1;
+  string path = 2;
+  reserved 100 to 199;
+}
+
+message UnpinRequest {
+  string project_id = 1;
+  string path = 2;
+  reserved 100 to 199;
+}
+
+message PinInfo {
+  string path = 1;
+  uint64 size = 2;
+  string state = 3;
+  reserved 100 to 199;
+}
+
+message ListPinsRequest {
+  string project_id = 1;
+  reserved 100 to 199;
+}
+
+message ListPinsResponse {
+  repeated PinInfo pins = 1;
+  reserved 100 to 199;
+}
+
+message StartRecallRequest {
+  string project_id = 1;
+  string path = 2;            // optional; empty = whole project
+  reserved 100 to 199;
+}
+
+message StartRecallResponse {
+  string job_id = 1;
+  reserved 100 to 199;
+}
+
+message RecallStatusRequest {
+  string job_id = 1;
+  reserved 100 to 199;
+}
+
+message RecallStatusResponse {
+  string state = 1;
+  double progress = 2;        // 0..1
+  uint64 bytes_done = 3;
+  uint64 bytes_total = 4;
+  int64 eta_ms = 5;
+  reserved 100 to 199;
+}
+
+message DoctorRequest {
+  reserved 100 to 199;
+}
+
+message DoctorCheck {
+  string name = 1;
+  bool ok = 2;
+  string detail = 3;
+  double latency_ms = 4;
+  reserved 100 to 199;
+}
+
+message DoctorReport {
+  repeated DoctorCheck checks = 1;
+  bool healthy = 2;
+  reserved 100 to 199;
+}
+
+message GcShadowReportRequest {
+  string tenant_id = 1;
+  string project_id = 2;
+  reserved 100 to 199;
+}
+
+message GcShadowReportResponse {
+  uint64 violations = 1;      // MUST be 0 (I2/GC invariant)
+  uint64 would_delete_count = 2;
+  uint64 scanned_objects = 3;
+  bool clean = 4;
+  reserved 100 to 199;
+}
+
+message SetFlagRequest {
+  string name = 1;
+  string value = 2;
+  reserved 100 to 199;
+}
+
+message FlagInfo {
+  string name = 1;
+  string value = 2;
+  reserved 100 to 199;
+}
+
+message GetFlagsRequest {
+  reserved 100 to 199;
+}
+
+message GetFlagsResponse {
+  repeated FlagInfo flags = 1;
+  reserved 100 to 199;
+}

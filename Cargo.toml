@@ -1,0 +1,90 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/cairn-proto",
+    "crates/cairn-core",
+    "crates/cairn-store",
+    "crates/cairn-sync",
+    "crates/cairn-server",
+    "crates/cairn-cli",
+    "crates/cairn-sim",
+    "crates/cairn-fs-linux",
+    "crates/cairn-fs-mac",
+    "crates/cairn-fs-win",
+    "crates/cairn-x",
+]
+exclude = ["crates/cairn-x/fuzz"]
+
+[workspace.package]
+version = "4.0.0"
+edition = "2021"
+license = "Apache-2.0"
+rust-version = "1.80"
+
+[workspace.dependencies]
+# async runtime / gRPC / HTTP
+tokio = { version = "1.40", features = ["full"] }
+tonic = { version = "0.12", features = ["transport", "codegen", "prost"] }
+prost = "0.13"
+axum = { version = "0.7", features = ["http1", "json", "query"] }
+futures = "0.3"
+async-trait = "0.1"
+bytes = "1"
+
+# storage
+rusqlite = { version = "0.32", features = ["bundled"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
+memmap2 = "0.9"
+
+# hashing / chunking / compression
+blake3 = "1"
+zstd = "0.13"
+
+# ids / serialization
+uuid = { version = "1", features = ["v7", "v4"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hex = "0.4"
+
+# crypto / auth
+hmac = "0.12"
+sha2 = "0.10"
+pasetors = "0.6"
+keyring = "3"
+
+# fs / platform
+notify = "6"
+fuser = "0.14"
+unicode-normalization = "0.1"
+libc = "0.2"
+
+# errors / logging
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# cli
+clap = { version = "4", features = ["derive", "env"] }
+
+# testing
+proptest = "1"
+tempfile = "3"
+rand = "0.8"
+
+# proto build
+tonic-build = "0.12"
+prost-build = "0.13"
+protoc-bin-vendored = "3"
+
+[profile.dev]
+debug = false
+incremental = false
+
+[profile.test]
+debug = false
+
+[profile.release]
+opt-level = 2
+lto = "thin"
+strip = true
