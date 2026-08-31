@@ -2,13 +2,15 @@
 //! (SPEC §5.1/§6, ADR-0004). Max 8,192 entries per manifest object; larger files build trees.
 //!
 //! Serialization (versioned byte first, never change silently):
-//! - Leaf:  `"CMAN" | ver=1 | u32 count | (offset u64 LE, len u32 LE, hash 32B) * count`
-//! - Node:  `"CMND" | ver=1 | u32 count | (child_hash 32B, child_count u32 LE, child_offset u64 LE) * count`
+//! - v1: `magic(4) | ver=1 | compression(1) | dict_flag(1) [dict(32)] | u32 count | entries`
+//! - v2: v1 + `transform(1)` after the dict section (chunk-input normalization descriptor)
+//! - Leaf magic `CMAN`, Node magic `CMND`; v1 parses as `Transform::None`
 //!
 //! `manifest_hash` = BLAKE3 of top manifest bytes. `file_hash` = BLAKE3(concat chunk hashes in
 //! file order) — frozen (SPEC §5.1, ADR-0004).
 
 use crate::hash::Hash;
+use crate::normalize::Transform;
 use crate::{MANIFEST_FORMAT_VERSION, MANIFEST_MAX_ENTRIES};
 
 /// One chunk position within a file.
@@ -64,6 +66,8 @@ pub enum Manifest {
         compression: Compression,
         /// Optional per-project dictionary hash (NLE project files).
         dict_hash: Option<Hash>,
+        /// Container transform (v2): the stored chunks cover the INNER payload.
+        transform: Transform,
     },
     /// Fanout node over child manifests (depth ≥ 2 for >8,192 chunks).
     Node {
@@ -73,6 +77,8 @@ pub enum Manifest {
         compression: Compression,
         /// Optional per-project dictionary hash.
         dict_hash: Option<Hash>,
+        /// Container transform (v2).
+        transform: Transform,
     },
 }
 
@@ -91,9 +97,20 @@ impl Manifest {
     /// Build a manifest from entries, fanning out at `MANIFEST_MAX_ENTRIES` (Git-style).
     #[must_use]
     pub fn build(
+        entries: Vec<ManifestEntry>,
+        compression: Compression,
+        dict_hash: Option<Hash>,
+    ) -> Self {
+        Self::build_with_transform(entries, compression, dict_hash, Transform::None)
+    }
+
+    /// Build with a container transform (chunk-input normalization, v2).
+    #[must_use]
+    pub fn build_with_transform(
         mut entries: Vec<ManifestEntry>,
         compression: Compression,
         dict_hash: Option<Hash>,
+        transform: Transform,
     ) -> Self {
         entries.sort();
         if entries.len() <= MANIFEST_MAX_ENTRIES {
@@ -101,6 +118,7 @@ impl Manifest {
                 entries,
                 compression,
                 dict_hash,
+                transform,
             };
         }
         let mut children = Vec::new();
@@ -109,6 +127,7 @@ impl Manifest {
                 entries: group.to_vec(),
                 compression,
                 dict_hash,
+                transform,
             };
             let (h, bytes) = leaf.serialize();
             let _ = bytes;
@@ -122,6 +141,7 @@ impl Manifest {
             children,
             compression,
             dict_hash,
+            transform,
         }
     }
 
@@ -190,6 +210,7 @@ impl Manifest {
                 entries,
                 compression,
                 dict_hash,
+                transform,
             } => {
                 buf.extend_from_slice(b"CMAN");
                 buf.push(MANIFEST_FORMAT_VERSION);
@@ -198,6 +219,7 @@ impl Manifest {
                 if let Some(d) = dict_hash {
                     buf.extend_from_slice(&d.0);
                 }
+                buf.push(transform.tag());
                 buf.extend_from_slice(&(entries.len() as u32).to_le_bytes());
                 for e in entries {
                     buf.extend_from_slice(&e.offset.to_le_bytes());
@@ -209,6 +231,7 @@ impl Manifest {
                 children,
                 compression,
                 dict_hash,
+                transform,
             } => {
                 buf.extend_from_slice(b"CMND");
                 buf.push(MANIFEST_FORMAT_VERSION);
@@ -217,6 +240,7 @@ impl Manifest {
                 if let Some(d) = dict_hash {
                     buf.extend_from_slice(&d.0);
                 }
+                buf.push(transform.tag());
                 buf.extend_from_slice(&(children.len() as u32).to_le_bytes());
                 for c in children {
                     buf.extend_from_slice(&c.hash.0);
@@ -253,6 +277,14 @@ impl Manifest {
         } else {
             None
         };
+        // v2 carries the container transform; v1 implies None
+        let transform = if bytes[4] >= 2 {
+            let t = Transform::from_tag(bytes[pos]).ok_or_else(err)?;
+            pos += 1;
+            t
+        } else {
+            Transform::None
+        };
         if bytes.len() < pos + 4 {
             return Err(err());
         }
@@ -283,6 +315,7 @@ impl Manifest {
                 entries,
                 compression,
                 dict_hash,
+                transform,
             })
         } else {
             let stride = 44usize; // 32 + 8 + 4
@@ -305,6 +338,7 @@ impl Manifest {
                 children,
                 compression,
                 dict_hash,
+                transform,
             })
         }
     }

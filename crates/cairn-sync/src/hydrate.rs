@@ -13,6 +13,7 @@ use cairn_store::{Cas, HeaderCache, Store};
 
 use crate::plane::Plane;
 use crate::workspace::workspace_dir;
+use cairn_core::normalize::{recompress, Transform};
 
 /// Hydration counters (doctor/status surface).
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -60,7 +61,15 @@ pub async fn materialize_missing(
         }
         // Placeholder rows materialize (or OVERWRITE a stale local copy left by a remote
         // update to a locally-clean file — the pull side of convergence).
-        let bytes = hydrate_one(plane, cas, tenant, &hash_hex, &mut manifest_cache).await?;
+        let bytes = hydrate_one(
+            plane,
+            cas,
+            tenant,
+            &hash_hex,
+            &row.path,
+            &mut manifest_cache,
+        )
+        .await?;
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
                 CairnError::new(ErrorKind::Io, format!("mkdir {}: {e}", parent.display()))
@@ -98,6 +107,7 @@ async fn hydrate_one(
     cas: &Cas,
     tenant: &str,
     manifest_hash_hex: &str,
+    rel_path: &str,
     manifest_cache: &mut HashMap<String, Manifest>,
 ) -> Result<Vec<u8>, CairnError> {
     let manifest = if let Some(m) = manifest_cache.get(manifest_hash_hex) {
@@ -118,8 +128,17 @@ async fn hydrate_one(
     // Compression policy is uniform per file (ADR-0004). ZstdDict additionally needs the
     // trained dictionary, which is NOT yet synced across devices (documented gap in
     // STATUS.md) — hydration of dict-compressed files fails loudly rather than silently.
-    let policy = match &manifest {
-        Manifest::Leaf { compression, .. } | Manifest::Node { compression, .. } => *compression,
+    let (policy, transform) = match &manifest {
+        Manifest::Leaf {
+            compression,
+            transform,
+            ..
+        }
+        | Manifest::Node {
+            compression,
+            transform,
+            ..
+        } => (*compression, *transform),
     };
 
     // Collect every leaf entry across fanout children (depth ≥ 2); child manifests are
@@ -171,7 +190,15 @@ async fn hydrate_one(
         }
         local_raw.get(&h.hex()).cloned()
     };
-    cairn_core::manifest::assemble_file(&manifest, &mut resolve, &mut get_chunk)
+    let inner = cairn_core::manifest::assemble_file(&manifest, &mut resolve, &mut get_chunk)?;
+    // container transform (normalization): the stored chunks cover the INNER payload —
+    // rebuild the wrapper so editors see a real gzip/zip file (wrapper byte-identity is
+    // irrelevant; the payload is what was hash-verified)
+    if transform == Transform::None {
+        Ok(inner)
+    } else {
+        recompress(&inner, transform, rel_path)
+    }
 }
 
 #[cfg(test)]
@@ -317,5 +344,81 @@ mod tests {
         assert_eq!(stats2.materialized, 0);
         assert_eq!(stats2.already_local, 1);
         let _ = Outbox::new(conn); // touch to keep imports honest
+    }
+
+    #[tokio::test]
+    async fn hydrates_transformed_container_by_rebuilding_the_wrapper() {
+        // normalization round-trip: chunks cover the INNER payload; the hydrated file is
+        // a REAL gzip wrapper again (payload hash-verified, wrapper bytes may differ)
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalStore::open(dir.path(), Arc::new(WallClock)).unwrap();
+        let conn = store.conn_handle();
+        let cas = Cas::open(&dir.path().join("blobs"), conn.clone()).unwrap();
+        let headers = HeaderCache::new(conn.clone());
+        let ws = dir.path().join("workspace");
+        std::fs::create_dir_all(&ws).unwrap();
+        store
+            .meta_set("workspace:p1", ws.to_str().unwrap())
+            .unwrap();
+
+        let inner: Vec<u8> = b"<project><clip/></project>".repeat(20_000);
+        let wrapper = cairn_core::normalize::recompress(
+            &inner,
+            cairn_core::normalize::Transform::Gzip,
+            "s.prproj",
+        )
+        .unwrap();
+        let spans = FastCdc::cut(&inner);
+        let entries: Vec<ManifestEntry> = spans
+            .iter()
+            .map(|s| ManifestEntry {
+                offset: s.offset,
+                len: s.len,
+                chunk_hash: Hash::of(
+                    &inner[s.offset as usize..(s.offset + u64::from(s.len)) as usize],
+                ),
+            })
+            .collect();
+        let manifest = Manifest::build_with_transform(
+            entries,
+            compress::Compression::Zstd3,
+            None,
+            cairn_core::normalize::Transform::Gzip,
+        );
+        let (mh, mbytes) = manifest.serialize();
+
+        let mut objects = std::collections::HashMap::new();
+        objects.insert(mh.hex(), mbytes.clone());
+        for e in manifest.flatten() {
+            let raw = &inner[e.offset as usize..(e.offset + u64::from(e.len)) as usize];
+            let stored = compress_chunk(raw, compress::Compression::Zstd3, None).unwrap();
+            objects.insert(e.chunk_hash.hex(), stored);
+        }
+        store
+            .put_file(&cairn_store::FileRow {
+                path: "scene.prproj".into(),
+                project_id: "p1".into(),
+                manifest_hash: Some(mh.hex()),
+                size: wrapper.len() as u64,
+                mode: "file".into(),
+                mtime: 1,
+                local_state: LocalState::Synced.as_str().into(),
+            })
+            .unwrap();
+        let plane = MemPlane { objects };
+        let stats = materialize_missing(&plane, &store, &cas, &headers, "t1", "p1")
+            .await
+            .unwrap();
+        assert_eq!(stats.materialized, 1);
+        let got = std::fs::read(ws.join("scene.prproj")).unwrap();
+        assert_eq!(
+            cairn_core::normalize::sniff(&got),
+            cairn_core::normalize::Transform::Gzip,
+            "hydrated file must be a gzip wrapper again"
+        );
+        let back =
+            cairn_core::normalize::decompress_inner(&got, cairn_core::normalize::Transform::Gzip)
+                .unwrap();
+        assert_eq!(back, inner, "payload must round-trip exactly");
     }
 }

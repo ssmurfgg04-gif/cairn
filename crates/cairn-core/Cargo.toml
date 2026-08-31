@@ -8,6 +8,8 @@ description = "Cairn core: chunk/hash/manifest/compress/bloom — pure, heavily 
 [dependencies]
 blake3 = { workspace = true }
 zstd = { workspace = true }
+flate2 = "1"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 uuid = { workspace = true }
 thiserror = { workspace = true }
 unicode-normalization = { workspace = true }
