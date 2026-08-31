@@ -79,9 +79,33 @@ impl Engine {
         let full = self.rooted(path);
         let bytes = std::fs::read(&full)
             .map_err(|e| CairnError::new(ErrorKind::Io, format!("read {path}: {e}")))?;
+        // chunk-input normalization (flag-gated): compressed project containers are
+        // decompressed so CDC runs on the canonical INNER payload — a 5KB XML edit inside a
+        // gzip'd .prproj then reuses ~all chunks instead of avalanching the wrapper
+        let normalize_on = self
+            .store
+            .meta_get("flag:normalize_containers")
+            .is_some_and(|v| v == "true");
+        let transform = if normalize_on {
+            cairn_core::normalize::sniff(&bytes)
+        } else {
+            cairn_core::normalize::Transform::None
+        };
+        let content: std::borrow::Cow<[u8]> = if transform == cairn_core::normalize::Transform::None
+        {
+            std::borrow::Cow::Borrowed(&bytes)
+        } else {
+            std::borrow::Cow::Owned(cairn_core::normalize::decompress_inner(&bytes, transform)?)
+        };
         // stable-state gate is enforced by the watcher; a size+mtime mismatch here re-dirties
-        let sh = cairn_core::chunker::StreamHash::compute(&bytes);
-        let policy = compress::policy_for(path);
+        let sh = cairn_core::chunker::StreamHash::compute(&content);
+        // transformed containers chunk with plain zstd-3 (the inner payload has no ext to
+        // sniff; dict training does not apply to canonical payloads)
+        let policy = if transform == cairn_core::normalize::Transform::None {
+            compress::policy_for(path)
+        } else {
+            compress::Compression::Zstd3
+        };
         let dict = if policy == cairn_core::manifest::Compression::ZstdDict {
             self.dicts
                 .get(&self.project_id)
@@ -95,7 +119,7 @@ impl Engine {
 
         // local CAS insert (verified) — content-addressed, idempotent
         for (span, h) in sh.spans.iter().zip(sh.chunk_hashes.iter()) {
-            let raw = &bytes[span.offset as usize..(span.offset + u64::from(span.len)) as usize];
+            let raw = &content[span.offset as usize..(span.offset + u64::from(span.len)) as usize];
             if self.cas.contains(h) {
                 stats.skipped_chunks += 1;
             } else {
@@ -134,7 +158,7 @@ impl Engine {
                     continue;
                 };
                 let raw =
-                    &bytes[span.offset as usize..(span.offset + u64::from(span.len)) as usize];
+                    &content[span.offset as usize..(span.offset + u64::from(span.len)) as usize];
                 let stored = compress::compress_chunk(raw, policy, dict.as_ref())?;
                 let checksum = cairn_core::hash::hex_encode(&Sha256::digest(&stored));
                 self.upload_with_aimd(url, &stored, &checksum).await?;
@@ -158,7 +182,8 @@ impl Engine {
             }
         }
 
-        // manifest (ADR-0004: raw chunk hashes + compression flag + dict hash)
+        // manifest (ADR-0004 + normalization: chunk hashes cover the INNER payload when a
+        // container transform is active; the transform travels in the manifest v2 header)
         let entries: Vec<ManifestEntry> = sh
             .spans
             .iter()
@@ -169,7 +194,12 @@ impl Engine {
                 chunk_hash: *h,
             })
             .collect();
-        let manifest = Manifest::build(entries, policy, dict.as_ref().map(|d| d.dict_hash));
+        let manifest = Manifest::build_with_transform(
+            entries,
+            policy,
+            dict.as_ref().map(|d| d.dict_hash),
+            transform,
+        );
         let (manifest_hash, manifest_bytes) = manifest.serialize();
         // mirror the manifest object into the local CAS (hydration path reads it offline)
         self.cas.put(&manifest_hash, &manifest_bytes)?;

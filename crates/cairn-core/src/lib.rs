@@ -13,6 +13,7 @@ pub mod error;
 pub mod hash;
 pub mod ids;
 pub mod manifest;
+pub mod normalize;
 pub mod pack;
 pub mod pathutil;
 
@@ -22,7 +23,7 @@ pub use error::{CairnError, ErrorKind, RetryClass};
 pub const CHUNKER_VERSION: u8 = 1;
 
 /// Manifest object serialization format version (SPEC §5.1, ADR-0004).
-pub const MANIFEST_FORMAT_VERSION: u8 = 1;
+pub const MANIFEST_FORMAT_VERSION: u8 = 2;
 
 /// Max entries per manifest object before fanning out (SPEC §5.1).
 pub const MANIFEST_MAX_ENTRIES: usize = 8_192;

@@ -49,6 +49,8 @@ fn default_flags() -> Vec<(String, String)> {
         ("delta_fold_enabled".into(), "true".into()),
         ("compression_enabled".into(), "true".into()),
         ("placeholder_driver".into(), "native".into()),
+        // chunk-input normalization: OFF until it soaks behind AttachRoot (flag-gated)
+        ("normalize_containers".into(), "false".into()),
     ]
 }
 
@@ -206,6 +208,11 @@ impl CtlDiagnostics for CtlDiagSvc {
         match known {
             Some(slot) => {
                 slot.1 = req.value.clone();
+                // mirror into the store so the ENGINE sees it per pass (e.g.
+                // normalize_containers is read on every process_file)
+                if let Ok(store) = cairn_store::Store::open(&self.state.home, Arc::new(WallClock)) {
+                    let _ = store.meta_set(&format!("flag:{}", req.name), &req.value);
+                }
                 tracing::info!(flag = %req.name, value = %req.value, "kill switch flipped (no restart)");
                 Ok(Response::new(cairn_proto::pb::Ack { ok: true }))
             }
