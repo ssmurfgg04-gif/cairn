@@ -25,6 +25,8 @@ async fn spin_server(root: &std::path::Path) -> Result<(Arc<cairn_server::Server
         grpc_addr: "127.0.0.1:7443".into(), // production runner binds this; unused here
         objects_addr: objects_addr.clone(),
         dev_insecure: true,
+        tls_cert: None,
+        tls_key: None,
     };
     let state = cairn_server::run::build_state(&cfg, clock).await?;
 

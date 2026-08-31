@@ -46,6 +46,33 @@ fn from_wire(s: &tonic::Status) -> CairnError {
     CairnError::new(kind_for_code(&d.code), format!("{}: {}", d.code, d.message))
 }
 
+/// Shared endpoint dialer: http (plaintext) or https with optional custom CA.
+pub async fn connect_channel(url: &str, ca_pem: Option<&[u8]>) -> Result<Channel, CairnError> {
+    let mut endpoint = Endpoint::from_shared(url.to_string())
+        .map_err(|e| CairnError::new(ErrorKind::Io, format!("bad server addr: {e}")))?
+        .connect_timeout(std::time::Duration::from_secs(5))
+        .tcp_nodelay(true);
+    if url.starts_with("https://") {
+        let mut tls = tonic::transport::ClientTlsConfig::new();
+        if let Some(ca) = ca_pem {
+            tls = tls.ca_certificate(tonic::transport::Certificate::from_pem(ca));
+        }
+        let host = url
+            .trim_start_matches("https://")
+            .split(':')
+            .next()
+            .unwrap_or("localhost");
+        tls = tls.domain_name(host.to_string());
+        endpoint = endpoint
+            .tls_config(tls)
+            .map_err(|e| CairnError::new(ErrorKind::Io, format!("client tls: {e}")))?;
+    }
+    endpoint
+        .connect()
+        .await
+        .map_err(|e| CairnError::new(ErrorKind::Unavailable, format!("grpc connect: {e}")))
+}
+
 /// Plane over real gRPC. One shared `Channel` (HTTP/2 multiplexed); clients are cloned per
 /// call (cheap handle clone, no reconnect).
 pub struct GrpcPlane {
@@ -59,15 +86,14 @@ pub struct GrpcPlane {
 impl GrpcPlane {
     /// Connect to the metadata server (`http(s)://host:port`); `tenant_id` is stamped into
     /// every payload that carries a tenant field (server cross-checks it against the token).
-    pub async fn connect(url: &str, token: &str, tenant_id: &str) -> Result<Self, CairnError> {
-        let endpoint = Endpoint::from_shared(url.to_string())
-            .map_err(|e| CairnError::new(ErrorKind::Io, format!("bad server addr: {e}")))?
-            .connect_timeout(std::time::Duration::from_secs(5))
-            .tcp_nodelay(true);
-        let channel = endpoint
-            .connect()
-            .await
-            .map_err(|e| CairnError::new(ErrorKind::Unavailable, format!("grpc connect: {e}")))?;
+    /// `ca_pem` overrides the trust roots for `https://` endpoints (self-signed dev certs).
+    pub async fn connect(
+        url: &str,
+        token: &str,
+        tenant_id: &str,
+        ca_pem: Option<&[u8]>,
+    ) -> Result<Self, CairnError> {
+        let channel = connect_channel(url, ca_pem).await?;
         Ok(GrpcPlane {
             channel,
             url: url.to_string(),

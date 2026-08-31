@@ -21,6 +21,11 @@ pub struct ServerConfig {
     pub objects_addr: String,
     /// Dev bootstrap (enroll codes without an admin token).
     pub dev_insecure: bool,
+    /// TLS server cert (PEM) for the gRPC endpoint (port 7443). When set, the metadata
+    /// plane is served over TLS — remote plaintext gRPC is a beta blocker.
+    pub tls_cert: Option<std::path::PathBuf>,
+    /// TLS server key (PEM).
+    pub tls_key: Option<std::path::PathBuf>,
 }
 
 /// Build the server state from config.
@@ -121,8 +126,24 @@ pub async fn run(cfg: ServerConfig) -> Result<(), CairnError> {
         .map_err(|e| CairnError::new(ErrorKind::Io, format!("bind objects: {e}")))?;
     let objects = tokio::spawn(async move { axum::serve(obj_listener, objects_router).await });
 
-    // gRPC metadata plane
-    let grpc = tonic::transport::Server::builder()
+    // TLS on the metadata plane (7443): self-signed dev certs via `just tls-dev-cert`;
+    // production uses real certs. Objects HTTP stays dev-only (real buckets are HTTPS).
+    let mut grpc = tonic::transport::Server::builder();
+    if let (Some(cert), Some(key)) = (&cfg.tls_cert, &cfg.tls_key) {
+        let identity = tonic::transport::Identity::from_pem(
+            std::fs::read(cert)
+                .map_err(|e| CairnError::new(ErrorKind::Io, format!("tls cert: {e}")))?,
+            std::fs::read(key)
+                .map_err(|e| CairnError::new(ErrorKind::Io, format!("tls key: {e}")))?,
+        );
+        grpc = grpc
+            .tls_config(tonic::transport::ServerTlsConfig::new().identity(identity))
+            .map_err(|e| CairnError::new(ErrorKind::Io, format!("tls config: {e}")))?;
+        tracing::info!("metadata plane TLS: ENABLED");
+    } else {
+        tracing::warn!("metadata plane TLS: DISABLED (plaintext gRPC — dev only)");
+    }
+    let grpc = grpc
         .add_service(cairn_proto::pb::journal_server::JournalServer::new(
             crate::services::JournalSvc {
                 state: Arc::clone(&state),

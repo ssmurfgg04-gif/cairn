@@ -38,6 +38,8 @@ workspace = true
 [dev-dependencies]
 tempfile = { workspace = true }
 proptest = { workspace = true }
+cairn-sync = { path = "../cairn-sync" }
+rcgen = "0.13"
 
 
 

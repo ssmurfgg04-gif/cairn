@@ -165,6 +165,60 @@ pub fn collect(home: &Path) -> Report {
         t.elapsed().as_secs_f64() * 1000.0,
     );
 
+    // remote metadata-plane TLS (beta blocker: remote plaintext gRPC). Loopback plaintext
+    // stays informational — that is the dev topology.
+    match crate::projects::load_identity(&store) {
+        Some(id) => {
+            let host = id
+                .server_url
+                .trim_start_matches("https://")
+                .trim_start_matches("http://")
+                .split(':')
+                .next()
+                .unwrap_or("")
+                .to_string();
+            let loopback = matches!(host.as_str(), "127.0.0.1" | "localhost" | "::1");
+            if id.server_url.starts_with("https://") {
+                let ca = store.meta_get("auth/tls_ca").unwrap_or_default();
+                rep.push(
+                    "remote_tls",
+                    Ok(format!(
+                        "https enabled (ca: {})",
+                        if ca.is_empty() {
+                            "system roots"
+                        } else {
+                            "stored pem"
+                        }
+                    )),
+                    t.elapsed().as_secs_f64() * 1000.0,
+                );
+            } else if loopback {
+                rep.push(
+                    "remote_tls",
+                    Ok("plaintext loopback (dev topology — TLS required for remote)".into()),
+                    t.elapsed().as_secs_f64() * 1000.0,
+                );
+            } else {
+                rep.push(
+                    "remote_tls",
+                    Err(format!(
+                        "plaintext REMOTE gRPC ({}) — beta blocker: run the server with \
+                         --tls-cert/--tls-key, then re-login with --ca",
+                        id.server_url
+                    )),
+                    t.elapsed().as_secs_f64() * 1000.0,
+                );
+            }
+        }
+        None => {
+            rep.push(
+                "remote_tls",
+                Ok("no device identity (not logged in)".into()),
+                t.elapsed().as_secs_f64() * 1000.0,
+            );
+        }
+    }
+
     // keychain availability (informational in M1; becomes a hard gate with login e2e at M8)
     let probe = keyring_probe();
     rep.push(

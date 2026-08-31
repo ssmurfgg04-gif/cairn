@@ -31,19 +31,23 @@ pub struct Identity {
     pub token: String,
     pub device_id: String,
     pub tenant_id: String,
+    /// Optional PEM (self-signed dev CA) for `https://` endpoints.
+    pub tls_ca: Option<String>,
 }
 
 const K_SERVER: &str = "auth/server";
 const K_TOKEN: &str = "auth/token";
 const K_DEVICE: &str = "auth/device_id";
 const K_TENANT: &str = "auth/tenant_id";
+const K_TLS_CA: &str = "auth/tls_ca";
 
 /// Persist identity (called by `cairn login`; keychain remains the canonical token store).
 pub fn save_identity(store: &Store, id: &Identity) -> Result<(), CairnError> {
     store.meta_set(K_SERVER, &id.server_url)?;
     store.meta_set(K_TOKEN, &id.token)?;
     store.meta_set(K_DEVICE, &id.device_id)?;
-    store.meta_set(K_TENANT, &id.tenant_id)
+    store.meta_set(K_TENANT, &id.tenant_id)?;
+    store.meta_set(K_TLS_CA, id.tls_ca.as_deref().unwrap_or(""))
 }
 
 /// Load identity from the store meta.
@@ -54,6 +58,7 @@ pub fn load_identity(store: &Store) -> Option<Identity> {
         token: store.meta_get(K_TOKEN)?,
         device_id: store.meta_get(K_DEVICE)?,
         tenant_id: store.meta_get(K_TENANT)?,
+        tls_ca: store.meta_get(K_TLS_CA).filter(|s| !s.is_empty()),
     })
 }
 
@@ -167,14 +172,18 @@ pub async fn attach(
         },
     )?;
 
+    let ca_pem = identity.tls_ca.as_ref().map(|c| c.as_bytes().to_vec());
+
     // ensure the project exists on the server (idempotent)
-    ensure_project(&server_url, &identity, &pid).await?;
+    ensure_project(&server_url, &identity, &pid, ca_pem.as_deref()).await?;
+
+    let ca_pem = identity.tls_ca.as_ref().map(|c| c.as_bytes().to_vec());
 
     let existing = RUNTIMES.read().await.get(&pid).cloned();
     if let Some(rt) = existing {
         // already attached: just refresh the workspace binding + identity
         rt.stop();
-        spawn_loop(Arc::clone(&rt), store, identity, server_url);
+        spawn_loop(Arc::clone(&rt), store, identity, server_url, ca_pem);
         return Ok(pid);
     }
 
@@ -191,7 +200,7 @@ pub async fn attach(
         abort: tokio::sync::watch::channel(false).0,
     });
     RUNTIMES.write().await.insert(pid.clone(), Arc::clone(&rt));
-    spawn_loop(Arc::clone(&rt), store, identity, server_url);
+    spawn_loop(Arc::clone(&rt), store, identity, server_url, ca_pem);
     Ok(pid)
 }
 
@@ -252,18 +261,9 @@ async fn ensure_project(
     server_url: &str,
     identity: &Identity,
     project_id: &str,
+    ca_pem: Option<&[u8]>,
 ) -> Result<(), CairnError> {
-    let channel = tonic::transport::Endpoint::from_shared(server_url.to_string())
-        .map_err(|e| CairnError::new(ErrorKind::Io, format!("bad server addr: {e}")))?
-        .connect_timeout(Duration::from_secs(5))
-        .connect()
-        .await
-        .map_err(|e| {
-            CairnError::new(
-                ErrorKind::Unavailable,
-                format!("cannot reach server {server_url}: {e}"),
-            )
-        })?;
+    let channel = cairn_sync::plane_grpc::connect_channel(server_url, ca_pem).await?;
     let mut c = ProjectClient::new(channel);
     let bearer = MetadataValue::try_from(format!("Bearer {}", identity.token))
         .map_err(|e| CairnError::new(ErrorKind::Internal, format!("auth header: {e}")))?;
@@ -296,13 +296,28 @@ async fn ensure_project(
     }
 }
 
-fn spawn_loop(rt: Arc<ProjectRuntime>, store: Store, identity: Identity, server_url: String) {
+fn spawn_loop(
+    rt: Arc<ProjectRuntime>,
+    store: Store,
+    identity: Identity,
+    server_url: String,
+    ca_pem: Option<Vec<u8>>,
+) {
     let mut shutdown = rt.abort.subscribe();
     tokio::spawn(async move {
         // The loop is the re-entry point for ALL failures (I2): server not yet up,
         // partitions, restarts — retry with fixed 5s backoff until the shutdown signal.
         loop {
-            match run_loop(&rt, &store, &identity, &server_url, &mut shutdown).await {
+            match run_loop(
+                &rt,
+                &store,
+                &identity,
+                &server_url,
+                ca_pem.as_deref(),
+                &mut shutdown,
+            )
+            .await
+            {
                 Ok(()) => return, // detach/shutdown
                 Err(e) => {
                     let mut v = rt.view.write().await;
@@ -325,11 +340,13 @@ async fn run_loop(
     store: &Store,
     identity: &Identity,
     server_url: &str,
+    ca_pem: Option<&[u8]>,
     shutdown: &mut tokio::sync::watch::Receiver<bool>,
 ) -> Result<(), CairnError> {
     let pid = rt.project_id.clone();
-    let plane: Arc<dyn Plane> =
-        Arc::new(GrpcPlane::connect(server_url, &identity.token, &identity.tenant_id).await?);
+    let plane: Arc<dyn Plane> = Arc::new(
+        GrpcPlane::connect(server_url, &identity.token, &identity.tenant_id, ca_pem).await?,
+    );
     let conn = store.conn_handle();
     let cas = Cas::open(&store.root().join("blobs"), conn.clone())?;
     let outbox = Outbox::new(conn.clone());
