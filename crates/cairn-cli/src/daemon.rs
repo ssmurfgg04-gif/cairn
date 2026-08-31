@@ -299,12 +299,21 @@ pub async fn login_full(
     code: &str,
     name: &str,
     allow_plaintext_file: bool,
+    tls_ca: Option<String>,
 ) -> anyhow::Result<()> {
     // ensure local store exists first (doctor-friendly)
     let store = cairn_store::Store::open(home, Arc::new(WallClock))?;
-    let mut auth = cairn_proto::pb::auth_client::AuthClient::connect(format!("http://{server}"))
-        .await
-        .map_err(|e| anyhow::anyhow!("cannot reach server {server}: {e} — is it running?"))?;
+    let server_url = if server.starts_with("https://") || server.starts_with("http://") {
+        server.to_string()
+    } else {
+        format!("http://{server}")
+    };
+    // TLS-aware dial (self-signed dev CAs honored via --ca)
+    let channel =
+        cairn_sync::plane_grpc::connect_channel(&server_url, tls_ca.as_deref().map(str::as_bytes))
+            .await
+            .map_err(|e| anyhow::anyhow!("cannot reach server {server}: {e} — is it running?"))?;
+    let mut auth = cairn_proto::pb::auth_client::AuthClient::new(channel);
     let resp = auth
         .enroll(cairn_proto::pb::EnrollRequest {
             code: code.to_string(),
@@ -313,7 +322,6 @@ pub async fn login_full(
         })
         .await?;
     let inner = resp.into_inner();
-    let server_url = format!("http://{server}");
     let device_id = inner.device_id.clone();
     crate::projects::save_identity(
         &store,
@@ -322,6 +330,7 @@ pub async fn login_full(
             token: inner.paseto.clone(),
             device_id,
             tenant_id: inner.tenant_id,
+            tls_ca,
         },
     )
     .map_err(|e| anyhow::anyhow!("persist identity: {e}"))?;

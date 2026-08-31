@@ -43,6 +43,9 @@ pub enum Cmd {
         /// Dev fallback: store token in a 0600 file instead of the keychain
         #[arg(long, hide = true)]
         allow_plaintext_file: bool,
+        /// CA cert (PEM) for TLS servers with self-signed certs
+        #[arg(long)]
+        ca: Option<String>,
     },
     /// Remove the stored device token (revokes nothing server-side)
     Logout,
@@ -170,6 +173,12 @@ pub enum Cmd {
         /// Dev bootstrap: enroll codes without an admin token (DEV ONLY)
         #[arg(long)]
         dev_insecure: bool,
+        /// TLS server cert (PEM) for the gRPC endpoint — enables TLS on 7443
+        #[arg(long)]
+        tls_cert: Option<String>,
+        /// TLS server key (PEM)
+        #[arg(long)]
+        tls_key: Option<String>,
     },
     /// Run the local daemon (ctl gRPC :17777 + dashboard :17778)
     Daemon {
@@ -212,6 +221,9 @@ pub mod snapshot {
 }
 
 fn main() -> anyhow::Result<()> {
+    // tonic's TLS pulls rustls with both providers feature-unified; pick ring explicitly
+    // (workspace-standard, THIRD_PARTY.md) before any TLS-capable code runs
+    let _ = rustls::crypto::ring::default_provider().install_default();
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .json()
@@ -240,6 +252,8 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
             grpc_addr,
             objects_addr,
             dev_insecure,
+            tls_cert,
+            tls_key,
         } => {
             if dev_insecure {
                 tracing::warn!("DEV-INSECURE mode: enrollment codes issued without admin auth");
@@ -249,6 +263,8 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
                 grpc_addr,
                 objects_addr,
                 dev_insecure,
+                tls_cert: tls_cert.map(std::path::PathBuf::from),
+                tls_key: tls_key.map(std::path::PathBuf::from),
             })
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))
@@ -360,7 +376,17 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
             code,
             name,
             allow_plaintext_file,
-        } => daemon::login_full(&home, &server, &code, &name, allow_plaintext_file).await,
+            ca,
+        } => {
+            let ca_pem = match &ca {
+                Some(p) => Some(
+                    std::fs::read_to_string(p)
+                        .map_err(|e| anyhow::anyhow!("cannot read CA pem {p}: {e}"))?,
+                ),
+                None => None,
+            };
+            daemon::login_full(&home, &server, &code, &name, allow_plaintext_file, ca_pem).await
+        }
         Cmd::Logout => {
             daemon::logout(&home);
             Ok(())

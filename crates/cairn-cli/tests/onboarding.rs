@@ -33,6 +33,8 @@ async fn onboarding_enroll_and_authenticated_append() {
         grpc_addr: "127.0.0.1:0".into(),
         objects_addr: "127.0.0.1:0".into(),
         dev_insecure: true,
+        tls_cert: None,
+        tls_key: None,
     };
     let state = cairn_server::run::build_state(&cfg, clock).await.unwrap();
     sqlx_seed(&state.db).await;

@@ -46,3 +46,15 @@ ci: fmt-check clippy test
 
 wo1-acceptance:
     SIZE_MB=${SIZE_MB:-500} bash scripts/wo1-acceptance.sh
+
+tls-dev-cert:
+    #!/bin/sh
+    mkdir -p ./.cairn-server/keys/tls-dev
+    openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 \
+      -keyout ./.cairn-server/keys/tls-dev/server.key \
+      -out ./.cairn-server/keys/tls-dev/server.pem \
+      -days 365 -nodes -subj "/CN=localhost" \
+      -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
+    echo "dev TLS cert: ./.cairn-server/keys/tls-dev/server.pem"
+    echo "run server with: --tls-cert ./.cairn-server/keys/tls-dev/server.pem --tls-key ./.cairn-server/keys/tls-dev/server.key"
+    echo "login with:      cairn login --server https://localhost:7443 --ca ./.cairn-server/keys/tls-dev/server.pem --code <code>"
