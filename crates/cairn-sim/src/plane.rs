@@ -161,6 +161,23 @@ impl cairn_sync::plane::Plane for InProcPlane {
             .await
     }
 
+    async fn fetch_object(&self, tenant: &str, hash_hex: &str) -> Result<Vec<u8>, CairnError> {
+        if let Some(e) = partitioned(&self.faults) {
+            return Err(e);
+        }
+        // objects (chunks + manifests) all live by their hash; try both key namespaces
+        let chunk_key = LocalFsStore::chunk_key(tenant, hash_hex);
+        match self.state.store.get(&chunk_key).await {
+            Ok(b) => Ok(b),
+            Err(_) => {
+                self.state
+                    .store
+                    .get(&LocalFsStore::object_key(tenant, hash_hex))
+                    .await
+            }
+        }
+    }
+
     async fn append(
         &self,
         tenant: &str,

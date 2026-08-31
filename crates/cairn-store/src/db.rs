@@ -241,6 +241,24 @@ impl Store {
         Ok(())
     }
 
+    /// Mark a file fully pushed: content identity (manifest hash) lands WITH the synced
+    /// state. Without this, the self-pull marks fresh rows as placeholders (manifest
+    /// mismatch vs the journal) and every restart re-downloads the whole project.
+    pub fn mark_synced(
+        &self,
+        project_id: &str,
+        path: &str,
+        manifest_hash: &str,
+    ) -> Result<(), CairnError> {
+        let conn = self.conn.lock().expect("store poisoned");
+        conn.execute(
+            "UPDATE files SET manifest_hash=?3, local_state='synced' WHERE project_id=?1 AND path=?2",
+            rusqlite::params![project_id, path, manifest_hash],
+        )
+        .map_err(db_err)?;
+        Ok(())
+    }
+
     // ---- meta / cursors / devices ----
 
     /// Read a meta key.

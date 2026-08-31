@@ -246,8 +246,15 @@ pub async fn download_url(
     state: &ServerState,
     tenant_id: &str,
     manifest_hash: &str,
+    chunk: bool,
 ) -> Result<(String, i64), CairnError> {
-    let key = LocalFsStore::object_key(tenant_id, manifest_hash);
+    // chunks live in the chunk namespace (t{n}/c/...), manifests/trees/commits in the
+    // object namespace (t{n}/o/...) — the presign MUST name the one that exists
+    let key = if chunk {
+        LocalFsStore::chunk_key(tenant_id, manifest_hash)
+    } else {
+        LocalFsStore::object_key(tenant_id, manifest_hash)
+    };
     let expires_at = state.clock.now_millis() + SESSION_TTL_MILLIS;
     let url = state.store.presign_get(&key, 3600).await?;
     Ok((url, expires_at))

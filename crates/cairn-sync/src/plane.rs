@@ -65,6 +65,9 @@ pub trait Plane: Send + Sync {
         bytes: &[u8],
     ) -> Result<(), CairnError>;
     async fn get_manifest(&self, tenant: &str, manifest_hash: &str) -> Result<Vec<u8>, CairnError>;
+    /// Fetch a stored object by hash (chunk or manifest) — bytes exactly as stored in the
+    /// bucket (chunks are the compressed/stored form; manifests are raw). Hydration path.
+    async fn fetch_object(&self, tenant: &str, hash_hex: &str) -> Result<Vec<u8>, CairnError>;
     async fn append(
         &self,
         tenant: &str,

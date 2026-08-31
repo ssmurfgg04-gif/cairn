@@ -8,15 +8,19 @@ use std::time::Instant;
 
 use cairn_core::clock::WallClock;
 use cairn_proto::pb::ctl_diagnostics_server::{CtlDiagnostics, CtlDiagnosticsServer};
+use cairn_proto::pb::ctl_projects_server::{CtlProjects, CtlProjectsServer};
 use cairn_proto::pb::ctl_status_server::{CtlStatus, CtlStatusServer};
 use cairn_proto::pb::{
-    DoctorCheck, DoctorReport, DoctorRequest, FlagInfo, GetFlagsRequest, GetFlagsResponse,
-    SetFlagRequest, StatusRequest, StatusResponse,
+    Ack, AttachRootRequest, AttachRootResponse, DetachRootRequest, DoctorCheck, DoctorReport,
+    DoctorRequest, FlagInfo, GetFlagsRequest, GetFlagsResponse, ListProjectsCtlRequest,
+    ListProjectsCtlResponse, ProjectInfoCtl, ProjectStatus, SetFlagRequest, StatusRequest,
+    StatusResponse,
 };
 use tokio::sync::RwLock;
 use tonic::{Request, Response, Status};
 
 use crate::doctor;
+use crate::projects;
 
 /// Shared daemon state.
 pub struct DaemonState {
@@ -61,11 +65,29 @@ impl CtlStatus for CtlStatusSvc {
         _request: Request<StatusRequest>,
     ) -> Result<Response<StatusResponse>, Status> {
         let rep = doctor::collect(&self.state.home);
+        // attached projects: live runtimes first, then any durable binding (crash-resume
+        // window where the loop hasn't spawned yet)
+        let mut list: Vec<ProjectStatus> = Vec::new();
+        {
+            let map = projects::RUNTIMES.read().await;
+            for rt in map.values() {
+                let v = rt.view.read().await;
+                list.push(ProjectStatus {
+                    project_id: rt.project_id.clone(),
+                    root_path: rt.workspace.to_string_lossy().into_owned(),
+                    state: v.state.clone(),
+                    pending_outbox: v.pending_outbox,
+                    cursor: v.cursor,
+                    files_synced: v.files_synced,
+                });
+            }
+        }
+        list.sort_by(|a, b| a.project_id.cmp(&b.project_id));
         Ok(Response::new(StatusResponse {
             version: format!("cairn {}", env!("CARGO_PKG_VERSION")),
             proto: cairn_proto::PROTO_VERSION,
             uptime_ms: u64::try_from(self.state.started.elapsed().as_millis()).unwrap_or(u64::MAX),
-            projects: vec![], // attached roots appear with ProjectService (M4)
+            projects: list,
             server_reachable: if rep.healthy() {
                 "ok".into()
             } else {
@@ -77,6 +99,68 @@ impl CtlStatus for CtlStatusSvc {
 
 pub struct CtlDiagSvc {
     pub state: Arc<DaemonState>,
+}
+
+pub struct CtlProjectsSvc {
+    pub state: Arc<DaemonState>,
+}
+
+#[tonic::async_trait]
+impl CtlProjects for CtlProjectsSvc {
+    async fn attach_root(
+        &self,
+        request: Request<AttachRootRequest>,
+    ) -> Result<Response<AttachRootResponse>, Status> {
+        let req = request.into_inner();
+        let root = std::path::PathBuf::from(&req.root_path);
+        let pid = projects::attach(
+            &self.state.home,
+            &root,
+            if req.project_id.is_empty() {
+                None
+            } else {
+                Some(req.project_id)
+            },
+            if req.server_addr.is_empty() {
+                None
+            } else {
+                Some(req.server_addr)
+            },
+        )
+        .await
+        .map_err(|e| Status::failed_precondition(e.message))?
+        ;
+        tracing::info!(project = %pid, root = %req.root_path, "attach_root accepted");
+        Ok(Response::new(AttachRootResponse { project_id: pid }))
+    }
+
+    async fn detach_root(&self, request: Request<DetachRootRequest>) -> Result<Response<Ack>, Status> {
+        let req = request.into_inner();
+        projects::detach(&self.state.home, &req.project_id)
+            .await
+            .map_err(|e| Status::failed_precondition(e.message))?;
+        Ok(Response::new(Ack { ok: true }))
+    }
+
+    async fn list_projects(
+        &self,
+        _request: Request<ListProjectsCtlRequest>,
+    ) -> Result<Response<ListProjectsCtlResponse>, Status> {
+        let mut list = Vec::new();
+        {
+            let map = projects::RUNTIMES.read().await;
+            for rt in map.values() {
+                let state = rt.view.read().await.state.clone();
+                list.push(ProjectInfoCtl {
+                    project_id: rt.project_id.clone(),
+                    root_path: rt.workspace.to_string_lossy().into_owned(),
+                    state,
+                });
+            }
+        }
+        list.sort_by(|a, b| a.project_id.cmp(&b.project_id));
+        Ok(Response::new(ListProjectsCtlResponse { projects: list }))
+    }
 }
 
 #[tonic::async_trait]
@@ -151,6 +235,11 @@ impl CtlDiagnostics for CtlDiagSvc {
 /// durable in the client store before any ack).
 pub async fn run(home: PathBuf, ctl_addr: String, ui_addr: String) -> anyhow::Result<()> {
     let state = Arc::new(DaemonState::new(home));
+    // persist the ctl endpoint so CLI status/attach in THIS home find the right daemon
+    // (multi-daemon machines run several ctl ports; 17777 is only the default)
+    if let Ok(store) = cairn_store::Store::open(&state.home, Arc::new(WallClock)) {
+        let _ = store.meta_set("ctl/addr", &format!("http://{ctl_addr}"));
+    }
     tracing::info!(ctl_addr = %ctl_addr, ui_addr = %ui_addr, "cairn daemon starting");
 
     let status_svc = CtlStatusServer::new(CtlStatusSvc {
@@ -159,10 +248,23 @@ pub async fn run(home: PathBuf, ctl_addr: String, ui_addr: String) -> anyhow::Re
     let diag_svc = CtlDiagnosticsServer::new(CtlDiagSvc {
         state: Arc::clone(&state),
     });
+    let projects_svc = CtlProjectsServer::new(CtlProjectsSvc {
+        state: Arc::clone(&state),
+    });
+
+    // resume any durably-bound workspaces from a previous run (kill -9 safe, I2)
+    let resume_home = state.home.clone();
+    tokio::spawn(async move {
+        let n = projects::resume_all(&resume_home).await;
+        if n > 0 {
+            tracing::info!(resumed = n, "re-attached bound workspaces");
+        }
+    });
 
     let ctl = tonic::transport::Server::builder()
         .add_service(status_svc)
         .add_service(diag_svc)
+        .add_service(projects_svc)
         .serve(ctl_addr.parse()?);
 
     let ui = crate::dashboard::serve(ui_addr, Arc::clone(&state));
@@ -180,9 +282,9 @@ pub async fn run(home: PathBuf, ctl_addr: String, ui_addr: String) -> anyhow::Re
 
 // ---------- login/logout (device enrollment; keychain storage per §13) ----------
 
-/// Enroll this device: exchanges an enrollment code with the server's Auth service and stores
-/// the PASETO in the OS keychain (never plaintext; dev-only 0600-file fallback is explicit).
-pub async fn login(
+/// Enroll + persist the FULL identity into the home store (daemon attach path needs
+/// device_id/tenant_id, which the keychain payload alone does not carry).
+pub async fn login_full(
     home: &std::path::Path,
     server: &str,
     code: &str,
@@ -190,7 +292,7 @@ pub async fn login(
     allow_plaintext_file: bool,
 ) -> anyhow::Result<()> {
     // ensure local store exists first (doctor-friendly)
-    cairn_store::Store::open(home, Arc::new(WallClock))?;
+    let store = cairn_store::Store::open(home, Arc::new(WallClock))?;
     let mut auth = cairn_proto::pb::auth_client::AuthClient::connect(format!("http://{server}"))
         .await
         .map_err(|e| anyhow::anyhow!("cannot reach server {server}: {e} — is it running?"))?;
@@ -201,14 +303,26 @@ pub async fn login(
             device_name: name.to_string(),
         })
         .await?;
-    let paseto = resp.into_inner().paseto;
-    store_token(server, &paseto, allow_plaintext_file)?;
-    tracing::info!(server = %server, "device enrolled; token stored in credential store");
+    let inner = resp.into_inner();
+    let server_url = format!("http://{server}");
+    let device_id = inner.device_id.clone();
+    crate::projects::save_identity(
+        &store,
+        &crate::projects::Identity {
+            server_url,
+            token: inner.paseto.clone(),
+            device_id,
+            tenant_id: inner.tenant_id,
+        },
+    )
+    .map_err(|e| anyhow::anyhow!("persist identity: {e}"))?;
+    let _ = store_token(server, &inner.paseto, allow_plaintext_file);
+    tracing::info!(server = %server, device = %inner.device_id, "device enrolled; identity persisted");
     Ok(())
 }
 
 /// Remove the locally stored token (server-side revocation is an admin action via ctl).
-pub fn logout(_home: &std::path::Path) {
+pub fn logout(home: &std::path::Path) {
     match keyring_entry() {
         Ok(e) => {
             let _ = e.delete_credential();
@@ -216,6 +330,9 @@ pub fn logout(_home: &std::path::Path) {
         Err(e) => tracing::warn!("keychain unavailable at logout: {e}"),
     }
     let _ = std::fs::remove_file(token_file());
+    if let Ok(store) = cairn_store::Store::open(home, Arc::new(WallClock)) {
+        crate::projects::clear_identity(&store);
+    }
 }
 
 fn keyring_entry() -> Result<keyring::Entry, String> {

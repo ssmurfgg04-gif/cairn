@@ -43,3 +43,6 @@ doctor:
     cargo run -p cairn-cli -- doctor
 
 ci: fmt-check clippy test
+
+wo1-acceptance:
+    SIZE_MB=${SIZE_MB:-500} bash scripts/wo1-acceptance.sh
