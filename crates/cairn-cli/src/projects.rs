@@ -115,7 +115,7 @@ impl ProjectRuntime {
         meta.len() == row.size
     }
 
-    pub async fn stop(&self) {
+    pub fn stop(&self) {
         let _ = self.abort.send(true);
     }
 }
@@ -173,7 +173,7 @@ pub async fn attach(
     let existing = RUNTIMES.read().await.get(&pid).cloned();
     if let Some(rt) = existing {
         // already attached: just refresh the workspace binding + identity
-        rt.stop().await;
+        rt.stop();
         spawn_loop(Arc::clone(&rt), store, identity, server_url);
         return Ok(pid);
     }
@@ -199,21 +199,21 @@ pub async fn attach(
 pub async fn detach(home: &Path, project_id: &str) -> Result<(), CairnError> {
     let store = Store::open(home, Arc::new(WallClock))?;
     if let Some(rt) = RUNTIMES.write().await.remove(project_id) {
-        rt.stop().await;
+        rt.stop();
     }
     cairn_sync::workspace::clear_workspace(&store, project_id)
 }
 
 /// Registry of live runtimes for the daemon process (ctl status/list surface).
-pub static RUNTIMES: once_cell::sync::Lazy<RwLock<HashMap<String, Arc<ProjectRuntime>>>> =
-    once_cell::sync::Lazy::new(|| RwLock::new(HashMap::new()));
+pub static RUNTIMES: std::sync::LazyLock<RwLock<HashMap<String, Arc<ProjectRuntime>>>> =
+    std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
 
 /// Re-attach all bound workspaces at daemon boot (crash-resume path).
 pub async fn resume_all(home: &Path) -> usize {
     let Ok(store) = Store::open(home, Arc::new(WallClock)) else {
         return 0;
     };
-    let identity_present = load_identity(&store).map_or(false, |i| !i.token.is_empty());
+    let identity_present = load_identity(&store).is_some_and(|i| !i.token.is_empty());
     if !identity_present {
         return 0;
     }
@@ -281,14 +281,12 @@ async fn ensure_project(
                 name: project_id.into(),
             });
             create.metadata_mut().insert("authorization", bearer);
-            c.create_project(create)
-                .await
-                .map_err(|s| {
-                    CairnError::new(
-                        ErrorKind::Internal,
-                        format!("create_project: {}", s.message()),
-                    )
-                })?;
+            c.create_project(create).await.map_err(|s| {
+                CairnError::new(
+                    ErrorKind::Internal,
+                    format!("create_project: {}", s.message()),
+                )
+            })?;
             Ok(())
         }
         Err(status) => Err(CairnError::new(
@@ -298,12 +296,7 @@ async fn ensure_project(
     }
 }
 
-fn spawn_loop(
-    rt: Arc<ProjectRuntime>,
-    store: Store,
-    identity: Identity,
-    server_url: String,
-) {
+fn spawn_loop(rt: Arc<ProjectRuntime>, store: Store, identity: Identity, server_url: String) {
     let mut shutdown = rt.abort.subscribe();
     tokio::spawn(async move {
         // The loop is the re-entry point for ALL failures (I2): server not yet up,
@@ -319,7 +312,7 @@ fn spawn_loop(
                     tracing::warn!(project = %rt.project_id, "sync loop stopped ({e}); retrying in 5s");
                     tokio::select! {
                         _ = shutdown.changed() => return,
-                        _ = tokio::time::sleep(Duration::from_secs(5)) => {}
+                        () = tokio::time::sleep(Duration::from_secs(5)) => {}
                     }
                 }
             }
@@ -335,9 +328,8 @@ async fn run_loop(
     shutdown: &mut tokio::sync::watch::Receiver<bool>,
 ) -> Result<(), CairnError> {
     let pid = rt.project_id.clone();
-    let plane: Arc<dyn Plane> = Arc::new(
-        GrpcPlane::connect(server_url, &identity.token, &identity.tenant_id).await?,
-    );
+    let plane: Arc<dyn Plane> =
+        Arc::new(GrpcPlane::connect(server_url, &identity.token, &identity.tenant_id).await?);
     let conn = store.conn_handle();
     let cas = Cas::open(&store.root().join("blobs"), conn.clone())?;
     let outbox = Outbox::new(conn.clone());
@@ -448,7 +440,9 @@ async fn run_loop(
                     if r.mode == "file"
                         && matches!(
                             LocalState::parse(&r.local_state),
-                            Some(LocalState::Synced) | Some(LocalState::Clean) | Some(LocalState::Pinned)
+                            Some(LocalState::Synced)
+                                | Some(LocalState::Clean)
+                                | Some(LocalState::Pinned)
                         )
                     {
                         synced += 1;
@@ -457,7 +451,9 @@ async fn run_loop(
                 rt.files_synced.store(synced, Ordering::Relaxed);
                 let dirty_left = rows
                     .iter()
-                    .filter(|r| matches!(LocalState::parse(&r.local_state), Some(LocalState::Dirty)))
+                    .filter(|r| {
+                        matches!(LocalState::parse(&r.local_state), Some(LocalState::Dirty))
+                    })
                     .count();
                 let mut v = rt.view.write().await;
                 v.files_synced = synced;

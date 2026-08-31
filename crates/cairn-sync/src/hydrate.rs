@@ -63,10 +63,7 @@ pub async fn materialize_missing(
         let bytes = hydrate_one(plane, cas, tenant, &hash_hex, &mut manifest_cache).await?;
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent).map_err(|e| {
-                CairnError::new(
-                    ErrorKind::Io,
-                    format!("mkdir {}: {e}", parent.display()),
-                )
+                CairnError::new(ErrorKind::Io, format!("mkdir {}: {e}", parent.display()))
             })?;
         }
         std::fs::write(&target, &bytes).map_err(|e| {
@@ -106,12 +103,13 @@ async fn hydrate_one(
     let manifest = if let Some(m) = manifest_cache.get(manifest_hash_hex) {
         m.clone()
     } else {
-        let bytes = match cas.get(&Hash::from_hex(manifest_hash_hex).ok_or_else(|| {
-            CairnError::new(ErrorKind::ManifestFormat, "bad manifest hash hex")
-        })?) {
-            Ok(b) => b,
-            Err(_) => plane.get_manifest(tenant, manifest_hash_hex).await?,
-        };
+        let bytes =
+            match cas.get(&Hash::from_hex(manifest_hash_hex).ok_or_else(|| {
+                CairnError::new(ErrorKind::ManifestFormat, "bad manifest hash hex")
+            })?) {
+                Ok(b) => b,
+                Err(_) => plane.get_manifest(tenant, manifest_hash_hex).await?,
+            };
         let m = Manifest::parse(&bytes)?;
         manifest_cache.insert(manifest_hash_hex.to_string(), m.clone());
         m
@@ -165,9 +163,8 @@ async fn hydrate_one(
     }
 
     // Resolve + assemble. assemble_file re-verifies every chunk hash before assembly.
-    let mut resolve = |child: &Hash| -> Option<Manifest> {
-        manifest_cache.get(&child.hex()).cloned()
-    };
+    let mut resolve =
+        |child: &Hash| -> Option<Manifest> { manifest_cache.get(&child.hex()).cloned() };
     let mut get_chunk = |h: &Hash| -> Option<Vec<u8>> {
         if let Ok(raw) = cas.get(h) {
             return Some(raw);
@@ -180,13 +177,13 @@ async fn hydrate_one(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plane::{CompleteOut, Entry};
     use cairn_core::chunker::FastCdc;
     use cairn_core::clock::WallClock;
     use cairn_core::compress;
     use cairn_core::compress::compress_chunk;
     use cairn_core::hash::Hash;
     use cairn_core::manifest::Manifest;
-    use crate::plane::{CompleteOut, Entry};
     use cairn_store::{Outbox, Store as LocalStore};
     use std::sync::Arc;
 
@@ -197,11 +194,7 @@ mod tests {
 
     #[async_trait::async_trait]
     impl Plane for MemPlane {
-        async fn batch_exists(
-            &self,
-            _t: &str,
-            _h: &[String],
-        ) -> Result<Vec<String>, CairnError> {
+        async fn batch_exists(&self, _t: &str, _h: &[String]) -> Result<Vec<String>, CairnError> {
             Ok(vec![])
         }
         async fn create_session(
@@ -220,20 +213,10 @@ mod tests {
         ) -> Result<CompleteOut, CairnError> {
             Err(CairnError::new(ErrorKind::Internal, "unused"))
         }
-        async fn put_presigned(
-            &self,
-            _u: &str,
-            _b: &[u8],
-            _c: &str,
-        ) -> Result<(), CairnError> {
+        async fn put_presigned(&self, _u: &str, _b: &[u8], _c: &str) -> Result<(), CairnError> {
             Ok(())
         }
-        async fn put_manifest(
-            &self,
-            _t: &str,
-            _h: &str,
-            _b: &[u8],
-        ) -> Result<(), CairnError> {
+        async fn put_manifest(&self, _t: &str, _h: &str, _b: &[u8]) -> Result<(), CairnError> {
             Ok(())
         }
         async fn get_manifest(&self, _t: &str, h: &str) -> Result<Vec<u8>, CairnError> {
@@ -291,7 +274,9 @@ mod tests {
             .map(|s| ManifestEntry {
                 offset: s.offset,
                 len: s.len,
-                chunk_hash: Hash::of(&content[s.offset as usize..(s.offset + u64::from(s.len)) as usize]),
+                chunk_hash: Hash::of(
+                    &content[s.offset as usize..(s.offset + u64::from(s.len)) as usize],
+                ),
             })
             .collect();
         let manifest = Manifest::build(entries, compress::Compression::Zstd3, None);
@@ -301,7 +286,7 @@ mod tests {
         let mut objects = std::collections::HashMap::new();
         objects.insert(mh.hex(), mbytes.clone());
         for e in manifest.flatten() {
-            let raw = &content[e.offset as usize..(e.offset + e.len as u64) as usize];
+            let raw = &content[e.offset as usize..(e.offset + u64::from(e.len)) as usize];
             let stored = compress_chunk(raw, compress::Compression::Zstd3, None).unwrap();
             objects.insert(e.chunk_hash.hex(), stored);
         }

@@ -258,12 +258,14 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
             // live daemon view first (projects + files_synced); doctor fallback offline.
             // ctl endpoint comes from the home store (daemon persists it at boot), so
             // multi-daemon machines poll THEIR daemon, not a hardcoded port.
-            let ctl = cairn_store::Store::open(&home, std::sync::Arc::new(cairn_core::clock::WallClock))
-                .ok()
-                .and_then(|s| s.meta_get("ctl/addr"))
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| "http://127.0.0.1:17777".into());
-            if let Ok(mut c) = cairn_proto::pb::ctl_status_client::CtlStatusClient::connect(ctl).await
+            let ctl =
+                cairn_store::Store::open(&home, std::sync::Arc::new(cairn_core::clock::WallClock))
+                    .ok()
+                    .and_then(|s| s.meta_get("ctl/addr"))
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| "http://127.0.0.1:17777".into());
+            if let Ok(mut c) =
+                cairn_proto::pb::ctl_status_client::CtlStatusClient::connect(ctl).await
             {
                 if let Ok(out) = c.status(cairn_proto::pb::StatusRequest {}).await {
                     let s = out.into_inner();
@@ -289,8 +291,12 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
                         for p in &s.projects {
                             println!(
                                 "   {:<24} {:<10} files={:<6} cursor={:<8} outbox={:<4} {}",
-                                p.project_id, p.state, p.files_synced, p.cursor,
-                                p.pending_outbox, p.root_path
+                                p.project_id,
+                                p.state,
+                                p.files_synced,
+                                p.cursor,
+                                p.pending_outbox,
+                                p.root_path
                             );
                         }
                         if s.projects.is_empty() {
@@ -322,10 +328,15 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
             report.print(json);
             std::process::exit(i32::from(!report.healthy()));
         }
-        Cmd::DevEnrollCode { server, tenant, email } => {
-            let mut auth = cairn_proto::pb::auth_client::AuthClient::connect(format!("http://{server}"))
-                .await
-                .map_err(|e| anyhow::anyhow!("cannot reach server {server}: {e}"))?;
+        Cmd::DevEnrollCode {
+            server,
+            tenant,
+            email,
+        } => {
+            let mut auth =
+                cairn_proto::pb::auth_client::AuthClient::connect(format!("http://{server}"))
+                    .await
+                    .map_err(|e| anyhow::anyhow!("cannot reach server {server}: {e}"))?;
             let out = auth
                 .enroll_code(cairn_proto::pb::EnrollCodeRequest {
                     tenant_id: tenant,

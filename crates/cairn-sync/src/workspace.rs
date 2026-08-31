@@ -17,11 +17,7 @@ fn key(project_id: &str) -> String {
 }
 
 /// Register (or replace) the attached root for a project.
-pub fn set_workspace(
-    store: &Store,
-    project_id: &str,
-    root: &Path,
-) -> Result<(), CairnError> {
+pub fn set_workspace(store: &Store, project_id: &str, root: &Path) -> Result<(), CairnError> {
     let abs = root
         .canonicalize()
         .map_err(|e| CairnError::new(ErrorKind::Io, format!("canonicalize root: {e}")))?;
@@ -82,18 +78,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(dir.path(), Arc::new(WallClock)).unwrap();
         // default (sim layout) when unbound
-        assert_eq!(
-            workspace_dir(&store, "p1"),
-            dir.path().join("workspace")
-        );
+        assert_eq!(workspace_dir(&store, "p1"), dir.path().join("workspace"));
         let root = tempfile::tempdir().unwrap();
         set_workspace(&store, "p1", root.path()).unwrap();
         assert_eq!(workspace_dir(&store, "p1"), root.path());
         clear_workspace(&store, "p1").unwrap();
-        assert_eq!(
-            workspace_dir(&store, "p1"),
-            dir.path().join("workspace")
-        );
+        assert_eq!(workspace_dir(&store, "p1"), dir.path().join("workspace"));
     }
 
     #[test]
