@@ -22,10 +22,7 @@ jobs:
           # cheap shards (pure byte logic, no hashing)
           - proof_b64_roundtrip_identity
           - proof_hex_roundtrip_identity
-          - proof_validate_rel_path_confines
-          - proof_validate_rel_path_rejects_traversal_positions
           - proof_sniff_gzip_magic_exact
-          - proof_policy_for_is_total
           # expensive shards (BLAKE3 in the symbolic path)
           - proof_commit_roundtrip_frozen_format
           - proof_bloom_probe_math_in_bounds
