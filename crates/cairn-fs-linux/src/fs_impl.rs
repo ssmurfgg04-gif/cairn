@@ -274,26 +274,53 @@ impl CairnFs {
             }
         }
         self.metrics.record_hit(false);
-        let bytes = self.read_whole_verified(manifest_hex)?;
-        let start = offset as usize;
-        if start >= bytes.len() {
-            return Ok(Vec::new());
-        }
-        let end = (start + size).min(bytes.len());
-        Ok(bytes[start..end].to_vec())
+        self.read_ranged_verified(manifest_hex, offset, size)
     }
 
-    fn read_whole_verified(&self, manifest_hex: &str) -> Result<Vec<u8>, CairnError> {
-        // the engine mirrors manifest objects into the local CAS (content-addressed); every
-        // chunk is verified on ingest (I2: never materialize corrupt files)
+    /// RANGED read (review round): the old path assembled the WHOLE file in RAM
+    /// (`Vec::with_capacity(total_len)`) for every non-header-cache read — a 50GB BRAW
+    /// scrub was an instant OOM. Fetch and verify ONLY the chunks intersecting
+    /// `[offset, offset+size)`; peak RAM is those chunks (≤16MB each). Fanout-safe via
+    /// `flatten_deep` (the old `flatten()` returned nothing for Node manifests, so
+    /// >8,192-chunk files read as empty). I2 preserved: every contributing chunk is
+    /// hash-verified before its bytes enter the response.
+    fn read_ranged_verified(
+        &self,
+        manifest_hex: &str,
+        offset: u64,
+        size: usize,
+    ) -> Result<Vec<u8>, CairnError> {
         let mh = Hash::from_hex(manifest_hex)
             .ok_or_else(|| CairnError::new(ErrorKind::ManifestFormat, "bad manifest hash"))?;
         let manifest_bytes = self.cas.get(&mh)?;
         let m = Manifest::parse(&manifest_bytes)?;
-        let mut out = Vec::with_capacity(m.total_len() as usize);
-        for e in m.flatten() {
+        let entries = m.flatten_deep(&mut |h| self.cas.get(h).ok());
+        let want_end = offset.saturating_add(size as u64);
+        let mut out: Vec<u8> = Vec::with_capacity(size.min(1 << 20));
+        let mut pos = 0u64; // running file offset of the current entry start
+        for e in entries {
+            let chunk_start = pos;
+            let chunk_end = pos + u64::from(e.len);
+            pos = chunk_end;
+            if chunk_end <= offset {
+                continue; // entirely before the window
+            }
+            if chunk_start >= want_end {
+                break; // entirely after the window (entries are sorted)
+            }
             let raw = self.cas.get(&e.chunk_hash)?;
-            out.extend_from_slice(&raw);
+            if raw.len() != e.len as usize || Hash::of(&raw) != e.chunk_hash {
+                return Err(CairnError::new(
+                    ErrorKind::ChunkVerification,
+                    format!("chunk {} failed verification", e.chunk_hash),
+                ));
+            }
+            let from = offset.max(chunk_start) - chunk_start;
+            let to = want_end.min(chunk_end) - chunk_start;
+            out.extend_from_slice(&raw[from as usize..to as usize]);
+            if out.len() >= size {
+                break;
+            }
         }
         Ok(out)
     }

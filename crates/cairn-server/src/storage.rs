@@ -64,6 +64,12 @@ impl LocalFsStore {
         })
     }
 
+    /// Store root — for tooling and the sim, which need direct blocking reads that the
+    /// async API cannot offer inside sync closures (e.g. manifest-tree walks).
+    pub fn root(&self) -> &std::path::Path {
+        &self.root
+    }
+
     fn path_for(&self, key: &str) -> std::path::PathBuf {
         // keys are tenant-scoped and constructed server-side only; never allow traversal
         let safe: String = key
