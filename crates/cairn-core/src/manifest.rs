@@ -615,7 +615,7 @@ mod tests {
         let mut entries = Vec::new();
         for i in 0..9_000u64 {
             entries.push(ManifestEntry {
-                offset: u64::from(i) * 64,
+                offset: i * 64,
                 len: 64,
                 chunk_hash: Hash::of(&i.to_le_bytes()),
             });
@@ -632,7 +632,7 @@ mod tests {
         // two ways: whole-Vec and streamed to a Writer. Byte-identical output, identical
         // failure semantics on a corrupt chunk.
         const N: u64 = 18_000;
-        let chunk_of = |i: u64| -> Vec<u8> { (i as u64).to_le_bytes().repeat(8) }; // 64B
+        let chunk_of = |i: u64| -> Vec<u8> { i.to_le_bytes().repeat(8) }; // 64B
         let mut entries = Vec::new();
         let mut off = 0u64;
         for i in 0..N {
