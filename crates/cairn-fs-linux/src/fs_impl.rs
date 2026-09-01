@@ -282,7 +282,7 @@ impl CairnFs {
     /// scrub was an instant OOM. Fetch and verify ONLY the chunks intersecting
     /// `[offset, offset+size)`; peak RAM is those chunks (≤16MB each). Fanout-safe via
     /// `flatten_deep` (the old `flatten()` returned nothing for Node manifests, so
-    /// >8,192-chunk files read as empty). I2 preserved: every contributing chunk is
+    /// files beyond 8,192 chunks read as empty). I2 preserved: every contributing chunk is
     /// hash-verified before its bytes enter the response.
     fn read_ranged_verified(
         &self,

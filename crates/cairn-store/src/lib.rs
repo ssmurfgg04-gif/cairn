@@ -6,8 +6,9 @@
 //! being reported durable; a crash at ANY point replays to a consistent state — verified by
 //! the `kill -9` fault harness (`cairn-x`).
 
-// deny-by-default; the ONE exception is eviction.rs's free-space probe (statvfs /
-// GetDiskFreeSpaceExW are raw C calls with no safe std equivalent) — reviewed inline.
+// deny-by-default; exceptions (each reviewed inline with SAFETY proofs):
+//  - eviction.rs: free-space probes (statvfs / GetDiskFreeSpaceExW have no safe std equivalent)
+//  - db.rs: process-alive probe for ADR-0014 Phase 3 lease reaping (kill(pid,0) / OpenProcess)
 #![deny(unsafe_code)]
 
 pub mod cas;

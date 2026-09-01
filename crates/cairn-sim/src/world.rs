@@ -354,7 +354,10 @@ async fn collect_store_manifest_entries(
     m: &cairn_core::manifest::Manifest,
     depth: u32,
 ) -> Vec<cairn_core::manifest::ManifestEntry> {
-    Box::pin(collect_store_manifest_entries_inner(world, tenant, m, depth)).await
+    Box::pin(collect_store_manifest_entries_inner(
+        world, tenant, m, depth,
+    ))
+    .await
 }
 
 async fn collect_store_manifest_entries_inner(

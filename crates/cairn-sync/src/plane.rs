@@ -116,6 +116,24 @@ pub trait Plane: Send + Sync {
             "lease release not supported by this plane",
         ))
     }
+
+    /// Renew (heartbeat) a held lease WITHOUT bumping the fencing token (ADR-0014
+    /// Phase 3: the 15s-TTL + 5s-heartbeat pen model — only TAKEOVER bumps tokens).
+    /// Returns the new expires_at. Default = unsupported; the gRPC plane implements it.
+    async fn renew_lease(
+        &self,
+        _tenant: &str,
+        _project: &str,
+        _path: &str,
+        _device: &str,
+        _token: u64,
+        _ttl_ms: u64,
+    ) -> Result<i64, CairnError> {
+        Err(CairnError::new(
+            ErrorKind::Internal,
+            "lease renewal not supported by this plane",
+        ))
+    }
 }
 
 /// Build a FileUpsert op.

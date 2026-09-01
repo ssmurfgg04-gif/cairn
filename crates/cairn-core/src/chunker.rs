@@ -265,8 +265,7 @@ mod tests {
             c.gear = (c.gear << 1).wrapping_add(c.table[usize::from(b)]);
             c.since_cut += 1;
             c.abs += 1;
-            if c.since_cut >= c.min as u64 && (c.gear & c.mask) == 0
-                || c.since_cut >= c.max as u64
+            if c.since_cut >= c.min as u64 && (c.gear & c.mask) == 0 || c.since_cut >= c.max as u64
             {
                 spans.push(ChunkSpan {
                     offset: c.chunk_start,
@@ -298,7 +297,9 @@ mod tests {
         let mut random_buf = vec![0u8; 512 * 1024];
         r.fill_bytes(&mut random_buf);
         let periodic: Vec<u8> = (0..512 * 1024).map(|i| ((i * 7) % 255) as u8).collect();
-        let low_entropy: Vec<u8> = (0..512 * 1024).map(|i| if i % 2 == 0 { 0 } else { 1 }).collect();
+        let low_entropy: Vec<u8> = (0..512 * 1024)
+            .map(|i| if i % 2 == 0 { 0 } else { 1 })
+            .collect();
         let zeros = vec![0u8; 256 * 1024];
         for buf in [&random_buf, &periodic, &low_entropy, &zeros] {
             for (min, avg, max) in profiles {

@@ -658,7 +658,8 @@ impl CtlSnapshots for CtlSnapshotsSvc {
                     return Err(Status::internal(format!("restore {path}: {e}")));
                 }
             };
-            f.sync_all().map_err(|e| Status::internal(format!("restore {path}: {e}")))?;
+            f.sync_all()
+                .map_err(|e| Status::internal(format!("restore {path}: {e}")))?;
             drop(f);
             std::fs::rename(&tmp, &target)
                 .map_err(|e| Status::internal(format!("restore {path}: {e}")))?;
