@@ -38,6 +38,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - uses: taiki-e/install-action@nextest
+      # corpus BYTES are git-ignored (reproducible); the committed manifest verifies them
+      - run: |
+          cargo build --release -p cairn-x
+          ./target/release/cairn-x corpus-gen --sequences 2 --saves 8 --base-mb 128
       - run: cargo nextest run --workspace
         env:
           CAIRN_E2E_BYTES: "268435456"
@@ -117,6 +121,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with: { components: llvm-tools-preview }
       - uses: taiki-e/install-action@cargo-llvm-cov
+      - run: |
+          cargo build --release -p cairn-x
+          ./target/release/cairn-x corpus-gen --sequences 2 --saves 8 --base-mb 128
       - run: cargo llvm-cov --workspace --lcov --output-path lcov.info --fail-under-lines 85 -p cairn-core -p cairn-sync
 
   fuzz-nightly:

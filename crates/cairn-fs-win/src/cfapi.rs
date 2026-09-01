@@ -81,7 +81,10 @@ pub fn register_sync_root(root: &str, provider_name: &str) -> Result<(), i32> {
         CF_POPULATION_POLICY, CF_POPULATION_POLICY_MODIFIER, CF_POPULATION_POLICY_PARTIAL,
         CF_REGISTER_FLAG_UPDATE, CF_SYNC_POLICIES, CF_SYNC_REGISTRATION,
     };
-    let root_w = wide(&cairn_core::pathutil::win_long_path(root));
+    // plain DOS path (nextcloud/desktop passes user-mode paths; the \\?\ prefix is
+    // rejected by CfConnectSyncRoot with E_INVALIDARG even though CfRegisterSyncRoot
+    // tolerates it — use the same normalized path form for BOTH calls)
+    let root_w = wide(root);
     let name_w = wide(provider_name);
     let version_w = wide(env!("CARGO_PKG_VERSION"));
 
@@ -144,9 +147,7 @@ pub fn create_placeholder(
             .parent()
             .unwrap_or(std::path::Path::new("")),
     );
-    let base_w = wide(&cairn_core::pathutil::win_long_path(
-        &parent.to_string_lossy(),
-    ));
+    let base_w = wide(&parent.to_string_lossy());
     let name = std::path::Path::new(path)
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -199,7 +200,7 @@ pub fn connect(
         CF_CONNECT_FLAGS, CF_CONNECT_FLAG_BLOCK_SELF_IMPLICIT_HYDRATION,
         CF_CONNECT_FLAG_REQUIRE_FULL_FILE_PATH, CF_CONNECT_FLAG_REQUIRE_PROCESS_INFO,
     };
-    let root_w = wide(&cairn_core::pathutil::win_long_path(root));
+    let root_w = wide(root);
     // SAFETY: the context pointer must stay alive for the connection's lifetime — the
     // Arc lives in Connection (below); the callback table is 'static.
     let ctx = Box::into_raw(Box::new(source));
