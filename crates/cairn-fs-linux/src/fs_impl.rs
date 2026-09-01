@@ -53,7 +53,7 @@ fn percentile(buckets: &[u64; BUCKETS.len() + 1], p: f64) -> f64 {
             return if i == 0 {
                 BUCKETS[0] / 2.0
             } else if i < BUCKETS.len() {
-                (BUCKETS[i - 1] + BUCKETS[i]) / 2.0
+                BUCKETS[i - 1] / 2.0 + BUCKETS[i] / 2.0
             } else {
                 BUCKETS[BUCKETS.len() - 1] * 2.0
             };
