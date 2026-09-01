@@ -12,6 +12,117 @@ use cairn_store::{Cas, HeaderCache, Store};
 #[cfg(feature = "fuse")]
 use fuser::{FileAttr, Filesystem, Request};
 
+/// Hydration metrics collected through the REAL filesystem read path (punch #8: the
+/// I1 metric must exist on Linux FUSE before Windows — same shape as the CfAPI
+/// callback probe so both platforms report identically).
+///
+/// Buckets are log-scaled milliseconds; percentiles are computed from cumulative
+/// bucket counts (bounded memory, O(1) record, good-enough tails for a 50 ms gate).
+#[derive(Default)]
+pub struct FsMetrics {
+    pub reads_total: std::sync::atomic::AtomicU64,
+    pub header_cache_hits: std::sync::atomic::AtomicU64,
+    pub full_hydrations: std::sync::atomic::AtomicU64,
+    pub bytes_served: std::sync::atomic::AtomicU64,
+    first_byte_buckets: Mutex<[u64; BUCKETS.len() + 1]>,
+    read_buckets: Mutex<[u64; BUCKETS.len() + 1]>,
+}
+
+/// Bucket UPPER bounds in milliseconds (log-scaled); the extra bucket is +inf.
+const BUCKETS: [f64; 14] = [
+    0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0, 1000.0, 2500.0,
+];
+
+fn bucket_index(ms: f64) -> usize {
+    BUCKETS
+        .iter()
+        .position(|&b| ms <= b)
+        .unwrap_or(BUCKETS.len())
+}
+
+fn percentile(buckets: &[u64; BUCKETS.len() + 1], p: f64) -> f64 {
+    let total: u64 = buckets.iter().sum();
+    if total == 0 {
+        return 0.0;
+    }
+    let target = ((total as f64) * p).ceil() as u64;
+    let mut cum = 0u64;
+    for (i, c) in buckets.iter().enumerate() {
+        cum += c;
+        if cum >= target {
+            return if i == 0 {
+                BUCKETS[0] / 2.0
+            } else if i < BUCKETS.len() {
+                (BUCKETS[i - 1] + BUCKETS[i]) / 2.0
+            } else {
+                BUCKETS[BUCKETS.len() - 1] * 2.0
+            };
+        }
+    }
+    0.0
+}
+
+impl FsMetrics {
+    fn record_read(&self, ms: f64, first_byte: bool) {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.reads_total.fetch_add(1, Relaxed);
+        let idx = bucket_index(ms);
+        if first_byte {
+            self.first_byte_buckets.lock().expect("metrics")[idx] += 1;
+        }
+        self.read_buckets.lock().expect("metrics")[idx] += 1;
+    }
+
+    fn record_bytes(&self, n: u64) {
+        self.bytes_served
+            .fetch_add(n, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    fn record_hit(&self, hit: bool) {
+        if hit {
+            self.header_cache_hits
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        } else {
+            self.full_hydrations
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    /// Percentile snapshot for ctl/dashboard surfaces (same fields the Windows
+    /// CfAPI probe reports: first-byte and read percentiles through the real path).
+    pub fn snapshot(&self) -> FsMetricsSnapshot {
+        let fb = self.first_byte_buckets.lock().expect("metrics");
+        let rb = self.read_buckets.lock().expect("metrics");
+        FsMetricsSnapshot {
+            reads_total: self.reads_total.load(std::sync::atomic::Ordering::Relaxed),
+            header_cache_hits: self
+                .header_cache_hits
+                .load(std::sync::atomic::Ordering::Relaxed),
+            full_hydrations: self
+                .full_hydrations
+                .load(std::sync::atomic::Ordering::Relaxed),
+            bytes_served: self.bytes_served.load(std::sync::atomic::Ordering::Relaxed),
+            first_byte_p50_ms: percentile(&fb, 0.50),
+            first_byte_p99_ms: percentile(&fb, 0.99),
+            read_p50_ms: percentile(&rb, 0.50),
+            read_p99_ms: percentile(&rb, 0.99),
+        }
+    }
+}
+
+/// Point-in-time hydration metrics (ctl/status surface; I1 gate = first_byte_p99 < 50ms).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FsMetricsSnapshot {
+    pub reads_total: u64,
+    pub header_cache_hits: u64,
+    pub full_hydrations: u64,
+    pub bytes_served: u64,
+    pub first_byte_p50_ms: f64,
+    pub first_byte_p99_ms: f64,
+    pub read_p50_ms: f64,
+    pub read_p99_ms: f64,
+}
+
 /// Backing view for the FUSE mount.
 pub struct CairnFs {
     store: Store,
@@ -20,6 +131,8 @@ pub struct CairnFs {
     project_id: String,
     ttl: Duration,
     inodes: Mutex<InodeTable>,
+    /// Hydration metrics through the real read path (I1 exists on Linux, punch #8).
+    pub metrics: FsMetrics,
 }
 
 #[derive(Default)]
@@ -83,6 +196,7 @@ impl CairnFs {
             project_id: project_id.to_string(),
             ttl: Duration::from_secs(1),
             inodes: Mutex::new(inodes),
+            metrics: FsMetrics::default(),
         }
     }
 
@@ -119,12 +233,33 @@ impl CairnFs {
         offset: u64,
         size: usize,
     ) -> Result<Vec<u8>, CairnError> {
+        // I1 measured HERE (not just the FUSE callback) so every entry point — mount,
+        // tests, store-serve — lands in the same metric (punch #8)
+        let t0 = std::time::Instant::now();
+        let first_byte = offset == 0;
+        let out = self.read_range_inner(manifest_hex, offset, size);
+        let ms = t0.elapsed().as_secs_f64() * 1000.0;
+        self.metrics.record_read(ms, first_byte);
+        if let Ok(b) = &out {
+            self.metrics.record_bytes(b.len() as u64);
+        }
+        out
+    }
+
+    fn read_range_inner(
+        &self,
+        manifest_hex: &str,
+        offset: u64,
+        size: usize,
+    ) -> Result<Vec<u8>, CairnError> {
         // header cache fast path (I1): head/tail served from local SQLite
         if let Ok(cached) = self.headers.serve(manifest_hex) {
             if offset + size as u64 <= cached.head.len() as u64 {
+                self.metrics.record_hit(true);
                 return Ok(cached.head[offset as usize..(offset as usize + size)].to_vec());
             }
         }
+        self.metrics.record_hit(false);
         let bytes = self.read_whole_verified(manifest_hex)?;
         let start = offset as usize;
         if start >= bytes.len() {
@@ -244,8 +379,11 @@ impl Filesystem for CairnFs {
         };
         let t0 = std::time::Instant::now();
         let bytes = self.read_range(&manifest_hex, offset.max(0) as u64, size as usize);
-        let dt = t0.elapsed().as_secs_f64() * 1000.0;
-        tracing::trace!(%path, ms = dt, "read (cairn_hydration_first_byte_ms probe)");
+        tracing::trace!(
+            %path,
+            ms = t0.elapsed().as_secs_f64() * 1000.0,
+            "read (cairn_hydration_first_byte_ms probe)"
+        );
         match bytes {
             Ok(b) => reply.data(&b),
             Err(_) => reply.error(libc::EIO),
@@ -346,6 +484,60 @@ mod tests {
             .read_range(&mh, u64::from(content.len() as u32), 16)
             .unwrap();
         assert!(past.is_empty());
+    }
+
+    /// I1 THROUGH the filesystem read path (punch #8): the same invariant the Windows
+    /// CfAPI probe measures — a cold-ish open (first read, offset 0) against a warm
+    /// header cache must land under the 50ms gate, and the metric must EXPOSE it.
+    #[test]
+    fn i1_through_read_path_measured_by_metrics() {
+        let content: Vec<u8> = (0..8 * 1024 * 1024).map(|i| (i % 249) as u8).collect();
+        let (_d, fs, mh) = setup_with_file(&content);
+        // first 2 MiB read = the editor-open probe (offset 0)
+        let head = fs.read_range(&mh, 0, 2 * 1024 * 1024).unwrap();
+        assert_eq!(head.len(), 2 * 1024 * 1024);
+        // a mid-file read outside the header cache forces a full hydration (counted)
+        let mid = fs.read_range(&mh, 4 * 1024 * 1024, 1024).unwrap();
+        assert_eq!(mid.len(), 1024);
+
+        let snap = fs.metrics.snapshot();
+        assert_eq!(snap.reads_total, 2, "both reads recorded");
+        assert_eq!(snap.header_cache_hits, 1, "head read served from I1 cache");
+        assert_eq!(snap.full_hydrations, 1, "mid read was a full hydration");
+        assert!(
+            snap.first_byte_p99_ms > 0.0,
+            "first-byte samples must be recorded (metric exists, not vacuous)"
+        );
+        assert!(
+            snap.first_byte_p99_ms < cairn_core::I1_TARGET_CACHED_MS,
+            "I1 through the read path: p99 {:.3}ms >= gate",
+            snap.first_byte_p99_ms
+        );
+        assert_eq!(snap.bytes_served, head.len() as u64 + mid.len() as u64);
+    }
+
+    /// Percentile math: log-scaled buckets must bracket known latencies.
+    #[test]
+    fn metrics_percentiles_bracket_latency() {
+        let m = FsMetrics::default();
+        for _ in 0..95 {
+            m.record_read(0.2, false); // bucket 0.25
+        }
+        for _ in 0..5 {
+            m.record_read(8.0, false); // bucket 10
+        }
+        let snap = m.snapshot();
+        assert!(
+            snap.read_p50_ms <= 0.5 && snap.read_p50_ms >= 0.1,
+            "p50 should sit in the 0.25 bucket, got {}",
+            snap.read_p50_ms
+        );
+        assert!(
+            snap.read_p99_ms >= 5.0 && snap.read_p99_ms <= 10.0,
+            "p99 should bracket the 8ms outlier, got {}",
+            snap.read_p99_ms
+        );
+        assert_eq!(m.snapshot().reads_total, 100);
     }
 
     /// Inode allocation is stable per path.

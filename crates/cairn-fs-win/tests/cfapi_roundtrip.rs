@@ -23,10 +23,7 @@ struct MemSource(HashMap<String, Vec<u8>>);
 
 impl PlaceholderSource for MemSource {
     fn fetch(&self, manifest_hash_hex: &str, offset: u64, len: u32) -> Result<Vec<u8>, i32> {
-        let blob = self
-            .0
-            .get(manifest_hash_hex)
-            .ok_or(0xC000_0225u32 as i32)?; // STATUS_NOT_FOUND
+        let blob = self.0.get(manifest_hash_hex).ok_or(0xC000_0225u32 as i32)?; // STATUS_NOT_FOUND
         let start = offset as usize;
         let end = start + len as usize;
         blob.get(start..end)
@@ -64,11 +61,8 @@ fn placeholder_round_trips_through_cfapi_with_instrumented_i1() {
     //      the moment a reader touches the file) ----
     let mut map = HashMap::new();
     map.insert(hash.clone(), blob);
-    let _conn = connect(
-        root.path().to_str().unwrap(),
-        Arc::new(MemSource(map)),
-    )
-    .expect("CfConnectSyncRoot failed");
+    let _conn = connect(root.path().to_str().unwrap(), Arc::new(MemSource(map)))
+        .expect("CfConnectSyncRoot failed");
 
     // ---- gate 2: create the placeholder; it must be visible via plain fs listing ----
     create_placeholder(
