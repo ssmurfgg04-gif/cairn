@@ -8,6 +8,7 @@
 pub mod bloom;
 pub mod chunker;
 pub mod clock;
+pub mod commit;
 pub mod compress;
 pub mod error;
 pub mod hash;

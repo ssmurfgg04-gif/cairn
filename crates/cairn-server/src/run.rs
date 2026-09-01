@@ -174,6 +174,12 @@ pub async fn run(cfg: ServerConfig) -> Result<(), CairnError> {
                 state: Arc::clone(&state),
             },
         ))
+        // WO6-3: proto-declared Snapshot service is now real (FoldNow/GetRef/ListRefs)
+        .add_service(cairn_proto::pb::snapshot_server::SnapshotServer::new(
+            crate::services::SnapshotSvc {
+                state: Arc::clone(&state),
+            },
+        ))
         .serve(
             cfg.grpc_addr
                 .parse()

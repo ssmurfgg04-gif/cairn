@@ -12,9 +12,10 @@ use cairn_core::{CairnError, ErrorKind};
 /// TREE object: "CTRE" | v1 | u32 n | (u16 name_len, name, u8 kind, hash 32)*
 /// kind: 0 = manifest_hash, 1 = tree_hash (fanout reserved)
 /// COMMIT object: "CCMT" | v1 | tree 32 | parent 32 | (u16 len, author) | (u16 len, label) | u64 snapshot_seq
-pub const TREE_MAGIC: &[u8; 4] = b"CTRE";
-pub const COMMIT_MAGIC: &[u8; 4] = b"CCMT";
-pub const OBJECT_FORMAT_VERSION: u8 = 1;
+/// Formats live in cairn-core::commit (the daemon parses commits/trees for ctl restore).
+pub use cairn_core::commit::{
+    build_commit, build_tree, parse_commit, COMMIT_MAGIC, OBJECT_FORMAT_VERSION, TREE_MAGIC,
+};
 
 /// Materialized view of one path.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,77 +24,8 @@ pub enum PathState {
     Tombstone,
 }
 
-/// Build TREE bytes (no mtime in hash input — SPEC §5.1).
-#[must_use]
-pub fn build_tree(entries: &[(String, String)]) -> (Hash, Vec<u8>) {
-    let mut buf = Vec::new();
-    buf.extend_from_slice(TREE_MAGIC);
-    buf.push(OBJECT_FORMAT_VERSION);
-    buf.extend_from_slice(&(entries.len() as u32).to_le_bytes());
-    for (name, hash_hex) in entries {
-        let name_bytes = name.as_bytes();
-        buf.extend_from_slice(&(name_bytes.len() as u16).to_le_bytes());
-        buf.extend_from_slice(name_bytes);
-        buf.push(0u8); // kind = manifest
-        let h = Hash::from_hex(hash_hex).unwrap_or_else(|| Hash::of(name.as_bytes()));
-        buf.extend_from_slice(&h.0);
-    }
-    (Hash::of(&buf), buf)
-}
+// TREE/COMMIT builders + parsers live in cairn_core::commit (re-exported above).
 
-/// Build COMMIT bytes.
-#[must_use]
-pub fn build_commit(
-    tree: &Hash,
-    parent: Option<&Hash>,
-    author: &str,
-    label: &str,
-    snapshot_seq: u64,
-) -> (Hash, Vec<u8>) {
-    let mut buf = Vec::new();
-    buf.extend_from_slice(COMMIT_MAGIC);
-    buf.push(OBJECT_FORMAT_VERSION);
-    buf.extend_from_slice(&tree.0);
-    buf.extend_from_slice(&parent.unwrap_or(&Hash::from_bytes([0u8; 32])).0);
-    let author_b = author.as_bytes();
-    buf.extend_from_slice(&(author_b.len() as u16).to_le_bytes());
-    buf.extend_from_slice(author_b);
-    let label_b = label.as_bytes();
-    buf.extend_from_slice(&(label_b.len() as u16).to_le_bytes());
-    buf.extend_from_slice(label_b);
-    buf.extend_from_slice(&snapshot_seq.to_le_bytes());
-    (Hash::of(&buf), buf)
-}
-
-/// Parse COMMIT bytes (restore path, ctl listing).
-pub fn parse_commit(bytes: &[u8]) -> Result<(Hash, Option<Hash>, String, String, u64), CairnError> {
-    let err = || CairnError::new(ErrorKind::ManifestFormat, "commit parse failed");
-    if bytes.len() < 8 || &bytes[0..4] != COMMIT_MAGIC || bytes[4] != OBJECT_FORMAT_VERSION {
-        return Err(err());
-    }
-    let tree = Hash::from_slice(&bytes[5..37]).ok_or_else(err)?;
-    let parent_bytes = &bytes[37..69];
-    let parent = Hash::from_slice(parent_bytes).ok_or_else(err)?;
-    let parent = if parent.0 == [0u8; 32] {
-        None
-    } else {
-        Some(parent)
-    };
-    let mut pos = 69;
-    let a_len = u16::from_le_bytes([bytes[pos], bytes[pos + 1]]) as usize;
-    pos += 2;
-    let author = String::from_utf8_lossy(&bytes[pos..pos + a_len]).into_owned();
-    pos += a_len;
-    let l_len = u16::from_le_bytes([bytes[pos], bytes[pos + 1]]) as usize;
-    pos += 2;
-    let label = String::from_utf8_lossy(&bytes[pos..pos + l_len]).into_owned();
-    pos += l_len;
-    let mut seq_b = [0u8; 8];
-    seq_b.copy_from_slice(&bytes[pos..pos + 8]);
-    Ok((tree, parent, author, label, u64::from_le_bytes(seq_b)))
-}
-
-/// Materialize the journal (seq > since) into path states.
 pub async fn materialize(
     pool: &SqlitePool,
     tenant_id: &str,

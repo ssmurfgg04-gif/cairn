@@ -132,7 +132,11 @@ fn millis_to_systemtime(ms: i64) -> std::time::SystemTime {
     }
 }
 
-async fn hydrate_one(
+/// Hydrate ONE file's full bytes by manifest hash: manifest (CAS→plane) → chunks
+/// (CAS→plane, stored→raw, verified CAS puts) → assembly. Public for the ctl
+/// snapshot-restore + pin-recall paths (WO6-3).
+#[allow(clippy::implicit_hasher)] // cache is caller-local; hasher choice is not a contract
+pub async fn hydrate_one(
     plane: &dyn Plane,
     cas: &Cas,
     tenant: &str,

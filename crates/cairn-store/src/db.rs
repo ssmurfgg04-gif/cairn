@@ -386,6 +386,19 @@ impl Store {
     }
 
     /// Drop a lease.
+    /// All local leases (ctl `cairn lease` surface): (path, token, expires_at).
+    pub fn list_leases(&self) -> Vec<(String, u64, i64)> {
+        let conn = self.conn.lock().expect("store poisoned");
+        let mut stmt = conn
+            .prepare("SELECT path, token, expires_at FROM leases_local ORDER BY path")
+            .expect("list_leases query");
+        stmt.query_map([], |r| {
+            Ok((r.get(0)?, r.get::<_, i64>(1)? as u64, r.get(2)?))
+        })
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default()
+    }
+
     pub fn drop_lease(&self, path: &str) -> Result<(), CairnError> {
         let conn = self.conn.lock().expect("store poisoned");
         conn.execute(

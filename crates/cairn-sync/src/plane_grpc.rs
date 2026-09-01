@@ -141,6 +141,21 @@ impl GrpcPlane {
         })
     }
 
+    /// Build a plane from an EXISTING channel (ctl daemon paths reuse a dialed
+    /// channel instead of re-connecting per RPC).
+    pub fn from_channel(channel: Channel, token: String, tenant_id: String) -> Self {
+        GrpcPlane {
+            channel,
+            url: String::new(),
+            token,
+            tenant_id,
+            http: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(120))
+                .build()
+                .expect("http client"),
+        }
+    }
+
     fn authed<T>(&self, inner: T) -> Result<Request<T>, CairnError> {
         let mut req = Request::new(inner);
         // bounded wire waits (ADR-0010): a hung call must surface as a retryable error,
