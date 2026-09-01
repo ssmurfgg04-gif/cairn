@@ -107,10 +107,12 @@ fn proof_validate_rel_path_rejects_traversal_positions() {
 }
 
 /// I2 frozen format (SPEC §6): parse_commit ∘ build_commit is the identity for any
-/// bounded author/label. This pins the wire format Kani-side; BLAKE3 here is over a
-/// ~120-byte buffer — CI shard (expensive harness).
+/// bounded author/label. BLAKE3 is stubbed (deterministic pure transform — see the
+/// bloom harness note): the roundtrip property lives in the byte format, and the
+/// content-addressing assertion still holds because BOTH sides use the same stub.
 #[cfg(kani)]
 #[kani::proof]
+#[kani::stub(blake3::hash, stub_blake3_hash)]
 fn proof_commit_roundtrip_frozen_format() {
     let author = String::from_utf8(any_ascii(8)).expect("ASCII");
     let label = String::from_utf8(any_ascii(8)).expect("ASCII");
@@ -132,8 +134,25 @@ fn proof_commit_roundtrip_frozen_format() {
 
 /// I2 adversarial-bloom guard: an inserted item is NEVER reported absent (false
 /// negatives are forbidden — that is what lets a hostile bloom skip uploads).
+///
+/// The BLAKE3 hash itself is stubbed with a DETERMINISTIC pure transform: Kani
+/// cannot execute blake3's runtime `__cpuid` inline asm (Kani issue #2), and the
+/// no-false-negative property lives in the double-hash probing math bloom.rs owns
+/// (insert and query derive identical indices for identical inputs). The stub
+/// preserves exactly that contract: same bytes in → same digest out, ever.
+#[cfg(kani)]
+fn stub_blake3_hash(item: &[u8]) -> blake3::Hash {
+    let mut out = [0u8; 32];
+    for (i, b) in item.iter().take(31).enumerate() {
+        out[i] = b.wrapping_mul(31).wrapping_add(i as u8);
+    }
+    out[31] = item.len() as u8;
+    blake3::Hash::from_bytes(out)
+}
+
 #[cfg(kani)]
 #[kani::proof]
+#[kani::stub(blake3::hash, stub_blake3_hash)]
 fn proof_bloom_no_false_negative() {
     let a: [u8; 8] = kani::any();
     let b: [u8; 8] = kani::any();
