@@ -140,14 +140,19 @@ fn proof_commit_roundtrip_frozen_format() {
 fn proof_bloom_probe_math_in_bounds() {
     let h1: u64 = kani::any();
     let h2: u64 = kani::any();
-    let num_bits: u64 = kani::any();
-    // the constructor's guarantees: at least 64 bits
-    kani::assume(num_bits >= 64);
+    // The constructor's CONSISTENCY INVARIANT is what makes probe_idx safe:
+    // num_bits <= bits.len() * 64 (with_fpp derives words from num_bits). Kani
+    // caught the first draft of this harness building an INCONSISTENT state
+    // (num_bits widened, bits left at 1 word) — a counterexample worth having.
+    // Symbolic selection over 3 real layout shapes keeps the divider tractable.
+    let shape: u64 = kani::any();
+    kani::assume(shape < 3);
+    let words: usize = [1, 2, 16][shape as usize];
+    let mut bloom2 = Bloom::empty();
+    bloom2.bits = vec![0u64; words];
+    bloom2.num_bits = (words * 64) as u64;
     let k: u32 = kani::any();
     kani::assume((1..=16).contains(&k));
-    // minimal REAL layout: 1 word = 64 bits, num_bits widened symbolically
-    let mut bloom2 = Bloom::empty();
-    bloom2.num_bits = num_bits;
     // CONCRETE loop bound with a symbolic guard: CBMC does not propagate assumes
     // into loop unwinding, so `for i in 0..k` unrolls thousands of infeasible
     // iterations before pruning. 16 concrete iterations + guard = same coverage.
@@ -157,7 +162,7 @@ fn proof_bloom_probe_math_in_bounds() {
             // BOUNDS (no OOB): every probe lands inside the bit array.
             // NOTE: the cast is parenthesized — Kani's proof macro re-parses assert
             // conditions, and a bare `as u64 < …` re-tokenizes as generics (<eof>).
-            assert!((idx as u64) < num_bits, "probe in-bounds");
+            assert!((idx as u64) < bloom2.num_bits, "probe in-bounds");
             assert!(idx / 64 < bloom2.bits.len(), "word index in-bounds");
         }
     }
