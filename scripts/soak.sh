@@ -68,6 +68,13 @@ except Exception: print(''); sys.exit(0)
 for p in d.get('projects',[]):
     if p.get('project_id')==sys.argv[1]: print(p.get(sys.argv[2],''))
 print('')" "$1" "$2"; }
+dump_logs(){ # on gate failure: show the daemon's last words so CI logs are self-contained
+  say "---- daemonA.log (tail 40) ----"; tail -40 "$WORK/daemonA.log" 2>/dev/null || true
+  say "---- daemonB.log (tail 20) ----"; tail -20 "$WORK/daemonB.log" 2>/dev/null || true
+  say "---- server.log (tail 20) ----"; tail -20 "$WORK/server.log" 2>/dev/null || true
+  say "---- status A ----"; CAIRN_HOME="$A_HOME" "$BIN" status --json 2>/dev/null | head -c 2000 || true
+  echo
+}
 wait_state(){ local i=0
   while [ "$i" -lt "$TIMEOUT" ]; do
     local st fs
@@ -155,6 +162,7 @@ if wait_state "$A_HOME" "$PROJ" synced "$N_FILES"; then
     gate fail S1 "budget violated: stored $(human_mb "$UP1") vs corpus $(human_mb "$CORPUS_BYTES")"; exit 1
   fi
 else
+  dump_logs
   gate fail S1 "never reached synced/$N_FILES (see $WORK/daemonA.log)"; exit 1
 fi
 
@@ -205,6 +213,7 @@ PY
     gate fail S2 "audit: upserts=$UPS dup_paths=$DUP post-kill net-new=$(human_mb "$UP2") budget=$(human_mb "$BUDGET2")"
   fi
 else
+  dump_logs
   gate fail S2 "never reached synced/$N_ALL after restart (see $WORK/daemonA.log)"
 fi
 
@@ -232,6 +241,7 @@ if wait_state "$B_HOME" "$PROJ" synced "$N_ALL"; then
     gate fail S3b "B's pull re-stored bytes: net-new $(human_mb "$UP3") > $(human_mb "$BUDGET3")"
   fi
 else
+  dump_logs
   gate fail S3 "device B never reached synced/$N_ALL (see $WORK/daemonB.log)"
 fi
 
