@@ -62,6 +62,39 @@ Legend: ✅ implemented + tests green · 🟨 implemented, platform-gated / hard
 | LICENSE | ✅ | Apache-2.0 (workspace metadata already declared it; the text file now exists) |
 | CI | ✅ extended | `schedule` trigger now exists (nightly: sharded 1,000-schedule sim + fuzz — previously unreachable); `attach-acceptance` job runs scripts/wo1-acceptance.sh at 500 MiB on ubuntu-latest |
 
+## Round 4 (2026-09-01): Windows-first platform answer + punch-list execution
+
+Platform answer (third ask): **all five beta studios are on Windows — Windows-first is
+the decision.** CfAPI is the product surface; the macOS FileProvider option is deferred
+(revisit only if a Mac studio appears). Linux remains the engineering test bed.
+
+| Item | Status | Evidence |
+|---|---|---|
+| TLS fail-closed at connect (punch #6) | ✅ | plaintext REMOTE refused inside `connect_channel` BEFORE dialing (not fail-warned in doctor); loopback dev topology stays allowed; `CAIRN_ALLOW_INSECURE_REMOTE=1` explicit escape hatch (logged); doctor wording now confirms what the code enforces; 4 gate tests |
+| Echo suppression size AND mtime (punch #5) | ✅ | `should_suppress` compares size+mtime vs journaled row — size-preserving edits (byte flip, LUT swap) are NO longer swallowed; hydration RESTORES the journaled mtime (the precondition that makes the check sound; also what NLEs expect) |
+| Periodic reconcile sweep (punch #5, belt-and-braces) | ✅ | full stat walk + bounded ROTATING rehash sample (chunk-hash sequence vs journaled manifest; transform manifests honestly skipped); env-tunable `CAIRN_SWEEP_SECS/FILES/BYTES` (default 300s / 8 files / 256MiB); 5 unit tests incl. the size+mtime-preserving divergence catch |
+| Byte budgets on EVERY acceptance gate (punch #7) | ✅ | gate 1 corpus cap, gate 2 crash-restart cap (the 522MB-regression class), gate 3 zero-upload pure-pull, gate 4c 34MiB delta cap; gate 6 delta-only re-push |
+| NEW gate 6: silent-divergence e2e | ✅ | in-place size+mtime-preserving edit (echo-suppressed by design) is caught by the sweep and re-pushed; B converges byte-identical; 16MiB delta-only re-push |
+| Push↔pull livelock (found by the new budgets) | ✅ fixed | gate-1 budgets caught it LIVE: 1302 journal ops for 10 files — pull replayed OWN-device ops, overwriting scanned mtime with server_ts → phantom stat drift → sweep re-dirtied → re-push forever. Fix: pull skips own ops (own ops fold via mark_synced); `mark_synced_with_stat` restores the post-push invariant row.stat == file.stat; regression tests |
+| Hydration stores manifests in local CAS (found by gate 6) | ✅ fixed | a hydrated device's sweep silently skipped rehash (manifest absent from local CAS); now hash-verified CAS put on fetch |
+| Normalization scoped GZIP-ONLY (punch #4) | ✅ | review catch confirmed in code: `.drp` is a MULTI-ENTRY zip — no single inner payload, unrebuildable without the entry table. Zip arms REJECT loudly; sniff(zip)=None (opaque bytes = correct, zero reuse); `Zip` wire tag stays parseable for v2 |
+| REAL-container evidence (punch #4) | ✅ | `BMW27.blend` — Blender Foundation production file, gzip-compressed by Blender itself (`1f 8b` magic, inner `BLENDER-v`) — committed to the repo; round-trip test: sniff → inner BLENDER magic → save-sequence chunk-identity BYTE-weighted reuse > 0.70 → recompress → byte-identical inner; raw-wrapper avalanche contrast test (<10% reuse) |
+| Fine chunk profile for containers | ✅ | `CHUNK_*_FINE` (64KB/256KB/1MB): with media-tuned 1/4/16MB a 512-byte edit in the 6MB .blend killed a whole 4MB chunk (78% bytes re-uploaded); transform-active content now chunks fine (flag-gated with normalization); media unchanged |
+| Sim regression (latent since WO1 round) | ✅ fixed | seed 6 violated `devices_converged` — conflict_copy left NO row for the copy (own-op replay papered over it) and left the renamed-away original row `Conflict` forever (push re-read a missing file → sync_pass error loop blocked pull). Fix: copy row created before process_file; original row → Clean; 300-schedule release sweep green |
+| WO2 CfAPI: patterns ported from a proven implementation | ✅ | nextcloud/desktop `vfs/cfapi` (AGPL-3.0, THIRD_PARTY.md): exact policies + connect flags + self-PID deadlock guard + block-aligned TRANSFER_DATA (4096 contract, last-partial) + CompletionStatus failure signaling + provider progress + MARK_IN_SYNC + real timestamps. **ABI bug fixed**: ParamSize = offsetof(union)+sizeof (CF_SIZE_OF_OP_PARAM) — the `+4` shortcut would fail every CfExecute on x64. Exact-API validation vs windows-rs 0.58 msvc (scratch crate) |
+| WO2 on real Windows (automated) | ✅ CI / 🟨 human | `windows-cfapi-roundtrip` job on windows-latest (a REAL Windows VM): register sync root → 8MiB placeholder → child probe hydrates THROUGH the CfAPI callback → BLAKE3 byte-identity + I1 (<50ms first-2MB) measured through the filter. Remaining HUMAN gates: Explorer badge, Notepad flow, NLE matrix (studio box) |
+| I1 through Linux FUSE (punch #8) | ✅ | `FsMetrics` (log-scaled latency buckets, first-byte vs all-read percentiles, hit vs hydration counts, bytes) recorded in read_range so every entry point lands in one metric; snapshot() for ctl/dashboard; I1-through-read-path < 50ms test (same shape as the Windows probe) |
+
+### Known gaps (honest, post-round-4)
+
+- The 5GB real-bucket soak (punch #3) still needs `CAIRN_S3_*` credentials — env-gated,
+  not forgotten.
+- Explorer badge needs shell-integration registry keys (installer step, with the admin
+  rights it implies) — deliberately not in the skeleton.
+- ZstdDict cross-device sync gap unchanged (fails loudly, not silently).
+- FUSE live mount still requires a /dev/fuse host; metrics are test-verified through
+  the read path.
+
 ### Known gaps (honest, post-WO1)
 
 - ZstdDict per-project dictionaries are not yet synced across devices; NLE files
