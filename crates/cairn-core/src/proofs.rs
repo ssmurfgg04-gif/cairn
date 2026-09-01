@@ -51,7 +51,11 @@ fn proof_b64_roundtrip_identity() {
     // strictness: hex chars are VALID base64 alphabet — decoding a hex string yields
     // a DIFFERENT byte string than the raw digest (the exact bug class the accept
     // arm had: hex_decode(base64) returned garbage/None per input)
-    assert_eq!(b64_decode("deadbeef").unwrap().len(), 6, "8 hex chars decode to 6 bytes, not 4");
+    assert_eq!(
+        b64_decode("deadbeef").unwrap().len(),
+        6,
+        "8 hex chars decode to 6 bytes, not 4"
+    );
 }
 
 /// I2: hex decode∘encode identity (the hex accept arm), concrete known-answer shape —
