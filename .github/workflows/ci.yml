@@ -14,6 +14,14 @@ env:
   CARGO_INCREMENTAL: "0"
 
 jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint workflows (actionlint)
+        run: |
+          bash <(curl -s https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint -color
   fmt:
     runs-on: ubuntu-latest
     steps:
@@ -211,7 +219,7 @@ jobs:
       - run: |
           cargo build --release -p cairn-x
           ./target/release/cairn-x corpus-gen --sequences 2 --saves 8 --base-mb 128
-      - run: cargo llvm-cov --lcov --output-path lcov.info --fail-under-lines 73 -p cairn-core -p cairn-sync  # measured baseline 73.71% (2026-09-01; WO6-4 added plane_grpc::measure_cold_fetch, covered by crates/cairn-server/tests/cold_fetch.rs which runs in the `test` job — outside this -p filter). Ratchet +1/round per WO6-7.
+      - run: cargo llvm-cov --lcov --output-path lcov.info --fail-under-lines 73 -p cairn-core -p cairn-sync  # RATCHET (WO6-7): baseline = MEASURED 73.71% (2026-09-01); +1 per round as coverage grows, cap 80, never lower. WO6-4's measure_cold_fetch is covered by crates/cairn-server/tests/cold_fetch.rs (runs in the `test` job — outside this -p filter).
 
   fuzz-nightly:
     if: github.event_name == 'schedule'
