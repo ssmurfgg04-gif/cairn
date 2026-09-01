@@ -10,6 +10,7 @@ pub mod crash;
 mod http;
 #[cfg(test)]
 mod m3;
+mod s3_conformance;
 
 use clap::{Parser, Subcommand};
 
@@ -75,6 +76,29 @@ pub enum Cmd {
         #[arg(long)]
         mutation_file: Option<String>,
     },
+    /// S3 wire-conformance check (WO6-4): validate SigV4 presigning against a REAL
+    /// S3-compatible server (MinIO in CI / any endpoint you own). Refuses bucket
+    /// targets the operator does not own — never point it at indexed/open buckets.
+    S3Conformance {
+        /// Endpoint of the S3-compatible server (e.g. http://127.0.0.1:19000).
+        #[arg(long, env = "CAIRN_S3_ENDPOINT")]
+        endpoint: String,
+        #[arg(long, env = "CAIRN_S3_BUCKET")]
+        bucket: String,
+        #[arg(long, env = "CAIRN_S3_REGION", default_value = "us-east-1")]
+        region: String,
+        #[arg(long, env = "CAIRN_S3_ACCESS_KEY_ID")]
+        access_key: String,
+        #[arg(long, env = "CAIRN_S3_SECRET_ACCESS_KEY")]
+        secret_key: String,
+        /// Path-style addressing (MinIO/localhost; default for conformance).
+        #[arg(long, default_value_t = true)]
+        path_style: bool,
+        /// Explicit confirmation that the target bucket is YOURS (or a local
+        /// test server). Required — this tool never probes third-party buckets.
+        #[arg(long)]
+        i_own_the_target: bool,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -95,6 +119,77 @@ fn main() -> anyhow::Result<()> {
             out,
             mutation_file,
         } => corpus_real::run(&dir, &out, mutation_file),
+        Cmd::S3Conformance {
+            endpoint,
+            bucket,
+            region,
+            access_key,
+            secret_key,
+            path_style,
+            i_own_the_target,
+        } => {
+            if !i_own_the_target {
+                anyhow::bail!(
+                    "refusing to run: bucket targets must be YOURS (or a local test server). \
+                     Testing against buckets found via public indexes (GrayHatWarfare etc.) is \
+                     unauthorized access regardless of their openness. Re-run with \
+                     --i-own-the-target to confirm ownership."
+                );
+            }
+            let cfg = s3_conformance::ConformanceCfg {
+                endpoint,
+                bucket,
+                region,
+                access_key,
+                secret_key,
+                path_style,
+            };
+            let results = tokio::runtime::Runtime::new()
+                .expect("runtime")
+                .block_on(s3_conformance::run(&cfg))?;
+            let mut report = serde_json::Map::new();
+            let mut failed = 0usize;
+            for r in &results {
+                println!(
+                    "{:<42} {}  {}",
+                    r.name,
+                    if r.ok { "PASS" } else { "FAIL" },
+                    r.detail
+                );
+                report.insert(
+                    r.name.to_string(),
+                    serde_json::json!({"ok": r.ok, "detail": r.detail}),
+                );
+                if !r.ok {
+                    failed += 1;
+                }
+            }
+            let summary = serde_json::json!({
+                "endpoint": cfg.endpoint,
+                "bucket": cfg.bucket,
+                "path_style": cfg.path_style,
+                "checks": serde_json::Value::Object(report),
+                "failed": failed,
+            });
+            println!(
+                "\n{} checks, {} failed{}",
+                results.len(),
+                failed,
+                if failed == 0 {
+                    " — SigV4 conformance proven on the wire".to_string()
+                } else {
+                    String::new()
+                }
+            );
+            if let Ok(path) = std::env::var("CAIRN_S3_CONFORMANCE_REPORT") {
+                std::fs::write(&path, serde_json::to_string_pretty(&summary)?)?;
+                println!("report: {path}");
+            }
+            if failed > 0 {
+                anyhow::bail!("{failed} conformance check(s) failed");
+            }
+            Ok(())
+        }
         Cmd::Bench { iters } => bench::run(iters),
     }
 }

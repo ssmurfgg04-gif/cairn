@@ -333,7 +333,16 @@ pub struct SigV4Presigner {
     access_key: String,
     secret_key: String,
     region: String,
-    endpoint: String, // https://bucket.host (path-style avoided; virtual-host assumed)
+    /// Virtual-host mode: `https://bucket.host` (bucket already in the host).
+    /// Path-style mode: bare service endpoint, `bucket` carries the bucket name.
+    endpoint: String,
+    /// Bucket name — empty in virtual-host mode, set in path-style mode.
+    bucket: String,
+    /// Path-style addressing (`CAIRN_S3_PATH_STYLE=1`): canonical URI and URL
+    /// become `/{bucket}/{key}`. Required by MinIO-on-localhost and many
+    /// self-hosted gateways that have no wildcard-DNS vhost; AWS S3/R2 accept
+    /// both forms. Validated on the wire by the S3 conformance suite (WO6-4).
+    path_style: bool,
 }
 
 impl SigV4Presigner {
@@ -344,6 +353,55 @@ impl SigV4Presigner {
             secret_key: secret_key.into(),
             region: region.into(),
             endpoint: endpoint.trim_end_matches('/').into(),
+            bucket: String::new(),
+            path_style: false,
+        }
+    }
+
+    /// Path-style presigner: `endpoint` is the BARE service endpoint
+    /// (`https://s3.local:9000`), `bucket` is addressed in the path.
+    pub fn new_path_style(
+        access_key: &str,
+        secret_key: &str,
+        region: &str,
+        endpoint: &str,
+        bucket: &str,
+    ) -> Self {
+        SigV4Presigner {
+            access_key: access_key.into(),
+            secret_key: secret_key.into(),
+            region: region.into(),
+            endpoint: endpoint.trim_end_matches('/').into(),
+            bucket: bucket.into(),
+            path_style: true,
+        }
+    }
+
+    /// Canonical request URI for an object key (addressing-style aware).
+    fn canonical_uri(&self, key: &str) -> String {
+        if self.path_style {
+            format!("/{}/{}", self.bucket, uri_encode(key, false))
+        } else {
+            format!("/{}", uri_encode(key, false))
+        }
+    }
+
+    /// Request URL (scheme+host+path, no query) for an object key.
+    pub fn url_for(&self, key: &str) -> String {
+        self.object_url(key)
+    }
+
+    /// Request URL (scheme+host+path, no query) for an object key.
+    fn object_url(&self, key: &str) -> String {
+        if self.path_style {
+            format!(
+                "{}/{}/{}",
+                self.endpoint,
+                self.bucket,
+                uri_encode(key, false)
+            )
+        } else {
+            format!("{}/{}", self.endpoint, uri_encode(key, false))
         }
     }
 
@@ -353,7 +411,9 @@ impl SigV4Presigner {
         mac.finalize().into_bytes().to_vec()
     }
 
-    fn sha256_hex(data: &[u8]) -> String {
+    /// SHA-256 hex of bytes (canonical-request payload hash; public for the
+    /// conformance suite and known-answer tests).
+    pub fn sha256_hex(data: &[u8]) -> String {
         cairn_core::hash::hex_encode(&Sha256::digest(data))
     }
 
@@ -370,7 +430,7 @@ impl SigV4Presigner {
         let date = &amz_date[..8];
         let host = host_of(&self.endpoint);
         let scope = format!("{date}/{}/s3/aws4_request", self.region);
-        let canonical_uri = format!("/{key}");
+        let canonical_uri = self.canonical_uri(key);
         let canonical_query = format!(
             "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={}&X-Amz-Date={}&X-Amz-Expires={ttl}&X-Amz-SignedHeaders=host%3Bx-amz-checksum-sha256",
             uri_encode(&format!("{}/{}", self.access_key, scope), true),
@@ -406,8 +466,9 @@ impl SigV4Presigner {
             string_to_sign.as_bytes(),
         ));
         format!(
-            "{}/{}?{}&X-Amz-Signature={signature}&x-amz-checksum-sha256={checksum_hex}",
-            self.endpoint, key, canonical_query
+            "{}?{}&X-Amz-Signature={signature}&x-amz-checksum-sha256={checksum_hex}",
+            self.object_url(key),
+            canonical_query
         )
     }
 
@@ -426,7 +487,7 @@ impl SigV4Presigner {
         );
         let canonical_request = [
             "GET",
-            &format!("/{key}"),
+            &self.canonical_uri(key),
             canonical_query.as_str(),
             &format!("host:{host}\n"),
             "host",
@@ -445,8 +506,9 @@ impl SigV4Presigner {
             string_to_sign.as_bytes(),
         ));
         format!(
-            "{}/{}?{}&X-Amz-Signature={signature}",
-            self.endpoint, key, canonical_query
+            "{}?{}&X-Amz-Signature={signature}",
+            self.object_url(key),
+            canonical_query
         )
     }
 
@@ -466,7 +528,7 @@ impl SigV4Presigner {
         );
         let canonical_request = [
             "PUT",
-            &format!("/{key}"),
+            &self.canonical_uri(key),
             canonical_query.as_str(),
             &format!("host:{host}\n"),
             "host",
@@ -485,8 +547,9 @@ impl SigV4Presigner {
             string_to_sign.as_bytes(),
         ));
         format!(
-            "{}/{}?{}&X-Amz-Signature={signature}",
-            self.endpoint, key, canonical_query
+            "{}?{}&X-Amz-Signature={signature}",
+            self.object_url(key),
+            canonical_query
         )
     }
 
@@ -523,6 +586,19 @@ impl SigV4Presigner {
         payload_hash_hex: &str,
         now_millis: i64,
     ) -> (String, String) {
+        let canonical_path = self.canonical_uri(key);
+        self.authorization_header_path(method, &canonical_path, payload_hash_hex, now_millis)
+    }
+
+    /// Header-auth for a RAW canonical path (bucket-level ops like CreateBucket:
+    /// canonical path is exactly `/{bucket}` — no object key involved).
+    pub fn authorization_header_path(
+        &self,
+        method: &str,
+        canonical_path: &str,
+        payload_hash_hex: &str,
+        now_millis: i64,
+    ) -> (String, String) {
         let amz_date = amz_date(now_millis);
         let date = &amz_date[..8];
         let host = host_of(&self.endpoint);
@@ -533,7 +609,7 @@ impl SigV4Presigner {
         let signed_headers = "host;x-amz-content-sha256;x-amz-date";
         let canonical_request = [
             method,
-            &format!("/{}", uri_encode(key, false)),
+            canonical_path,
             "", // no query string on server-side calls
             canonical_headers.as_str(),
             signed_headers,
@@ -573,13 +649,16 @@ impl SigV4Presigner {
 /// - `CAIRN_S3_SECRET_ACCESS_KEY`
 pub struct S3ObjectStore {
     presigner: SigV4Presigner,
-    /// Virtual-host form: `https://bucket.endpoint-host` (used by presigned URLs).
+    /// Virtual-host form: `https://bucket.endpoint-host` (presigned-URL target in
+    /// vhost mode). Empty in path-style mode — URLs come from the presigner.
     vhost_endpoint: String,
     http: reqwest::Client,
 }
 
 impl S3ObjectStore {
     /// Build from the standard `CAIRN_S3_*` environment; `None` when unset/incomplete.
+    /// `CAIRN_S3_PATH_STYLE=1` switches to path-style addressing (MinIO,
+    /// self-hosted gateways, localhost targets — no wildcard DNS needed).
     pub fn from_env() -> Option<Self> {
         let get = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
         let endpoint = get("CAIRN_S3_ENDPOINT")?;
@@ -587,23 +666,52 @@ impl S3ObjectStore {
         let region = get("CAIRN_S3_REGION")?;
         let access_key = get("CAIRN_S3_ACCESS_KEY_ID")?;
         let secret_key = get("CAIRN_S3_SECRET_ACCESS_KEY")?;
+        let path_style = std::env::var("CAIRN_S3_PATH_STYLE")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
         let host = endpoint
             .trim_start_matches("https://")
+            .trim_start_matches("http://")
             .trim_end_matches('/');
-        let vhost_endpoint = format!("https://{bucket}.{host}");
+        let scheme = if endpoint.starts_with("http://") {
+            "http"
+        } else {
+            "https"
+        };
+        let vhost_endpoint = format!("{scheme}://{bucket}.{host}");
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(60))
             .build()
             .ok()?;
+        let presigner = if path_style {
+            SigV4Presigner::new_path_style(
+                &access_key,
+                &secret_key,
+                &region,
+                &format!("{scheme}://{host}"),
+                &bucket,
+            )
+        } else {
+            SigV4Presigner::new(&access_key, &secret_key, &region, &vhost_endpoint)
+        };
         Some(S3ObjectStore {
-            presigner: SigV4Presigner::new(&access_key, &secret_key, &region, &vhost_endpoint),
-            vhost_endpoint,
+            presigner,
+            vhost_endpoint: if path_style {
+                String::new()
+            } else {
+                vhost_endpoint
+            },
             http,
         })
     }
 
     fn url(&self, key: &str) -> String {
-        format!("{}/{}", self.vhost_endpoint, uri_encode(key, false))
+        if self.vhost_endpoint.is_empty() {
+            // path-style mode: the presigner owns URL construction
+            self.presigner.url_for(key)
+        } else {
+            format!("{}/{}", self.vhost_endpoint, uri_encode(key, false))
+        }
     }
 
     fn now(&self) -> i64 {
@@ -923,6 +1031,34 @@ mod tests {
         assert_eq!(auth, auth2);
     }
 
+    /// Path-style presigning: canonical URI and URL both carry the bucket
+    /// (validated on the wire against MinIO by the cairn-x conformance suite).
+    #[test]
+    fn sigv4_path_style_shape_and_determinism() {
+        let p = SigV4Presigner::new_path_style(
+            "AKIDEXAMPLE",
+            "secret",
+            "us-east-1",
+            "http://127.0.0.1:19000",
+            "cairn-test",
+        );
+        let url = p.presign_get("t1/c/ab/hash", 600, 1_700_000_000_000);
+        assert!(url.starts_with("http://127.0.0.1:19000/cairn-test/t1/c/ab/hash?"));
+        assert!(url.contains("X-Amz-SignedHeaders=host"));
+        let put = p.presign_put_host_only("t1/c/ab/hash", 600, 1_700_000_000_000);
+        assert!(put.starts_with("http://127.0.0.1:19000/cairn-test/t1/c/ab/hash?"));
+        // header-auth canonical URI carries the bucket too
+        let (auth, _) = p.authorization_header(
+            "PUT",
+            "cairn-test",
+            &SigV4Presigner::sha256_hex(b""),
+            1_700_000_000_000,
+        );
+        assert!(auth.contains("SignedHeaders=host;x-amz-content-sha256;x-amz-date"));
+        // deterministic
+        assert_eq!(url, p.presign_get("t1/c/ab/hash", 600, 1_700_000_000_000));
+    }
+
     /// from_env: complete config -> Some; partial config -> None (no half-wired backends).
     #[test]
     fn s3_from_env_all_or_nothing() {
@@ -960,5 +1096,14 @@ mod tests {
         ] {
             std::env::remove_var(k);
         }
+    }
+}
+
+#[cfg(test)]
+mod amz_probe {
+    #[test]
+    fn amz_date_2026_vectors() {
+        assert_eq!(super::amz_date(1_788_000_000_000), "20260829T104000Z");
+        assert_eq!(super::amz_date(1_788_300_000_000), "20260901T220000Z");
     }
 }

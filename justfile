@@ -47,6 +47,13 @@ ci: fmt-check clippy test
 wo1-acceptance:
     SIZE_MB=${SIZE_MB:-500} bash scripts/wo1-acceptance.sh
 
+# WO6-4: S3 wire-conformance against a server YOU OWN (CI runs the same suite against
+# an ephemeral MinIO). Reads CAIRN_S3_* (endpoint/bucket/region/access/secret) — the
+# same env the server backend uses. NEVER point this at buckets you do not own.
+s3-conformance:
+    cargo build --release -p cairn-x
+    ./target/release/cairn-x s3-conformance --i-own-the-target
+
 tls-dev-cert:
     #!/bin/sh
     mkdir -p ./.cairn-server/keys/tls-dev
