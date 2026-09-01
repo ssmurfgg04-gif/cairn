@@ -123,8 +123,7 @@ open(f"{root}/seq/take2_proxy.braw","wb").write(data[:-4096]+b"PROXY"+data[-4096
 PY
 N_FILES=$(find "$ROOT_A" -type f | wc -l)
 CORPUS_BYTES=$(du -sb "$ROOT_A" | cut -f1)
-TREE_A_BEFORE=$(tree_hash "$ROOT_A")
-say "corpus ready: $N_FILES files, $(human_mb "$CORPUS_BYTES"), tree $TREE_A_BEFORE"
+say "corpus ready: $N_FILES files, $(human_mb "$CORPUS_BYTES")"
 
 # ---------- boot ----------
 say "starting server + device A daemon"
@@ -171,6 +170,8 @@ for i in range(24):
 PY
 W2_BYTES=$(( 24 * 4 * 1048576 ))
 N_ALL=$(find "$ROOT_A" -type f | wc -l)
+TREE_PRE_KILL=$(tree_hash "$ROOT_A")
+say "wave2 written: $N_ALL files on disk; pre-kill tree $TREE_PRE_KILL"
 T2=$(now_ms)
 CAIRN_HOME="$A_HOME" "$BIN" attach "$ROOT_A" --project "$PROJ" >>"$WORK/daemonA.log" 2>&1
 KILLED_AT=0
@@ -220,10 +221,10 @@ if wait_state "$B_HOME" "$PROJ" synced "$N_ALL"; then
   TREE_B=$(tree_hash "$ROOT_B")
   UP3=$(bytes_since "$T2")
   BUDGET3=$(( W2_BYTES * 130 / 100 ))
-  if [ "$TREE_A_BEFORE" = "$TREE_A_AFTER" ] && [ "$TREE_A_BEFORE" = "$TREE_B" ]; then
-    gate ok S3 "tree identity A-before == A-after-crash == B-pull ($TREE_A_BEFORE)"
+  if [ "$TREE_PRE_KILL" = "$TREE_A_AFTER" ] && [ "$TREE_PRE_KILL" = "$TREE_B" ]; then
+    gate ok S3 "tree identity pre-kill == post-resume == B-pull ($TREE_PRE_KILL)"
   else
-    gate fail S3 "tree hashes differ: before=$TREE_A_BEFORE after=$TREE_A_AFTER B=$TREE_B"
+    gate fail S3 "tree hashes differ: pre-kill=$TREE_PRE_KILL post-resume=$TREE_A_AFTER B=$TREE_B"
   fi
   if [ "$UP3" -le "$BUDGET3" ]; then
     gate ok S3b "pure-pull phase stored nothing new: net-new since kill $(human_mb "$UP3") <= $(human_mb "$BUDGET3") cap (B uploaded 0)"
@@ -258,7 +259,7 @@ CF_OUT="$WORK/coldfetch.log"
 if CAIRN_HOME="$C_HOME" "$XBIN" cold-fetch --home "$C_HOME" --hash "$CHUNK_HASH" --iters 5 >"$CF_OUT" 2>&1; then
   P50=$(sed -n 's/.*coldfetch_first_byte_p50_ms=\([0-9.]*\).*/\1/p' "$CF_OUT" | tail -1)
   P95=$(sed -n 's/.*coldfetch_first_byte_p95_ms=\([0-9.]*\).*/\1/p' "$CF_OUT" | tail -1)
-  LASTBYTES=$(sed -n 's/.*| last body \([0-9]*\) bytes.*/\1/p' "$CF_OUT" | tail -1)
+  LASTBYTES=$(sed -n 's/.*last body \([0-9]*\) bytes.*/\1/p' "$CF_OUT" | tail -1)
   if [ -n "$P50" ] && [ "$LASTBYTES" = "$CHUNK_SIZE" ]; then
     gate ok S4 "COLD-FETCH first byte: p50 ${P50}ms p95 ${P95}ms (chunk $((CHUNK_SIZE/1048576))MiB, body byte-count verified)"
   else
@@ -279,7 +280,7 @@ fi
 # ---------- report ----------
 UP_TOTAL=$(bytes_since "$T1")
 python3 - "$WORK/soak-report.json" <<PY
-import json
+import json, sys
 json.dump({
   "mode": "$([ "$HAVE_S3" = 1 ] && echo real-s3 || echo dry-run)",
   "size_mb": $SIZE_MB, "files": $N_ALL,
@@ -289,7 +290,7 @@ json.dump({
   "cold_fetch_first_byte_p50_ms": ${P50:-null},
   "cold_fetch_first_byte_p95_ms": ${P95:-null},
   "pass": $PASS, "fail": $FAIL,
-}, open("$1","w"), indent=2)
+}, open(sys.argv[1],"w"), indent=2)
 PY
 say "RESULT: $PASS passed, $FAIL failed — logs + soak-report.json in $WORK"
 [ "$FAIL" = "0" ]

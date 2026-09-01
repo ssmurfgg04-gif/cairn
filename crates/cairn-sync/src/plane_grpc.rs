@@ -189,6 +189,12 @@ impl GrpcPlane {
     /// caveat and the drop-caches escalation used when privileges allow).
     ///
     /// Inherent on GrpcPlane (not on the [`Plane`] trait): harness-only measurement.
+    /// Coverage note: excluded from the unit-coverage ratchet — this path is exercised
+    /// ON THE WIRE by `just soak-*` (scripts/soak.sh gate S4) and the CI `soak-s3`
+    /// job (real presign + presigned GET against MinIO, body byte-count asserted);
+    /// an in-process unit double would test a mock, not the plane. The wire test
+    /// lives at crates/cairn-server/tests/cold_fetch.rs (the server depends on this
+    /// crate, so the cycle-free side hosts it).
     pub async fn measure_cold_fetch(
         &self,
         tenant: &str,

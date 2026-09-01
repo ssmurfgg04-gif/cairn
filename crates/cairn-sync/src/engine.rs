@@ -229,7 +229,22 @@ impl Engine {
         // outbox → append (fencing token included when leased)
         let base_seq = self.store.get_cursor(&self.device_id, &self.project_id);
         let lease_token = self.store.get_lease(path).map_or(0, |(t, _)| t);
-        let request_id = cairn_core::ids::new_request_id();
+        // Content-derived idempotency key (WO6-4): the watcher and the scan can both
+        // enqueue the same fresh file before either append lands; a random id made
+        // the server accept BOTH (two journal entries for one edit — caught by the
+        // soak's zero-dup gate). Same edit ⇒ same id ⇒ server dedups. A re-save
+        // changes mtime/manifest ⇒ new id ⇒ legitimate re-append.
+        let mtime_ms = std::fs::metadata(self.rooted(path))
+            .map(|m| crate::scan::mtime_millis(&m))
+            .unwrap_or(0);
+        let request_id = cairn_core::ids::request_id_for(
+            &self.tenant_id,
+            &self.project_id,
+            path,
+            &manifest_hash.hex(),
+            bytes.len() as u64,
+            mtime_ms,
+        );
         let op = upsert_op(path, &manifest_hash.hex(), bytes.len() as u64, base_seq);
         let entry = cairn_store::OutboxEntry {
             request_id: request_id.clone(),
