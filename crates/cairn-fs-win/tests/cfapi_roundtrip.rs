@@ -126,8 +126,7 @@ use cairn_fs_win::cfapi::{
     connect_write_back, convert_to_placeholder, create_placeholders_batch, mark_in_sync, BulkEntry,
     ValidateOutcome, WriteBackSource,
 };
-use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 /// Journal record the "engine" appends (mirrors cairn-sync outbox semantics).
@@ -213,11 +212,7 @@ impl WriteBackSource for WriteHarness {
                 .next_token
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
                 + 1;
-            self.shared
-                .leases
-                .lock()
-                .unwrap()
-                .insert(path.to_string(), t);
+            self.shared.leases.lock().unwrap().insert(name_key(path), t);
         }
     }
 
@@ -233,14 +228,15 @@ impl WriteBackSource for WriteHarness {
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_nanos())
             .unwrap_or(0);
+        let key = name_key(path);
         let journaled = self.shared.journaled_stat.lock().unwrap();
         let unchanged = journaled
-            .get(path)
+            .get(&key)
             .map(|(s, m)| *s == meta.len() && *m == mtime)
             .unwrap_or(false);
         drop(journaled);
         if !unchanged {
-            let marker = self.shared.dirty_dir.join(sanitize(path));
+            let marker = self.shared.dirty_dir.join(sanitize(&key));
             std::fs::write(&marker, b"dirty").expect("persist dirty marker (durable pre-ack)");
         }
     }
@@ -252,6 +248,12 @@ impl WriteBackSource for WriteHarness {
     }
 }
 
+/// File-name key: the filter's NormalizedPath and the test's root-joined path can
+/// differ in prefix (volume form); the file NAME is the stable join key.
+fn name_key(p: &str) -> String {
+    p.rsplit(['\\', '/']).next().unwrap_or(p).to_string()
+}
+
 fn sanitize(p: &str) -> String {
     p.replace(['\\', '/', ':'], "_")
 }
@@ -260,7 +262,7 @@ impl WriteHarness {
     /// Engine push: chunk the current file, delta-upload (only chunks the server
     /// lacks), journal-append ONCE with the fencing token. Returns
     /// (manifest_hash, uploaded_chunks, total_chunks).
-    fn push(&self, path: &str, root: &PathBuf, request_id: u64) -> (String, usize, usize) {
+    fn push(&self, path: &str, root: &Path, request_id: u64) -> (String, usize, usize) {
         let bytes =
             std::fs::read(path).expect("read edited full file (full files read back plainly)");
         // single-pass chunk+hash with the FINE profile (transform-active content)
@@ -286,12 +288,13 @@ impl WriteHarness {
         {
             let mut seen = self.shared.seen_requests.lock().unwrap();
             if seen.insert(request_id) {
+                let key = name_key(path);
                 let token = self
                     .shared
                     .leases
                     .lock()
                     .unwrap()
-                    .get(path)
+                    .get(&name_key(path))
                     .copied()
                     .unwrap_or(0);
                 self.shared.journal.lock().unwrap().push(Record::Upsert {
@@ -323,7 +326,7 @@ impl WriteHarness {
                     .unwrap()
                     .insert(key, (bytes.len() as u64, mtime));
                 // the durable dirty marker is cleared exactly here (post-ack)
-                let _ = std::fs::remove_file(self.shared.dirty_dir.join(sanitize(name_key(path))));
+                let _ = std::fs::remove_file(self.shared.dirty_dir.join(sanitize(&name_key(path))));
             }
             // else: deduplicated — the same request NEVER appends twice (gate W5)
         }
@@ -419,7 +422,9 @@ fn write_back_gates_edit_newfile_fencing_crash_budget() {
     // lease auto-acquired on .prproj open (W4, token side)
     let token = shared
         .leases
-        .get(&payload.to_string_lossy().into_owned())
+        .lock()
+        .unwrap()
+        .get(&name_key(&payload.to_string_lossy()))
         .copied();
     assert!(
         token.unwrap_or(0) > 0,
@@ -428,7 +433,9 @@ fn write_back_gates_edit_newfile_fencing_crash_budget() {
 
     // ---- W5 window: dirty marker is DURABLE before any ack (simulated crash:
     //         in-memory push state is gone; only the marker + bytes survive) ----
-    let marker = shared.dirty_dir.join(sanitize(&payload.to_string_lossy()));
+    let marker = shared
+        .dirty_dir
+        .join(sanitize(&name_key(&payload.to_string_lossy())));
     assert!(
         marker.exists(),
         "W5: dirty marker must be durable before ack"
@@ -458,13 +465,16 @@ fn write_back_gates_edit_newfile_fencing_crash_budget() {
 
     // W4: the save-back journal upsert carries the fencing token
     let journal = shared.journal.lock().unwrap();
-    let upserts: Vec<&Record> = journal
+    let upserts: Vec<Record> = journal
         .iter()
-        .filter(|r| matches!(r, Record::Upsert { path, .. } if path == payload.to_string_lossy()))
+        .filter(|r| {
+            matches!(r, Record::Upsert { path, .. } if path.as_str() == payload.to_string_lossy())
+        })
+        .cloned()
         .collect();
     drop(journal);
     assert_eq!(upserts.len(), 1, "exactly one upsert after first push");
-    match upserts[0] {
+    match &upserts[0] {
         Record::Upsert {
             lease_token,
             manifest_hash,
@@ -533,7 +543,9 @@ fn write_back_gates_edit_newfile_fencing_crash_budget() {
     let journal = shared.journal.lock().unwrap();
     let new_upserts = journal
         .iter()
-        .filter(|r| matches!(r, Record::Upsert { path, .. } if path == new_file.to_string_lossy()))
+        .filter(|r| {
+            matches!(r, Record::Upsert { path, .. } if path.as_str() == new_file.to_string_lossy())
+        })
         .count();
     drop(journal);
     assert_eq!(
