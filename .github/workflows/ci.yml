@@ -92,6 +92,41 @@ jobs:
       - run: cargo build --release -p cairn-cli
       - run: SIZE_MB=500 TIMEOUT=240 bash scripts/wo1-acceptance.sh
 
+  # WO6-4: S3 wire conformance — our SigV4 presigner against a REAL S3-compatible
+  # implementation (MinIO service container, strict site region). Proves presign
+  # PUT/GET/Range, checksum-bound corrupt rejection, expiry + tamper 403s, and
+  # header-auth server-side paths on the wire — no external credentials, no
+  # bucket access beyond the ephemeral container's own.
+  s3-wire-conformance:
+    runs-on: ubuntu-latest
+    services:
+      minio:
+        image: bitnami/minio:latest
+        env:
+          MINIO_ROOT_USER: cairntest
+          MINIO_ROOT_PASSWORD: cairntest-secret-123
+          MINIO_SITE_REGION: us-east-1
+        ports:
+          - 19000:9000
+        options: >-
+          --health-cmd "bash -c 'exec 3<>/dev/tcp/127.0.0.1/9000'"
+          --health-interval 3s
+          --health-timeout 5s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p cairn-x
+      - run: |
+          ./target/release/cairn-x s3-conformance \
+            --endpoint http://127.0.0.1:19000 \
+            --bucket cairn-conformance \
+            --region us-east-1 \
+            --access-key cairntest \
+            --secret-key cairntest-secret-123 \
+            --i-own-the-target
+
   # WO2 human-gate automation (punch #1/#2): a REAL Windows VM registers the sync root,
   # creates a placeholder, and hydrates a child process's read THROUGH the CfAPI
   # callback with BLAKE3 verification + instrumented I1 (<50ms first-2MB gate).
