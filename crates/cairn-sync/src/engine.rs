@@ -77,6 +77,14 @@ impl Engine {
 
     async fn process_file(&self, path: &str, stats: &mut PassStats) -> Result<(), CairnError> {
         let full = self.rooted(path);
+        // stat BEFORE reading: these are the values the sweep/rescan will compare
+        // against after the push — if a write lands mid-push, the watcher re-dirties
+        // and the next pass re-pushes with fresh stat (I2: last-writer wins is fine,
+        // silent drift is not).
+        let pushed_meta = std::fs::metadata(&full)
+            .map_err(|e| CairnError::new(ErrorKind::Io, format!("stat {path}: {e}")))?;
+        let pushed_size = pushed_meta.len();
+        let pushed_mtime = crate::scan::mtime_millis(&pushed_meta);
         let bytes = std::fs::read(&full)
             .map_err(|e| CairnError::new(ErrorKind::Io, format!("read {path}: {e}")))?;
         // chunk-input normalization (flag-gated): compressed project containers are
@@ -251,8 +259,13 @@ impl Engine {
             if tail.is_empty() { None } else { Some(&tail) },
         )?;
 
-        self.store
-            .mark_synced(&self.project_id, path, &manifest_hash.hex())?;
+        self.store.mark_synced_with_stat(
+            &self.project_id,
+            path,
+            &manifest_hash.hex(),
+            pushed_size,
+            pushed_mtime,
+        )?;
         Ok(())
     }
 
@@ -340,7 +353,23 @@ impl Engine {
                 // the synced state so the self-pull never mistakes our own entry for a
                 // remote update (fresh or deduplicated — both mean the server has it)
                 if let Some(mh) = upsert_manifest {
-                    self.store.mark_synced(&self.project_id, path, &mh)?;
+                    // crash-resume resend: refresh the row's stat from disk if the file
+                    // still exists (post-push invariant row.stat == file.stat); a missing
+                    // file keeps its row — the next sweep's stat walk classifies it.
+                    match std::fs::metadata(self.rooted(path)) {
+                        Ok(m) => {
+                            self.store.mark_synced_with_stat(
+                                &self.project_id,
+                                path,
+                                &mh,
+                                m.len(),
+                                crate::scan::mtime_millis(&m),
+                            )?;
+                        }
+                        Err(_) => {
+                            self.store.mark_synced(&self.project_id, path, &mh)?;
+                        }
+                    }
                 }
                 stats.appended += 1;
                 Ok(())
@@ -401,6 +430,19 @@ impl Engine {
             .fetch_batch(&self.tenant_id, &self.project_id, cursor, 512)
             .await?;
         for e in &entries {
+            // Own-device ops are already folded locally: the push path marked the row
+            // synced (mark_synced) when the append was acked. Replaying them here would
+            // overwrite the row's LOCAL stat fields (mtime from the scan, size from the
+            // file) with journal-level values (server_ts) — and any stat-based
+            // reconciliation (rescan, reconcile sweep) then sees a phantom size/mtime
+            // drift on an unchanged file, re-dirties it, and re-pushes: a push↔pull
+            // livelock that generates journal entries forever (caught by the WO1
+            // acceptance byte/journal budgets at gate 1: 1302 journal ops for 10 files).
+            // A device that loses its local table rebuilds via reset_to_snapshot, not
+            // by replaying its own ops.
+            if e.device_id == self.device_id {
+                continue;
+            }
             crate::apply::apply_entry(&self.store, &self.project_id, &self.device_id, e)?;
             stats.applied_entries += 1;
         }
