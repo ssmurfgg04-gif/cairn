@@ -141,21 +141,3 @@ similar_names = "allow"
 manual_clamp = "allow"
 neg_multiply = "allow"
 
-# cargo-audit (WO6-9 security job) reads this table. Dated, documented exceptions —
-# every entry is re-reviewed at the stated date; "ignore" must never be silent.
-[advisories]
-ignore = [
-    # rustls-pemfile 2.2.0 is unmaintained (succeeded by rustls-pki-types); it is a
-    # TRANSITIVE dep of tonic 0.12's legacy transport- TLS path — cairn dials TLS
-    # through rustls directly (tonic rustls feature) and never uses the pemfile
-    # parser on the hot path. Re-review 2026-10-01: bump tonic when a release drops
-    # the pemfile dependency, or migrate to tonic 0.13.
-    "RUSTSEC-2025-0134",
-    # fuser 0.14 uninitialized-memory-read in the kernel protocol loop (local
-    # privilege boundary, NOT remote attack surface): cairn-fs-linux gates fuser
-    # behind the opt-in `fuse` feature and cairn never ships a setuid/multi-tenant
-    # mount daemon — beta hosts run the mount as the logged-in user against the
-    # kernel's own fuse fd. Re-review 2026-10-01: fuser 0.15/upstream fix, or the
-    # in-house mount loop (post-beta ADR candidate).
-    "RUSTSEC-2021-0154",
-]

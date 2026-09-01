@@ -4,6 +4,10 @@
 //! Everything here must stay pure and deterministic: same bytes → same hashes (SPEC §6.4).
 
 #![forbid(unsafe_code)]
+// Kani's #[kani::stub] (used by the proofs.rs harnesses to bypass blake3's runtime
+// __cpuid inline asm) rides an unstable compiler feature — enabled only under the
+// Kani driver's nightly, invisible to normal builds (cfg(kani) is never set).
+#![cfg_attr(kani, feature(stubbing))]
 
 pub mod bloom;
 pub mod chunker;
