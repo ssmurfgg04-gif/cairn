@@ -46,8 +46,42 @@ fn from_wire(s: &tonic::Status) -> CairnError {
     CairnError::new(kind_for_code(&d.code), format!("{}: {}", d.code, d.message))
 }
 
-/// Shared endpoint dialer: http (plaintext) or https with optional custom CA.
+/// True when `host` is a loopback address (plaintext is tolerated there for dev only).
+fn is_loopback_host(host: &str) -> bool {
+    let h = host.trim_start_matches('[').trim_end_matches(']');
+    h == "localhost" || h.starts_with("127.") || h == "::1"
+}
+
+/// TLS gate (fail-closed at connect, review round 3): a plaintext REMOTE endpoint is an
+/// error HERE, at dial time — not a doctor warning after the fact. The doctor check now
+/// confirms what this function already enforces, so the control plane is never one config
+/// mistake away from plaintext. Loopback plaintext stays allowed (dev topology); an
+/// explicit `CAIRN_ALLOW_INSECURE_REMOTE=1` overrides for deliberately-plaintext LANs
+/// (documented escape hatch, logged loudly when used).
 pub async fn connect_channel(url: &str, ca_pem: Option<&[u8]>) -> Result<Channel, CairnError> {
+    let insecure_override =
+        std::env::var("CAIRN_ALLOW_INSECURE_REMOTE").is_ok_and(|v| v == "1" || v == "true");
+    if url.starts_with("http://") {
+        let host = url
+            .trim_start_matches("http://")
+            .split([':', '/', '?'])
+            .next()
+            .unwrap_or("");
+        if !is_loopback_host(host) && !insecure_override {
+            return Err(CairnError::new(
+                ErrorKind::Unauthenticated,
+                format!(
+                    "refusing PLAINTEXT connection to remote server '{host}': the control \
+                     plane (Bearer tokens + journal) requires TLS. Serve https:// (see `just \
+                     tls-dev-cert`) or set CAIRN_ALLOW_INSECURE_REMOTE=1 to accept the risk \
+                     explicitly"
+                ),
+            ));
+        }
+        if !is_loopback_host(host) {
+            tracing::warn!("CAIRN_ALLOW_INSECURE_REMOTE=1: dialing {host} over PLAINTEXT");
+        }
+    }
     let mut endpoint = Endpoint::from_shared(url.to_string())
         .map_err(|e| CairnError::new(ErrorKind::Io, format!("bad server addr: {e}")))?
         .connect_timeout(std::time::Duration::from_secs(5))
@@ -321,5 +355,64 @@ impl Plane for GrpcPlane {
                 server_ts: e.server_ts,
             })
             .collect())
+    }
+}
+
+#[cfg(test)]
+mod tls_gate_tests {
+    use super::*;
+
+    /// Fail-closed (punch #6): a plaintext REMOTE endpoint is refused at connect, before
+    /// any dial — the error is a config error, not a doctor finding after the fact.
+    #[tokio::test]
+    async fn plaintext_remote_is_refused_at_connect() {
+        std::env::remove_var("CAIRN_ALLOW_INSECURE_REMOTE");
+        let err = connect_channel("http://studio-server.example.com:7443", None)
+            .await
+            .expect_err("plaintext remote must be refused");
+        assert!(
+            err.message.contains("PLAINTEXT"),
+            "error must name the TLS requirement: {}",
+            err.message
+        );
+    }
+
+    /// The classic misconfiguration the review called out: a config edit turns
+    /// `https://cairn.corp:7443` into `http://cairn.corp:7443` — that must never dial.
+    #[tokio::test]
+    async fn plaintext_remote_ip_is_refused_too() {
+        std::env::remove_var("CAIRN_ALLOW_INSECURE_REMOTE");
+        assert!(connect_channel("http://203.0.113.7:7443", None).await.is_err());
+    }
+
+    /// Loopback plaintext stays allowed (dev topology, matches doctor's posture).
+    #[tokio::test]
+    async fn plaintext_loopback_still_allowed() {
+        std::env::remove_var("CAIRN_ALLOW_INSECURE_REMOTE");
+        // connection will fail (no server) but with an Unavailable dial error,
+        // NOT the plaintext-refusal error — proving the gate passed.
+        let err = connect_channel("http://127.0.0.1:1", None)
+            .await
+            .expect_err("nothing listens here");
+        assert!(
+            !err.message.contains("PLAINTEXT"),
+            "loopback must pass the TLS gate: {}",
+            err.message
+        );
+    }
+
+    /// Explicit escape hatch: documented, opt-in, logs loudly.
+    #[tokio::test]
+    async fn insecure_remote_override_is_explicit() {
+        std::env::set_var("CAIRN_ALLOW_INSECURE_REMOTE", "1");
+        let err = connect_channel("http://203.0.113.7:7443", None)
+            .await
+            .expect_err("override passes the gate; dial still fails (no server)");
+        std::env::remove_var("CAIRN_ALLOW_INSECURE_REMOTE");
+        assert!(
+            !err.message.contains("PLAINTEXT"),
+            "override must bypass the gate: {}",
+            err.message
+        );
     }
 }

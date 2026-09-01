@@ -202,8 +202,9 @@ pub fn collect(home: &Path) -> Report {
                 rep.push(
                     "remote_tls",
                     Err(format!(
-                        "plaintext REMOTE gRPC ({}) — beta blocker: run the server with \
-                         --tls-cert/--tls-key, then re-login with --ca",
+                        "plaintext REMOTE gRPC ({}) — the client REFUSES to dial this at \
+                         connect (fail-closed); run the server with --tls-cert/--tls-key, \
+                         then re-login with --ca",
                         id.server_url
                     )),
                     t.elapsed().as_secs_f64() * 1000.0,
