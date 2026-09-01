@@ -147,7 +147,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo check -p cairn-fs-win -p cairn-fs-mac -p cairn-store -p cairn-core --tests
+      # WO6-1/2: cairn-cli checked so the WINDOWS-only daemon glue (win_attach) compiles on the real target
+      - run: cargo check -p cairn-fs-win -p cairn-fs-mac -p cairn-store -p cairn-core -p cairn-cli --tests
 
   coverage:
     runs-on: ubuntu-latest

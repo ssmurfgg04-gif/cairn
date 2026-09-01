@@ -6,10 +6,14 @@
 //! being reported durable; a crash at ANY point replays to a consistent state — verified by
 //! the `kill -9` fault harness (`cairn-x`).
 
-#![forbid(unsafe_code)]
+// deny-by-default; the ONE exception is eviction.rs's free-space probe (statvfs /
+// GetDiskFreeSpaceExW are raw C calls with no safe std equivalent) — reviewed inline.
+#![deny(unsafe_code)]
 
 pub mod cas;
 pub mod db;
+#[allow(unsafe_code)] // free-space probes only (statvfs / GetDiskFreeSpaceExW)
+pub mod eviction;
 pub mod headers;
 pub mod outbox;
 pub mod state;

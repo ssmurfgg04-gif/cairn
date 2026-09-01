@@ -309,6 +309,7 @@ dependencies = [
  "anyhow",
  "axum",
  "cairn-core",
+ "cairn-fs-win",
  "cairn-proto",
  "cairn-server",
  "cairn-store",
@@ -450,12 +451,15 @@ version = "4.0.0"
 dependencies = [
  "cairn-core",
  "hex",
+ "libc",
  "proptest",
  "rusqlite",
  "tempfile",
  "thiserror 2.0.20",
  "tracing",
  "uuid",
+ "windows",
+ "windows-core",
 ]
 
 [[package]]

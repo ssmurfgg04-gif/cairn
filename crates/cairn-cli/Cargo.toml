@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 cairn-core = { path = "../cairn-core" }
 cairn-store = { path = "../cairn-store" }
+cairn-fs-win = { path = "../cairn-fs-win" }
 cairn-sync = { path = "../cairn-sync" }
 cairn-proto = { path = "../cairn-proto" }
 cairn-server = { path = "../cairn-server" }

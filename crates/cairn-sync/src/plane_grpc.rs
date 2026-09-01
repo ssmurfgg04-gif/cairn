@@ -12,6 +12,7 @@ use cairn_core::hash::Hash;
 use cairn_core::{CairnError, ErrorKind};
 use cairn_proto::pb::download_client::DownloadClient;
 use cairn_proto::pb::journal_client::JournalClient;
+use cairn_proto::pb::lease_client::LeaseClient;
 use cairn_proto::pb::upload_client::UploadClient;
 use cairn_proto::pb::UploadReceipt;
 use tonic::metadata::MetadataValue;
@@ -355,6 +356,47 @@ impl Plane for GrpcPlane {
                 server_ts: e.server_ts,
             })
             .collect())
+    }
+
+    async fn acquire_lease(
+        &self,
+        tenant: &str,
+        project: &str,
+        path: &str,
+        device: &str,
+        ttl_ms: u64,
+    ) -> Result<(u64, i64), CairnError> {
+        let mut c = LeaseClient::new(self.channel.clone());
+        let req = self.authed(cairn_proto::pb::AcquireRequest {
+            tenant_id: tenant.into(),
+            project_id: project.into(),
+            path: path.into(),
+            device_id: device.into(),
+            ttl_ms,
+        })?;
+        let out = c.acquire(req).await.map_err(|s| from_wire(&s))?;
+        let inner = out.into_inner();
+        Ok((inner.token, inner.expires_at))
+    }
+
+    async fn release_lease(
+        &self,
+        tenant: &str,
+        project: &str,
+        path: &str,
+        device: &str,
+        token: u64,
+    ) -> Result<(), CairnError> {
+        let mut c = LeaseClient::new(self.channel.clone());
+        let req = self.authed(cairn_proto::pb::ReleaseRequest {
+            tenant_id: tenant.into(),
+            project_id: project.into(),
+            path: path.into(),
+            device_id: device.into(),
+            token,
+        })?;
+        c.release(req).await.map_err(|s| from_wire(&s))?;
+        Ok(())
     }
 }
 

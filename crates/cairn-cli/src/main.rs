@@ -10,6 +10,7 @@ mod daemon;
 mod dashboard;
 mod doctor;
 mod projects;
+mod win_attach;
 
 use clap::{Parser, Subcommand};
 

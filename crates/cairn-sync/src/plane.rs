@@ -4,7 +4,7 @@
 //! clients + presigned HTTP.
 
 use async_trait::async_trait;
-use cairn_core::CairnError;
+use cairn_core::{CairnError, ErrorKind};
 use cairn_proto::pb::journal_op::Op as OpKind;
 use cairn_proto::pb::{JournalOp, UploadReceipt};
 
@@ -84,6 +84,38 @@ pub trait Plane: Send + Sync {
         after: u64,
         limit: u32,
     ) -> Result<Vec<Entry>, CairnError>;
+
+    /// Acquire a lease on a path (WO6-1 §5: auto-acquire on project-file open).
+    /// Returns (fencing token, expires_at millis). Default impl = unsupported so
+    /// existing/test planes stay valid; the gRPC plane implements it for real.
+    async fn acquire_lease(
+        &self,
+        _tenant: &str,
+        _project: &str,
+        _path: &str,
+        _device: &str,
+        _ttl_ms: u64,
+    ) -> Result<(u64, i64), CairnError> {
+        Err(CairnError::new(
+            ErrorKind::Internal,
+            "lease acquisition not supported by this plane",
+        ))
+    }
+
+    /// Release a previously acquired lease. Default = unsupported (as above).
+    async fn release_lease(
+        &self,
+        _tenant: &str,
+        _project: &str,
+        _path: &str,
+        _device: &str,
+        _token: u64,
+    ) -> Result<(), CairnError> {
+        Err(CairnError::new(
+            ErrorKind::Internal,
+            "lease release not supported by this plane",
+        ))
+    }
 }
 
 /// Build a FileUpsert op.
