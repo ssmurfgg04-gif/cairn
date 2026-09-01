@@ -25,7 +25,11 @@ fn real_blender_file_sniffs_as_gzip() {
 fn real_blender_inner_payload_is_a_blend_file() {
     let inner = normalize::decompress_inner(REAL_BLEND, normalize::Transform::Gzip)
         .expect("real Blender gzip stream must decompress");
-    assert!(inner.len() > 6_000_000, "BMW27 inner is ~6.1MB, got {}", inner.len());
+    assert!(
+        inner.len() > 6_000_000,
+        "BMW27 inner is ~6.1MB, got {}",
+        inner.len()
+    );
     assert!(
         inner.starts_with(b"BLENDER"),
         "inner payload must be a real .blend, got {:?}",
@@ -91,7 +95,10 @@ fn real_blender_save_sequence_round_trips_with_chunk_identity_reuse() {
         normalize::recompress(&inner2, normalize::Transform::Gzip, "BMW27.blend").unwrap();
     assert_eq!(normalize::sniff(&wrapper2), normalize::Transform::Gzip);
     let back = normalize::decompress_inner(&wrapper2, normalize::Transform::Gzip).unwrap();
-    assert_eq!(back, inner2, "wrapper rebuild must preserve the inner payload");
+    assert_eq!(
+        back, inner2,
+        "wrapper rebuild must preserve the inner payload"
+    );
 }
 
 #[test]

@@ -121,15 +121,18 @@ async fn own_device_replay_must_not_rewrite_row_stat() {
         op: upsert_op("a.mov", "aa", 10, 0),
         server_ts: 1759300000,
     }]);
-    engine.store.put_file(&cairn_store::FileRow {
-        path: "a.mov".into(),
-        project_id: "p1".into(),
-        manifest_hash: Some("aa".into()),
-        size: 10,
-        mode: "file".into(),
-        mtime: 1758123456789, // scanned local mtime — must survive the pull
-        local_state: LocalState::Synced.as_str().into(),
-    });
+    engine
+        .store
+        .put_file(&cairn_store::FileRow {
+            path: "a.mov".into(),
+            project_id: "p1".into(),
+            manifest_hash: Some("aa".into()),
+            size: 10,
+            mode: "file".into(),
+            mtime: 1758123456789, // scanned local mtime — must survive the pull
+            local_state: LocalState::Synced.as_str().into(),
+        })
+        .unwrap();
 
     let stats = engine.sync_pass().await.unwrap();
     assert_eq!(stats.applied_entries, 0, "own-device op must be skipped");
