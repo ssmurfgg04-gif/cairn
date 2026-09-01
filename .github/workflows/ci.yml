@@ -147,7 +147,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo check -p cairn-fs-win -p cairn-fs-mac -p cairn-store -p cairn-core
+      - run: cargo check -p cairn-fs-win -p cairn-fs-mac -p cairn-store -p cairn-core --tests
 
   coverage:
     runs-on: ubuntu-latest
