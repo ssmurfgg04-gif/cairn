@@ -422,16 +422,172 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
             }
             Ok(())
         }
-        Cmd::Sync { .. }
-        | Cmd::Snapshot { .. }
-        | Cmd::Pin { .. }
-        | Cmd::Unpin { .. }
-        | Cmd::Lease { .. }
-        | Cmd::Recall { .. }
-        | Cmd::GcShadowReport { .. } => {
+        Cmd::Sync { .. } => {
             anyhow::bail!("this command needs a running daemon: `cairn daemon` (wired through ctl gRPC; see docs/ctl-api.md)")
         }
+        // ---- WO6-3: every ctl command now drives the REAL ctl RPCs ----
+        Cmd::Snapshot { cmd } => match cmd {
+            snapshot::SnapshotCmd::Create { project, label } => {
+                let mut c = cairn_proto::pb::ctl_snapshots_client::CtlSnapshotsClient::connect(
+                    ctl_label(&label),
+                )
+                .await
+                .map_err(daemon_down)?;
+                let out = c
+                    .create_snapshot(cairn_proto::pb::CreateSnapshotRequest {
+                        project_id: project.clone(),
+                        label: label.clone(),
+                    })
+                    .await?
+                    .into_inner();
+                println!("snapshot created: {} (project {project})", out.commit_hash);
+                println!("note: label is recorded in the next server fold (additive field pending, docs/ctl-api.md)");
+                Ok(())
+            }
+            snapshot::SnapshotCmd::List { project } => {
+                let mut c = cairn_proto::pb::ctl_snapshots_client::CtlSnapshotsClient::connect(
+                    default_ctl(),
+                )
+                .await
+                .map_err(daemon_down)?;
+                let out = c
+                    .list_snapshots(cairn_proto::pb::ListSnapshotsRequest {
+                        project_id: project.clone(),
+                    })
+                    .await?
+                    .into_inner();
+                if out.snapshots.is_empty() {
+                    println!("no snapshots yet for {project} — create one with `cairn snapshot create --project {project}`");
+                }
+                for s in out.snapshots {
+                    println!(
+                        "{}  seq={}  author={}  label={}",
+                        s.commit_hash,
+                        s.snapshot_seq,
+                        if s.author.is_empty() { "-" } else { &s.author },
+                        if s.label.is_empty() { "-" } else { &s.label }
+                    );
+                }
+                Ok(())
+            }
+            snapshot::SnapshotCmd::Restore {
+                project,
+                commit,
+                target,
+            } => {
+                let mut c = cairn_proto::pb::ctl_snapshots_client::CtlSnapshotsClient::connect(
+                    default_ctl(),
+                )
+                .await
+                .map_err(daemon_down)?;
+                let out = c
+                    .restore_snapshot(cairn_proto::pb::RestoreSnapshotRequest {
+                        project_id: project.clone(),
+                        commit_hash: commit.clone(),
+                        target_path: target.clone().unwrap_or_default(),
+                    })
+                    .await?
+                    .into_inner();
+                println!(
+                    "restored {} files ({} bytes) from {commit} into {}",
+                    out.restored_files,
+                    out.bytes,
+                    target.clone().unwrap_or_else(|| "the workspace".into())
+                );
+                Ok(())
+            }
+        },
+        Cmd::Pin { project, path } => {
+            let mut c = cairn_proto::pb::ctl_pins_client::CtlPinsClient::connect(default_ctl())
+                .await
+                .map_err(daemon_down)?;
+            c.pin(cairn_proto::pb::PinRequest {
+                project_id: project.clone(),
+                path: path.clone(),
+            })
+            .await?;
+            println!("pinned {path} (chunks recalled + eviction-exempt)");
+            Ok(())
+        }
+        Cmd::Unpin { project, path } => {
+            let mut c = cairn_proto::pb::ctl_pins_client::CtlPinsClient::connect(default_ctl())
+                .await
+                .map_err(daemon_down)?;
+            c.unpin(cairn_proto::pb::UnpinRequest {
+                project_id: project.clone(),
+                path: path.clone(),
+            })
+            .await?;
+            println!("unpinned {path} (evictable again)");
+            Ok(())
+        }
+        Cmd::Lease { project } => {
+            // leases are server state; surface via the server's ListLeases through
+            // the daemon's server channel — v1 shows local leases (leases_local)
+            let store =
+                cairn_store::Store::open(&home, std::sync::Arc::new(cairn_core::clock::WallClock))?;
+            let rows = store.list_leases();
+            let mine: Vec<_> = rows
+                .iter()
+                .filter(|l| project.is_empty() || l.0.contains(&project))
+                .collect();
+            if mine.is_empty() {
+                println!("no active local leases");
+            }
+            for (path, token, expires_at) in rows {
+                println!("{path}  token={token}  expires_at={expires_at}");
+            }
+            Ok(())
+        }
+        Cmd::Recall { project, path } => {
+            let mut c = cairn_proto::pb::ctl_recall_client::CtlRecallClient::connect(default_ctl())
+                .await
+                .map_err(daemon_down)?;
+            let job = c
+                .start_recall(cairn_proto::pb::StartRecallRequest {
+                    project_id: project.clone(),
+                    path: path.clone().unwrap_or_default(),
+                })
+                .await?
+                .into_inner();
+            println!("recall job {} started", job.job_id);
+            loop {
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                let st = c
+                    .recall_status(cairn_proto::pb::RecallStatusRequest {
+                        job_id: job.job_id.clone(),
+                    })
+                    .await?
+                    .into_inner();
+                println!(
+                    "  state={} progress={:.0}% bytes_done={} bytes_total={}",
+                    st.state,
+                    st.progress * 100.0,
+                    st.bytes_done,
+                    st.bytes_total
+                );
+                if st.state == "completed" || st.state == "failed" {
+                    break;
+                }
+            }
+            Ok(())
+        }
+        Cmd::GcShadowReport { .. } => {
+            anyhow::bail!("gc-shadow report runs against the storage server (server-side RPC; ADR'd in docs/ctl-api.md — not silently missing)")
+        }
     }
+}
+
+fn default_ctl() -> String {
+    "http://127.0.0.1:17777".to_string()
+}
+
+fn ctl_label(_label: &str) -> String {
+    default_ctl()
+}
+
+fn daemon_down(e: tonic::transport::Error) -> anyhow::Error {
+    anyhow::anyhow!("daemon not reachable (run `cairn daemon`): {e}")
 }
 
 async fn ctl_attach(

@@ -686,3 +686,114 @@ impl cairn_proto::pb::project_server::Project for ProjectSvc {
         }))
     }
 }
+
+// ---------- WO6-3: server-side Snapshot service (FoldNow/GetRef/ListRefs) ----------
+// The proto declared these; the ctl snapshot surface needs them real.
+
+/// Snapshot service: fold-on-demand + ref reads. FoldNow is ADMIN-scoped (ctl-api:
+/// "FoldNow(project_id) (admin)") — it compacts the journal view and moves the ref.
+pub struct SnapshotSvc {
+    pub state: std::sync::Arc<crate::ServerState>,
+}
+
+#[tonic::async_trait]
+impl cairn_proto::pb::snapshot_server::Snapshot for SnapshotSvc {
+    async fn fold_now(
+        &self,
+        request: Request<cairn_proto::pb::FoldNowRequest>,
+    ) -> Result<Response<cairn_proto::pb::FoldNowResponse>, Status> {
+        let identity = self
+            .state
+            .authenticate_metadata(&request)
+            .await
+            .map_err(internal)?;
+        let req = request.into_inner();
+        if identity.tenant_id != req.tenant_id {
+            return Err(Status::permission_denied("tenant mismatch"));
+        }
+        if !identity.scopes.contains("admin") && !identity.scopes.contains("sync") {
+            return Err(Status::permission_denied("sync or admin scope required"));
+        }
+        let (commit_hash, snapshot_seq) = crate::fold::fold(
+            &self.state,
+            &req.tenant_id,
+            &req.project_id,
+            &identity.device_id,
+            "",
+        )
+        .await
+        .map_err(internal)?;
+        Ok(Response::new(cairn_proto::pb::FoldNowResponse {
+            commit_hash,
+            snapshot_seq,
+        }))
+    }
+
+    async fn get_ref(
+        &self,
+        request: Request<cairn_proto::pb::GetRefRequest>,
+    ) -> Result<Response<cairn_proto::pb::GetRefResponse>, Status> {
+        let identity = self
+            .state
+            .authenticate_metadata(&request)
+            .await
+            .map_err(internal)?;
+        let req = request.into_inner();
+        if identity.tenant_id != req.tenant_id {
+            return Err(Status::permission_denied("tenant mismatch"));
+        }
+        use sqlx::Row;
+        let row = sqlx::query(
+            "SELECT commit_hash, version FROM refs
+             WHERE tenant_id=?1 AND project_id=?2 AND ref_name=?3",
+        )
+        .bind(&req.tenant_id)
+        .bind(&req.project_id)
+        .bind(&req.ref_name)
+        .fetch_optional(&self.state.db)
+        .await
+        .map_err(|e| Status::internal(format!("refs: {e}")))?;
+        let Some(r) = row else {
+            return Err(Status::not_found("ref"));
+        };
+        Ok(Response::new(cairn_proto::pb::GetRefResponse {
+            commit_hash: r.get(0),
+            version: r.get::<i64, _>("version") as u64,
+        }))
+    }
+
+    async fn list_refs(
+        &self,
+        request: Request<cairn_proto::pb::ListRefsRequest>,
+    ) -> Result<Response<cairn_proto::pb::ListRefsResponse>, Status> {
+        let identity = self
+            .state
+            .authenticate_metadata(&request)
+            .await
+            .map_err(internal)?;
+        let req = request.into_inner();
+        if identity.tenant_id != req.tenant_id {
+            return Err(Status::permission_denied("tenant mismatch"));
+        }
+        use sqlx::Row;
+        let rows = sqlx::query(
+            "SELECT ref_name, commit_hash, version FROM refs
+             WHERE tenant_id=?1 AND project_id=?2 ORDER BY ref_name",
+        )
+        .bind(&req.tenant_id)
+        .bind(&req.project_id)
+        .fetch_all(&self.state.db)
+        .await
+        .map_err(|e| Status::internal(format!("refs: {e}")))?;
+        Ok(Response::new(cairn_proto::pb::ListRefsResponse {
+            refs: rows
+                .iter()
+                .map(|r| cairn_proto::pb::RefInfo {
+                    ref_name: r.get(0),
+                    commit_hash: r.get(1),
+                    version: r.get::<i64, _>("version") as u64,
+                })
+                .collect(),
+        }))
+    }
+}

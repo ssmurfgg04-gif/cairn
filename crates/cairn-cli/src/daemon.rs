@@ -2,6 +2,7 @@
 //! mutations), local dashboard on :17778 (ADR-0009). Built as the frozen ctl contract's first
 //! reference client.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
@@ -30,14 +31,21 @@ pub struct DaemonState {
     pub started: Instant,
     /// Kill switches (config_flags mirror; daemon-side copy, server-side authoritative).
     pub flags: RwLock<Vec<(String, String)>>,
+    /// WO6-3: live recall jobs (ctl RecallStatus surface).
+    pub recall_jobs: RwLock<HashMap<String, crate::daemon::RecallJob>>,
+    /// Clonable handle into `recall_jobs` for background tasks.
+    pub recall_jobs_arc: std::sync::Arc<RwLock<HashMap<String, crate::daemon::RecallJob>>>,
 }
 
 impl DaemonState {
     fn new(home: PathBuf) -> Self {
+        let jobs = Arc::new(RwLock::new(HashMap::new()));
         DaemonState {
             home,
             started: Instant::now(),
             flags: RwLock::new(default_flags()),
+            recall_jobs: RwLock::new(HashMap::new()),
+            recall_jobs_arc: jobs,
         }
     }
 }
@@ -260,6 +268,16 @@ pub async fn run(home: PathBuf, ctl_addr: String, ui_addr: String) -> anyhow::Re
     let projects_svc = CtlProjectsServer::new(CtlProjectsSvc {
         state: Arc::clone(&state),
     });
+    // WO6-3: the FULL ctl contract is now served — snapshots, pins, recall
+    let snapshots_svc = CtlSnapshotsServer::new(CtlSnapshotsSvc {
+        state: Arc::clone(&state),
+    });
+    let pins_svc = CtlPinsServer::new(CtlPinsSvc {
+        state: Arc::clone(&state),
+    });
+    let recall_svc = CtlRecallServer::new(CtlRecallSvc {
+        state: Arc::clone(&state),
+    });
 
     // resume any durably-bound workspaces from a previous run (kill -9 safe, I2)
     let resume_home = state.home.clone();
@@ -274,6 +292,9 @@ pub async fn run(home: PathBuf, ctl_addr: String, ui_addr: String) -> anyhow::Re
         .add_service(status_svc)
         .add_service(diag_svc)
         .add_service(projects_svc)
+        .add_service(snapshots_svc)
+        .add_service(pins_svc)
+        .add_service(recall_svc)
         .serve(ctl_addr.parse()?);
 
     let ui = crate::dashboard::serve(ui_addr, Arc::clone(&state));
@@ -409,4 +430,461 @@ pub fn load_token() -> Option<(String, String)> {
             parts.next().unwrap_or("").to_string(),
         ))
     })
+}
+
+// ---------- WO6-3: ctl contract completeness (snapshots / pins / recall) ----------
+
+use cairn_proto::pb::{
+    ctl_pins_server::{CtlPins, CtlPinsServer},
+    ctl_recall_server::{CtlRecall, CtlRecallServer},
+    ctl_snapshots_server::{CtlSnapshots, CtlSnapshotsServer},
+    download_client::DownloadClient,
+    snapshot_client::SnapshotClient,
+    CreateSnapshotRequest, CreateSnapshotResponse, FoldNowRequest, GetManifestRequest,
+    ListPinsRequest, ListPinsResponse, ListSnapshotsRequest, ListSnapshotsResponse, PinInfo,
+    PinRequest, RecallStatusRequest, RecallStatusResponse, RestoreSnapshotRequest,
+    RestoreSnapshotResponse, SnapshotInfo, StartRecallRequest, StartRecallResponse, UnpinRequest,
+};
+
+/// Shared server context: identity + an authed channel to the sync server.
+/// Built per-call (cheap: tonic channels multiplex); identity comes from the store.
+async fn server_ctx(
+    home: &std::path::Path,
+) -> Result<
+    (
+        cairn_proto::pb::snapshot_client::SnapshotClient<tonic::transport::Channel>,
+        String,
+    ),
+    Status,
+> {
+    let store = cairn_store::Store::open(home, Arc::new(WallClock))
+        .map_err(|e| Status::failed_precondition(e.message))?;
+    let server_url = crate::projects::load_identity(&store)
+        .map(|i| i.server_url)
+        .ok_or_else(|| Status::failed_precondition("no device identity: run `cairn login`"))?;
+    let channel = cairn_sync::plane_grpc::connect_channel(&server_url, None)
+        .await
+        .map_err(|e| Status::unavailable(format!("server {server_url}: {e}")))?;
+    Ok((SnapshotClient::new(channel), server_url))
+}
+
+fn bearer_md(
+    token: String,
+) -> Result<tonic::metadata::MetadataValue<tonic::metadata::Ascii>, Status> {
+    token
+        .parse()
+        .map_err(|_| Status::internal("bad token chars"))
+}
+
+async fn bearer(home: &std::path::Path) -> Result<(String, String), Status> {
+    let store = cairn_store::Store::open(home, Arc::new(WallClock))
+        .map_err(|e| Status::failed_precondition(e.message))?;
+    let id = crate::projects::load_identity(&store)
+        .ok_or_else(|| Status::failed_precondition("no device identity: run `cairn login`"))?;
+    Ok((id.tenant_id, id.token))
+}
+
+pub struct CtlSnapshotsSvc {
+    pub state: Arc<DaemonState>,
+}
+
+#[tonic::async_trait]
+impl CtlSnapshots for CtlSnapshotsSvc {
+    async fn create_snapshot(
+        &self,
+        request: Request<CreateSnapshotRequest>,
+    ) -> Result<Response<CreateSnapshotResponse>, Status> {
+        let req = request.into_inner();
+        let (mut client, _url) = server_ctx(&self.state.home).await?;
+        let (tenant, token) = bearer(&self.state.home).await?;
+        let mut r = Request::new(FoldNowRequest {
+            tenant_id: tenant,
+            project_id: req.project_id.clone(),
+        });
+        r.metadata_mut()
+            .insert("authorization", bearer_md(token.clone())?);
+        let out = client
+            .fold_now(r)
+            .await
+            .map_err(|s| Status::internal(s.message()))?;
+        let inner = out.into_inner();
+        tracing::info!(project = %req.project_id, commit = %inner.commit_hash, "snapshot created (fold)");
+        Ok(Response::new(CreateSnapshotResponse {
+            commit_hash: inner.commit_hash,
+        }))
+    }
+
+    async fn list_snapshots(
+        &self,
+        request: Request<ListSnapshotsRequest>,
+    ) -> Result<Response<ListSnapshotsResponse>, Status> {
+        let req = request.into_inner();
+        let (mut client, _url) = server_ctx(&self.state.home).await?;
+        let (tenant, token) = bearer(&self.state.home).await?;
+        // head ref → walk the commit chain (parents) up to a bounded depth
+        let mut r = Request::new(cairn_proto::pb::ListRefsRequest {
+            tenant_id: tenant.clone(),
+            project_id: req.project_id.clone(),
+        });
+        r.metadata_mut()
+            .insert("authorization", bearer_md(token.clone())?);
+        let refs = client
+            .list_refs(r)
+            .await
+            .map_err(|s| Status::internal(s.message()))?
+            .into_inner();
+        let Some(main) = refs.refs.iter().find(|r| r.ref_name == "main") else {
+            return Ok(Response::new(ListSnapshotsResponse { snapshots: vec![] }));
+        };
+        let mut snapshots = Vec::new();
+        let mut cursor = main.commit_hash.clone();
+        for _ in 0..512 {
+            let mut gr = Request::new(GetManifestRequest {
+                tenant_id: tenant.clone(),
+                manifest_hash: cursor.clone(),
+            });
+            gr.metadata_mut()
+                .insert("authorization", bearer_md(token.clone())?);
+            let bytes = download_commit(&self.state.home, gr).await?;
+            let (tree, parent, author, label, seq) = match cairn_core::commit::parse_commit(&bytes)
+            {
+                Ok(v) => v,
+                Err(_) => break, // not a commit object — chain ends
+            };
+            let _ = cairn_core::hash::Hash::from_hex(&cursor)
+                .ok_or_else(|| Status::internal("bad commit hash"))?;
+            let _ = tree;
+            snapshots.push(SnapshotInfo {
+                commit_hash: cursor.clone(),
+                parent: parent.map(|p| p.hex()).unwrap_or_default(),
+                label,
+                author,
+                snapshot_seq: seq,
+                server_ts: 0, // commit objects carry seq, not wall time (frozen format)
+            });
+            match parent {
+                Some(p) => cursor = p.hex(),
+                None => break,
+            }
+        }
+        Ok(Response::new(ListSnapshotsResponse { snapshots }))
+    }
+
+    async fn restore_snapshot(
+        &self,
+        request: Request<RestoreSnapshotRequest>,
+    ) -> Result<Response<RestoreSnapshotResponse>, Status> {
+        let req = request.into_inner();
+        let (_client, _url) = server_ctx(&self.state.home).await?;
+        let (tenant, token) = bearer(&self.state.home).await?;
+        // commit → tree → (path, manifest) entries
+        let mut cr = Request::new(GetManifestRequest {
+            tenant_id: tenant.clone(),
+            manifest_hash: req.commit_hash.clone(),
+        });
+        cr.metadata_mut()
+            .insert("authorization", bearer_md(token.clone())?);
+        let commit_bytes = download_commit(&self.state.home, cr).await?;
+        let (tree, _parent, _author, _label, _seq) =
+            cairn_core::commit::parse_commit(&commit_bytes)
+                .map_err(|e| Status::internal(e.message))?;
+        let mut tr = Request::new(GetManifestRequest {
+            tenant_id: tenant.clone(),
+            manifest_hash: tree.hex(),
+        });
+        tr.metadata_mut()
+            .insert("authorization", bearer_md(token.clone())?);
+        let tree_bytes = download_commit(&self.state.home, tr).await?;
+        let entries =
+            cairn_core::commit::parse_tree(&tree_bytes).map_err(|e| Status::internal(e.message))?;
+
+        // materialize each file via the SAME machinery hydration uses (CAS→plane,
+        // hash-verified), writing into the workspace (or target_path)
+        let store = cairn_store::Store::open(&self.state.home, Arc::new(WallClock))
+            .map_err(|e| Status::failed_precondition(e.message))?;
+        let conn = store.conn_handle();
+        let cas = cairn_store::Cas::open(&store.root().join("blobs"), conn.clone())
+            .map_err(|e| Status::internal(e.message))?;
+        let id = crate::projects::load_identity(&store)
+            .ok_or_else(|| Status::failed_precondition("no device identity"))?;
+        let channel = cairn_sync::plane_grpc::connect_channel(&id.server_url, None)
+            .await
+            .map_err(|e| Status::unavailable(e.message))?;
+        let plane: Arc<dyn cairn_sync::plane::Plane> =
+            Arc::new(cairn_sync::plane_grpc::GrpcPlane::from_channel(
+                channel,
+                id.token.clone(),
+                tenant.clone(),
+            ));
+        let root = cairn_sync::workspace::workspace_dir(&store, &req.project_id);
+        let base = if req.target_path.is_empty() {
+            root.clone()
+        } else {
+            std::path::PathBuf::from(&req.target_path)
+        };
+        std::fs::create_dir_all(&base).map_err(|e| Status::internal(e.to_string()))?;
+        let mut restored_files = 0u64;
+        let mut bytes_total = 0u64;
+        let mut manifest_cache: HashMap<String, cairn_core::manifest::Manifest> = HashMap::new();
+        for (path, manifest_hex) in &entries {
+            let bytes = cairn_sync::hydrate::hydrate_one(
+                plane.as_ref(),
+                &cas,
+                &tenant,
+                manifest_hex,
+                path,
+                &mut manifest_cache,
+            )
+            .await
+            .map_err(|e| Status::internal(format!("restore {path}: {e}")))?;
+            let target = base.join(path);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| Status::internal(e.to_string()))?;
+            }
+            std::fs::write(&target, &bytes).map_err(|e| Status::internal(e.to_string()))?;
+            restored_files += 1;
+            bytes_total += bytes.len() as u64;
+        }
+        // restored files become dirty rows so the engine pushes the restore state
+        for (path, manifest_hex) in &entries {
+            if let Some(mut row) = store.get_file(&req.project_id, path) {
+                row.manifest_hash = Some(manifest_hex.clone());
+                let _ = store.put_file(&row);
+                let _ = store.set_file_state(&req.project_id, path, "dirty");
+            }
+        }
+        tracing::info!(project = %req.project_id, files = restored_files, "snapshot restored");
+        Ok(Response::new(RestoreSnapshotResponse {
+            restored_files,
+            bytes: bytes_total,
+        }))
+    }
+}
+
+/// Fetch a stored object (commit/tree) through the Download service with auth.
+async fn download_commit(
+    home: &std::path::Path,
+    mut request: Request<GetManifestRequest>,
+) -> Result<Vec<u8>, Status> {
+    let (_tenant, token) = bearer(home).await?;
+    let store = cairn_store::Store::open(home, Arc::new(WallClock))
+        .map_err(|e| Status::failed_precondition(e.message))?;
+    let id = crate::projects::load_identity(&store)
+        .ok_or_else(|| Status::failed_precondition("no device identity"))?;
+    let channel = cairn_sync::plane_grpc::connect_channel(&id.server_url, None)
+        .await
+        .map_err(|e| Status::unavailable(e.message))?;
+    let mut c = DownloadClient::new(channel);
+    request
+        .metadata_mut()
+        .insert("authorization", bearer_md(token)?);
+    let out = c
+        .get_manifest(request)
+        .await
+        .map_err(|s| Status::internal(s.message()))?;
+    Ok(out.into_inner().body)
+}
+
+pub struct CtlPinsSvc {
+    pub state: Arc<DaemonState>,
+}
+
+#[tonic::async_trait]
+impl CtlPins for CtlPinsSvc {
+    async fn pin(
+        &self,
+        request: Request<PinRequest>,
+    ) -> Result<Response<cairn_proto::pb::Ack>, Status> {
+        let req = request.into_inner();
+        let store = cairn_store::Store::open(&self.state.home, Arc::new(WallClock))
+            .map_err(|e| Status::failed_precondition(e.message))?;
+        // pin = ensure chunks local (recall-one) + record file-level pin
+        recall_paths(&self.state, &store, &req.project_id, Some(&req.path)).await?;
+        store
+            .pin_file(&req.project_id, &req.path)
+            .map_err(|e| Status::not_found(e.message))?;
+        tracing::info!(project = %req.project_id, path = %req.path, "pinned (recalled + eviction-exempt)");
+        Ok(Response::new(cairn_proto::pb::Ack { ok: true }))
+    }
+
+    async fn unpin(
+        &self,
+        request: Request<UnpinRequest>,
+    ) -> Result<Response<cairn_proto::pb::Ack>, Status> {
+        let req = request.into_inner();
+        let store = cairn_store::Store::open(&self.state.home, Arc::new(WallClock))
+            .map_err(|e| Status::failed_precondition(e.message))?;
+        store
+            .unpin_file(&req.project_id, &req.path)
+            .map_err(|e| Status::internal(e.message))?;
+        tracing::info!(project = %req.project_id, path = %req.path, "unpinned (evictable again)");
+        Ok(Response::new(cairn_proto::pb::Ack { ok: true }))
+    }
+
+    async fn list_pins(
+        &self,
+        request: Request<ListPinsRequest>,
+    ) -> Result<Response<ListPinsResponse>, Status> {
+        let req = request.into_inner();
+        let store = cairn_store::Store::open(&self.state.home, Arc::new(WallClock))
+            .map_err(|e| Status::failed_precondition(e.message))?;
+        let pins = store
+            .list_pins(&req.project_id)
+            .into_iter()
+            .map(|(path, size)| PinInfo {
+                path,
+                size,
+                state: "pinned".into(),
+            })
+            .collect();
+        Ok(Response::new(ListPinsResponse { pins }))
+    }
+}
+
+/// Recall engine (pin's fetch step + background jobs): materialize missing files
+/// (whole project or one path) — ctl recall = cold-tier fetch with progress (WO6-3).
+async fn recall_paths(
+    _state: &DaemonState,
+    store: &cairn_store::Store,
+    project_id: &str,
+    only: Option<&str>,
+) -> Result<(), Status> {
+    recall_paths_simple(store, project_id, only).await
+}
+
+#[derive(Default)]
+pub struct RecallJob {
+    pub state: String,
+    pub progress: f64,
+    pub bytes_done: u64,
+    pub bytes_total: u64,
+}
+
+pub struct CtlRecallSvc {
+    pub state: Arc<DaemonState>,
+}
+
+#[tonic::async_trait]
+impl CtlRecall for CtlRecallSvc {
+    async fn start_recall(
+        &self,
+        request: Request<StartRecallRequest>,
+    ) -> Result<Response<StartRecallResponse>, Status> {
+        let req = request.into_inner();
+        let job_id = uuid::Uuid::now_v7().to_string();
+        let response_id = job_id.clone();
+        let home = self.state.home.clone();
+        let project = req.project_id.clone();
+        let only = if req.path.is_empty() {
+            None
+        } else {
+            Some(req.path.clone())
+        };
+        self.state.recall_jobs_arc.write().await.insert(
+            job_id.clone(),
+            RecallJob {
+                state: "running".into(),
+                ..RecallJob::default()
+            },
+        );
+        let registry = Arc::clone(&self.state.recall_jobs_arc);
+        tokio::spawn(async move {
+            let Ok(store) = cairn_store::Store::open(&home, Arc::new(WallClock)) else {
+                registry.write().await.insert(
+                    job_id.clone(),
+                    RecallJob {
+                        state: "failed".into(),
+                        ..RecallJob::default()
+                    },
+                );
+                return;
+            };
+            let result = recall_paths_simple(&store, &project, only.as_deref()).await;
+            let done = RecallJob {
+                state: if result.is_ok() {
+                    "completed".into()
+                } else {
+                    "failed".into()
+                },
+                progress: 1.0,
+                ..RecallJob::default()
+            };
+            registry.write().await.insert(job_id, done);
+        });
+        Ok(Response::new(StartRecallResponse {
+            job_id: response_id,
+        }))
+    }
+
+    async fn recall_status(
+        &self,
+        request: Request<RecallStatusRequest>,
+    ) -> Result<Response<RecallStatusResponse>, Status> {
+        let req = request.into_inner();
+        let jobs = self.state.recall_jobs_arc.read().await;
+        let Some(job) = jobs.get(&req.job_id) else {
+            return Err(Status::not_found(format!(
+                "unknown recall job {}",
+                req.job_id
+            )));
+        };
+        // ETA: no live bytes-per-sec meter in v1 (progress is per-file state);
+        // eta_ms stays 0 = unknown, which the ctl contract permits.
+        Ok(Response::new(RecallStatusResponse {
+            state: job.state.clone(),
+            progress: job.progress,
+            bytes_done: job.bytes_done,
+            bytes_total: job.bytes_total,
+            eta_ms: 0,
+        }))
+    }
+}
+
+/// Fire-and-forget recall used by the background job (progress tracked at
+/// job granularity: running → completed/failed; file-level metering rides
+/// the dashboard hydration metrics).
+async fn recall_paths_simple(
+    store: &cairn_store::Store,
+    project_id: &str,
+    only: Option<&str>,
+) -> Result<(), Status> {
+    let id = crate::projects::load_identity(store)
+        .ok_or_else(|| Status::failed_precondition("no device identity"))?;
+    let channel = cairn_sync::plane_grpc::connect_channel(&id.server_url, None)
+        .await
+        .map_err(|e| Status::unavailable(e.message))?;
+    let plane: Arc<dyn cairn_sync::plane::Plane> =
+        Arc::new(cairn_sync::plane_grpc::GrpcPlane::from_channel(
+            channel,
+            id.token.clone(),
+            id.tenant_id.clone(),
+        ));
+    let conn = store.conn_handle();
+    let cas = cairn_store::Cas::open(&store.root().join("blobs"), conn.clone())
+        .map_err(|e| Status::internal(e.message))?;
+    let rows: Vec<_> = store
+        .list_files(project_id)
+        .into_iter()
+        .filter(|r| r.mode == "file" && r.manifest_hash.is_some())
+        .filter(|r| only.is_none_or(|p| r.path == p))
+        .collect();
+    let mut manifest_cache: HashMap<String, cairn_core::manifest::Manifest> = HashMap::new();
+    for row in rows {
+        if let Some(hex) = row.manifest_hash {
+            if hex.is_empty() {
+                continue;
+            }
+            let _ = cairn_sync::hydrate::hydrate_one(
+                plane.as_ref(),
+                &cas,
+                &id.tenant_id,
+                &hex,
+                &row.path,
+                &mut manifest_cache,
+            )
+            .await
+            .map_err(|e| Status::internal(format!("recall {}: {e}", row.path)))?;
+        }
+    }
+    Ok(())
 }
