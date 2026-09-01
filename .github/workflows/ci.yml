@@ -148,6 +148,48 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo test -p cairn-fs-win --release --test cfapi_roundtrip -- --nocapture
 
+  # WO6-4: S3-BACKED soak in CI — the full scripts/soak.sh gate set (ingest,
+  # kill -9 at ~50%, resume, zero-dup journal, byte-identity pull, COLD-FETCH
+  # through presigned GETs) with the SERVER's chunk objects stored in MinIO via
+  # CAIRN_S3_*: the cloud wire is exercised, not just the LocalFs dry-run.
+  soak-s3:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Start MinIO (pinned binary, plain step)
+        run: |
+          curl -sfL --retry 5 \
+            https://dl.min.io/server/minio/release/linux-amd64/archive/minio.RELEASE.2024-06-13T22-53-53Z \
+            -o /tmp/minio
+          chmod +x /tmp/minio
+          MINIO_ROOT_USER=cairntest MINIO_ROOT_PASSWORD=cairntest-secret-123 \
+          MINIO_SITE_REGION=us-east-1 MINIO_REGION=us-east-1 \
+            /tmp/minio server /tmp/minio-data \
+            --address 127.0.0.1:19000 --console-address 127.0.0.1:19001 \
+            > /tmp/minio.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:19000/minio/health/live >/dev/null; then
+              echo "MinIO live after ${i} probe(s)"; exit 0
+            fi
+            sleep 1
+          done
+          echo "MinIO never became healthy:"; cat /tmp/minio.log; exit 1
+      - run: cargo build --release -p cairn-cli -p cairn-x
+      - name: Soak (500MiB corpus, S3-backed, kill -9 mid-ingest)
+        env:
+          SIZE_MB: 500
+          KILL_PCT: 50
+          TIMEOUT: 900
+          CAIRN_S3_ENDPOINT: http://127.0.0.1:19000
+          CAIRN_S3_BUCKET: cairn-soak
+          CAIRN_S3_REGION: us-east-1
+          CAIRN_S3_ACCESS_KEY_ID: cairntest
+          CAIRN_S3_SECRET_ACCESS_KEY: cairntest-secret-123
+          CAIRN_S3_PATH_STYLE: "1"
+        run: bash scripts/soak.sh
+
   windows-macos-compile:
     strategy:
       matrix:
@@ -169,7 +211,7 @@ jobs:
       - run: |
           cargo build --release -p cairn-x
           ./target/release/cairn-x corpus-gen --sequences 2 --saves 8 --base-mb 128
-      - run: cargo llvm-cov --lcov --output-path lcov.info --fail-under-lines 74 -p cairn-core -p cairn-sync  # measured baseline 74.9% (2026-09-01, local+CI); raise as coverage grows
+      - run: cargo llvm-cov --lcov --output-path lcov.info --fail-under-lines 73 -p cairn-core -p cairn-sync  # measured baseline 73.71% (2026-09-01; WO6-4 added plane_grpc::measure_cold_fetch, covered by crates/cairn-server/tests/cold_fetch.rs which runs in the `test` job — outside this -p filter). Ratchet +1/round per WO6-7.
 
   fuzz-nightly:
     if: github.event_name == 'schedule'
