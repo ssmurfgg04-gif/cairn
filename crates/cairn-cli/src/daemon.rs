@@ -628,23 +628,42 @@ impl CtlSnapshots for CtlSnapshotsSvc {
             // crafted commit materialize bytes OUTSIDE the target directory.
             cairn_core::pathutil::validate_rel_path(path)
                 .map_err(|e| Status::invalid_argument(e.message))?;
-            let bytes = cairn_sync::hydrate::hydrate_one(
+            let target = base.join(path);
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| Status::internal(e.to_string()))?;
+            }
+            // STREAMING restore (review round): chunks stream chunk-by-chunk into a temp
+            // file and atomically rename over the target — a 50GB restore never holds
+            // the file in RAM, and a mid-stream verify failure leaves the old file intact.
+            let tmp = target.with_extension("cairn-restore-tmp");
+            let mut f = std::fs::File::create(&tmp)
+                .map_err(|e| Status::internal(format!("restore {path}: {e}")))?;
+            let written = match cairn_sync::hydrate::hydrate_one_into(
                 plane.as_ref(),
                 &cas,
                 &tenant,
                 manifest_hex,
                 path,
                 &mut manifest_cache,
+                &mut f,
             )
             .await
-            .map_err(|e| Status::internal(format!("restore {path}: {e}")))?;
-            let target = base.join(path);
-            if let Some(parent) = target.parent() {
-                std::fs::create_dir_all(parent).map_err(|e| Status::internal(e.to_string()))?;
-            }
-            std::fs::write(&target, &bytes).map_err(|e| Status::internal(e.to_string()))?;
+            {
+                Ok(w) => w,
+                Err(e) => {
+                    // mid-stream failure: leave the OLD file intact, remove the partial
+                    // temp, and surface the error (I2: never half-materialize)
+                    drop(f);
+                    let _ = std::fs::remove_file(&tmp);
+                    return Err(Status::internal(format!("restore {path}: {e}")));
+                }
+            };
+            f.sync_all().map_err(|e| Status::internal(format!("restore {path}: {e}")))?;
+            drop(f);
+            std::fs::rename(&tmp, &target)
+                .map_err(|e| Status::internal(format!("restore {path}: {e}")))?;
             restored_files += 1;
-            bytes_total += bytes.len() as u64;
+            bytes_total += written;
         }
         // restored files become dirty rows so the engine pushes the restore state
         for (path, manifest_hex) in &entries {
@@ -875,13 +894,16 @@ async fn recall_paths_simple(
             if hex.is_empty() {
                 continue;
             }
-            let _ = cairn_sync::hydrate::hydrate_one(
+            // recall = warm the local CAS; bytes are discarded — stream to a sink so
+            // RAM stays bounded by one chunk regardless of file size (review round)
+            let _ = cairn_sync::hydrate::hydrate_one_into(
                 plane.as_ref(),
                 &cas,
                 &id.tenant_id,
                 &hex,
                 &row.path,
                 &mut manifest_cache,
+                &mut std::io::sink(),
             )
             .await
             .map_err(|e| Status::internal(format!("recall {}: {e}", row.path)))?;

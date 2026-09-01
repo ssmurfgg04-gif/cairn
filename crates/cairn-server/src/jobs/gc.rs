@@ -181,11 +181,59 @@ async fn collect_manifest_chunks(
         Ok(b) => b,
         Err(_) => return,
     };
-    if let Ok(m) = Manifest::parse(&bytes) {
-        for e in m.flatten() {
-            live.insert(e.chunk_hash.hex());
+    let Ok(m) = Manifest::parse(&bytes) else {
+        return;
+    };
+    // Fanout-safe (review round): `flatten()` returns NOTHING for Node manifests, which
+    // marked every child chunk of a >8,192-chunk file as garbage and swept LIVE data.
+    // Walk the tree recursively, fetching child manifest objects from the store.
+    collect_manifest_tree(state, tenant_id, &m, live, 0).await;
+}
+
+/// Depth guard: a content-addressed manifest tree cannot cycle (a child's bytes hash to
+/// a value only its parent can reference AFTER the child exists), but a corrupted/hostile
+/// object store could feed us a manifest-shaped refusal-to-terminate. 8 levels cover
+/// 8192^7 chunks — more bytes than exist. Bail loudly beyond it.
+const MAX_MANIFEST_DEPTH: u32 = 8;
+
+fn collect_manifest_tree<'a>(
+    state: &'a ServerState,
+    tenant_id: &'a str,
+    m: &'a Manifest,
+    live: &'a mut HashSet<String>,
+    depth: u32,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
+    Box::pin(async move {
+        if depth > MAX_MANIFEST_DEPTH {
+            tracing::error!(%tenant_id, depth, "manifest tree beyond MAX_MANIFEST_DEPTH — corrupt store? keeping chunks (fail-safe)");
+            return;
         }
-    }
+        match m {
+            Manifest::Leaf { entries, .. } => {
+                for e in entries {
+                    live.insert(e.chunk_hash.hex());
+                }
+            }
+            Manifest::Node { children, .. } => {
+                for c in children {
+                    let hex = c.hash.hex();
+                    if let Ok(bytes) = state
+                        .store
+                        .get(&crate::storage::LocalFsStore::object_key(tenant_id, &hex))
+                        .await
+                    {
+                        if let Ok(child) = Manifest::parse(&bytes) {
+                            collect_manifest_tree(state, tenant_id, &child, live, depth + 1).await;
+                        }
+                    } else {
+                        // unresolvable child: its chunks are UNREACHABLE to this walk —
+                        // keep the child object itself alive so a later pass can retry
+                        live.insert(hex);
+                    }
+                }
+            }
+        }
+    })
 }
 
 /// GC pass. `shadow=true` → report only (beta gate); `false` → mark + tombstone + sweep.

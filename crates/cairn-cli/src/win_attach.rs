@@ -106,7 +106,12 @@ impl DaemonSource {
         let Ok(m) = Manifest::parse(&bytes) else {
             return false;
         };
-        m.flatten().iter().all(|e| self.cas.contains(&e.chunk_hash))
+        // Fanout-safe (review round): `flatten()` is leaf-only; a Node yielded zeroed
+        // placeholder entries and fully_local was permanently false — fanout files
+        // never took the fast path. Walk children via the CAS (push mirrors them).
+        m.flatten_deep(&mut |h| self.cas.get(h).ok())
+            .iter()
+            .all(|e| self.cas.contains(&e.chunk_hash))
     }
 }
 
@@ -191,19 +196,19 @@ impl DaemonSource {
         let mut all = Vec::new();
         match &manifest {
             Manifest::Leaf { entries, .. } => all.extend(entries.iter().cloned()),
-            Manifest::Node { children, .. } => {
-                for c in children {
-                    let child_bytes = match self.cas.get(&c.hash) {
-                        Ok(b) => b,
-                        Err(_) => self
-                            .rt
-                            .block_on(self.plane.get_manifest(&self.tenant_id, &c.hash.hex()))
-                            .map_err(|_| 0xC000_0225u32 as i32)?,
-                    };
-                    let child = Manifest::parse(&child_bytes).map_err(|_| 0xC000_000Bu32 as i32)?;
-                    if let Manifest::Leaf { entries, .. } = &child {
-                        all.extend(entries.iter().cloned());
+            Manifest::Node { .. } => {
+                // Fanout walk with CAS→plane resolution at every depth (review round:
+                // the old walk handled exactly one child level — depth-3 grandchildren
+                // were silently dropped, surfacing as short-read hydration failures).
+                for e in manifest.flatten_deep(&mut |h: &Hash| {
+                    if let Ok(b) = self.cas.get(h) {
+                        return Some(b);
                     }
+                    self.rt
+                        .block_on(self.plane.get_manifest(&self.tenant_id, &h.hex()))
+                        .ok()
+                }) {
+                    all.push(e);
                 }
             }
         }

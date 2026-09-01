@@ -314,7 +314,10 @@ impl World {
                     .await
                 {
                     if let Ok(m) = cairn_core::manifest::Manifest::parse(&bytes) {
-                        for e in m.flatten() {
+                        // Fanout-safe (review round): `flatten()` is leaf-only; a Node
+                        // made this shadow check vacuous for >8,192-chunk files. Walk
+                        // the tree through the async store (depth-guarded).
+                        for e in collect_store_manifest_entries(self, "t1", &m, 0).await {
                             let key = cairn_server::storage::LocalFsStore::chunk_key(
                                 "t1",
                                 &e.chunk_hash.hex(),
@@ -337,6 +340,58 @@ impl World {
             ticks: 0,
             appends_acked: self.acked_appends,
             vacuous,
+        }
+    }
+}
+
+/// Fanout-safe manifest walk for the GC shadow check (review round): recursively
+/// collects every leaf entry of a manifest tree, fetching child manifest objects
+/// through the server's async object store. Depth-guarded (content-addressed trees
+/// cannot cycle; the guard is against a corrupt store serving manifest-shaped loops).
+async fn collect_store_manifest_entries(
+    world: &World,
+    tenant: &str,
+    m: &cairn_core::manifest::Manifest,
+    depth: u32,
+) -> Vec<cairn_core::manifest::ManifestEntry> {
+    Box::pin(collect_store_manifest_entries_inner(world, tenant, m, depth)).await
+}
+
+async fn collect_store_manifest_entries_inner(
+    world: &World,
+    tenant: &str,
+    m: &cairn_core::manifest::Manifest,
+    depth: u32,
+) -> Vec<cairn_core::manifest::ManifestEntry> {
+    use cairn_core::manifest::Manifest;
+    const MAX_DEPTH: u32 = 8;
+    match m {
+        Manifest::Leaf { entries, .. } => entries.clone(),
+        Manifest::Node { children, .. } => {
+            let mut out = Vec::new();
+            if depth > MAX_DEPTH {
+                tracing::error!(%tenant, depth, "manifest tree beyond MAX_DEPTH in sim shadow check");
+                return out;
+            }
+            for c in children {
+                let Ok(bytes) = world
+                    .state
+                    .store
+                    .get(&cairn_server::storage::LocalFsStore::object_key(
+                        tenant,
+                        &c.hash.hex(),
+                    ))
+                    .await
+                else {
+                    continue;
+                };
+                if let Ok(child) = Manifest::parse(&bytes) {
+                    out.extend(
+                        collect_store_manifest_entries(world, tenant, &child, depth + 1).await,
+                    );
+                }
+            }
+            out
         }
     }
 }

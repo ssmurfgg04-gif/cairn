@@ -553,8 +553,12 @@ impl Store {
         let Ok(manifest) = Manifest::parse(&bytes) else {
             return 0;
         };
+        // Fanout-safe (review round): `flatten()` is leaf-only — a Node returned zero
+        // entries and pinning silently protected NOTHING on >8,192-chunk files, letting
+        // LRU eviction free pinned-class chunks. Walk the tree via the CAS (child
+        // manifest objects are mirrored locally by the push path).
         let mut n = 0;
-        for e in manifest.flatten() {
+        for e in manifest.flatten_deep(&mut |h| cas.get(h).ok()) {
             if cas.pin(&e.chunk_hash).is_ok() {
                 n += 1;
             }

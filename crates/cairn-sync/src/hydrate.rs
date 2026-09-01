@@ -6,14 +6,14 @@ use std::collections::HashMap;
 
 use cairn_core::compress::decompress_chunk;
 use cairn_core::hash::Hash;
-use cairn_core::manifest::{Manifest, ManifestEntry};
+use cairn_core::manifest::{assemble_file_into, Manifest};
 use cairn_core::{CairnError, ErrorKind};
 use cairn_store::state::LocalState;
 use cairn_store::{Cas, HeaderCache, Store};
 
 use crate::plane::Plane;
 use crate::workspace::workspace_dir;
-use cairn_core::normalize::{recompress, Transform};
+use cairn_core::normalize::Transform;
 
 /// Hydration counters (doctor/status surface).
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -132,9 +132,10 @@ fn millis_to_systemtime(ms: i64) -> std::time::SystemTime {
     }
 }
 
-/// Hydrate ONE file's full bytes by manifest hash: manifest (CAS→plane) → chunks
-/// (CAS→plane, stored→raw, verified CAS puts) → assembly. Public for the ctl
-/// snapshot-restore + pin-recall paths (WO6-3).
+/// Hydrate ONE file's full bytes by manifest hash (compat wrapper over
+/// [`hydrate_one_into`]). ⚠️ Buffers the WHOLE wrapper in RAM — fine for
+/// project-class files, wrong for 50GB media. Streaming callers (restore to file,
+/// recall) MUST use [`hydrate_one_into`].
 #[allow(clippy::implicit_hasher)] // cache is caller-local; hasher choice is not a contract
 pub async fn hydrate_one(
     plane: &dyn Plane,
@@ -144,6 +145,39 @@ pub async fn hydrate_one(
     rel_path: &str,
     manifest_cache: &mut HashMap<String, Manifest>,
 ) -> Result<Vec<u8>, CairnError> {
+    let mut out = Vec::new();
+    hydrate_one_into(
+        plane,
+        cas,
+        tenant,
+        manifest_hash_hex,
+        rel_path,
+        manifest_cache,
+        &mut out,
+    )
+    .await?;
+    Ok(out)
+}
+
+/// STREAMING hydrate (review round: `hydrate_one` assembled the whole file in RAM —
+/// an instant OOM for 50GB-class media on a 16GB machine). Chunks are written
+/// sequentially to `out` as they arrive; peak RAM is one chunk (≤16MB) plus the
+/// manifest cache. Every chunk is hash-verified before its bytes touch `out` (I2 —
+/// a corrupt chunk aborts mid-stream; callers writing to a real file must use
+/// temp-file + rename for atomicity).
+///
+/// gzip containers stream through a `GzEncoder` directly into `out` — no inner
+/// payload buffering. zip stays scoped-out and rejects BEFORE any I/O.
+#[allow(clippy::implicit_hasher)] // cache is caller-local; hasher choice is not a contract
+pub async fn hydrate_one_into<W: std::io::Write>(
+    plane: &dyn Plane,
+    cas: &Cas,
+    tenant: &str,
+    manifest_hash_hex: &str,
+    _rel_path: &str,
+    manifest_cache: &mut HashMap<String, Manifest>,
+    out: &mut W,
+) -> Result<u64, CairnError> {
     let manifest = if let Some(m) = manifest_cache.get(manifest_hash_hex) {
         m.clone()
     } else {
@@ -181,64 +215,90 @@ pub async fn hydrate_one(
         } => (*compression, *transform),
     };
 
-    // Collect every leaf entry across fanout children (depth ≥ 2); child manifests are
-    // fetched CAS-first, plane second, and cached for the resolve closure.
-    let entries: Vec<ManifestEntry> = match &manifest {
-        Manifest::Leaf { entries, .. } => entries.clone(),
-        Manifest::Node { children, .. } => {
-            let mut all = Vec::new();
-            for c in children {
-                let bytes = match cas.get(&c.hash) {
-                    Ok(b) => b,
-                    Err(_) => plane.get_manifest(tenant, &c.hash.hex()).await?,
-                };
-                let child = Manifest::parse(&bytes)?;
-                if let Manifest::Leaf { entries, .. } = &child {
-                    all.extend(entries.iter().cloned());
-                }
-                manifest_cache.insert(c.hash.hex(), child);
-            }
-            all
-        }
+    // zip normalization is scoped OUT (multi-entry archives have no single inner
+    // payload — normalize.rs). Reject BEFORE any network/disk work, never mid-stream.
+    if transform == Transform::Zip {
+        return Err(CairnError::new(
+            ErrorKind::Compression,
+            "normalize: zip normalization is scoped OUT (see normalize.rs); the file syncs \
+             as opaque bytes instead",
+        ));
+    }
+
+    // Recursively collect every leaf entry across fanout children (any depth ≥ 2);
+    // child manifests are fetched CAS-first, plane second, and cached for the resolver.
+    collect_entries_recursive(&manifest, cas, plane, tenant, manifest_cache).await?;
+    let mut resolve = |child: &Hash| -> Option<Vec<u8>> {
+        manifest_cache.get(&child.hex()).map(|m| m.serialize().1)
     };
 
     // Pre-fetch every missing leaf chunk: stored (compressed) bytes come off the wire,
     // are decompressed to RAW form, and land in the local CAS hash-verified (the local
-    // CAS stores raw chunk content exactly like the push path does).
-    let mut local_raw: HashMap<String, Vec<u8>> = HashMap::new();
+    // CAS stores raw chunk content exactly like the push path does). The verified CAS
+    // put IS the read-back path — no in-RAM mirror of the whole file (the old
+    // `local_raw` HashMap duplicated every fetched byte and defeated the point).
+    let entries = manifest.flatten_with(&mut |child: &Hash| {
+        manifest_cache.get(&child.hex()).cloned()
+    });
     for e in &entries {
         let h = e.chunk_hash;
         if cas.contains(&h) {
             continue;
         }
-        let hex = h.hex();
-        if local_raw.contains_key(&hex) {
-            continue;
-        }
-        let stored = plane.fetch_object(tenant, &hex).await?;
+        let stored = plane.fetch_object(tenant, &h.hex()).await?;
         let raw = decompress_chunk(&stored, policy, None)?;
         cas.put(&h, &raw)?; // BLAKE3-verified before landing (I2)
-        local_raw.insert(hex, raw);
     }
 
-    // Resolve + assemble. assemble_file re-verifies every chunk hash before assembly.
-    let mut resolve =
-        |child: &Hash| -> Option<Manifest> { manifest_cache.get(&child.hex()).cloned() };
-    let mut get_chunk = |h: &Hash| -> Option<Vec<u8>> {
-        if let Ok(raw) = cas.get(h) {
-            return Some(raw);
+    // Stream assembly. The resolver hands serialized manifest bytes to
+    // assemble_file_into (it parses internally); get_chunk reads the verified CAS.
+    let mut get_chunk = |h: &Hash| -> Option<Vec<u8>> { cas.get(h).ok() };
+    match transform {
+        Transform::None => {
+            assemble_file_into(&manifest, &mut resolve, &mut get_chunk, out)
         }
-        local_raw.get(&h.hex()).cloned()
-    };
-    let inner = cairn_core::manifest::assemble_file(&manifest, &mut resolve, &mut get_chunk)?;
-    // container transform (normalization): the stored chunks cover the INNER payload —
-    // rebuild the wrapper so editors see a real gzip/zip file (wrapper byte-identity is
-    // irrelevant; the payload is what was hash-verified)
-    if transform == Transform::None {
-        Ok(inner)
-    } else {
-        recompress(&inner, transform, rel_path)
+        Transform::Gzip => {
+            // stream the inner payload through the gzip encoder — wrapper bytes are
+            // rebuilt on the fly, wrapper byte-identity is irrelevant (normalize.rs)
+            let mut enc =
+                flate2::write::GzEncoder::new(out, flate2::Compression::default());
+            let written =
+                assemble_file_into(&manifest, &mut resolve, &mut get_chunk, &mut enc)?;
+            enc.finish()
+                .map_err(|e| CairnError::new(ErrorKind::Compression, format!("gzip finish: {e}")))?;
+            Ok(written)
+        }
+        Transform::Zip => unreachable!("zip rejected before any I/O"),
     }
+}
+
+/// Recursively fetch + parse every fanout child manifest (CAS-first, plane second),
+/// caching by hash so the resolver closures never touch the network. Replaces the
+/// old ONE-LEVEL walk: depth-3 trees (impossible in practice — each level covers
+/// ≥8,192× more chunks — but cheap to be correct) no longer drop grandchildren.
+async fn collect_entries_recursive(
+    manifest: &Manifest,
+    cas: &Cas,
+    plane: &dyn Plane,
+    tenant: &str,
+    cache: &mut HashMap<String, Manifest>,
+) -> Result<(), CairnError> {
+    let Manifest::Node { children, .. } = manifest else {
+        return Ok(()); // leaf: entries are already in hand
+    };
+    for c in children {
+        if cache.contains_key(&c.hash.hex()) {
+            continue;
+        }
+        let bytes = match cas.get(&c.hash) {
+            Ok(b) => b,
+            Err(_) => plane.get_manifest(tenant, &c.hash.hex()).await?,
+        };
+        let child = Manifest::parse(&bytes)?;
+        Box::pin(collect_entries_recursive(&child, cas, plane, tenant, cache)).await?;
+        cache.insert(c.hash.hex(), child);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -250,7 +310,7 @@ mod tests {
     use cairn_core::compress;
     use cairn_core::compress::compress_chunk;
     use cairn_core::hash::Hash;
-    use cairn_core::manifest::Manifest;
+    use cairn_core::manifest::{Manifest, ManifestEntry};
     use cairn_store::{Outbox, Store as LocalStore};
     use std::sync::Arc;
 

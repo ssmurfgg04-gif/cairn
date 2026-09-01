@@ -472,6 +472,7 @@ dependencies = [
  "cairn-proto",
  "cairn-store",
  "filetime",
+ "flate2",
  "futures",
  "hex",
  "notify",

@@ -213,12 +213,26 @@ impl Engine {
                 chunk_hash: *h,
             })
             .collect();
-        let manifest = Manifest::build_with_transform(
+        // manifest (ADR-0004 + normalization: chunk hashes cover the INNER payload when a
+        // container transform is active; the transform travels in the manifest v2 header).
+        // build_tree (not plain build): files fanning out past MANIFEST_MAX_ENTRIES
+        // (>8,192 chunks) reference CHILD manifest objects — those bytes MUST be stored
+        // or the tree is unresolvable at hydrate and invisible to GC (review round).
+        let built = Manifest::build_tree_with_transform(
             entries,
             policy,
             dict.as_ref().map(|d| d.dict_hash),
             transform,
         );
+        // children first (leaf-first order), parent last — crash between the two leaves
+        // unreferenced children that GC reclaims, never a dangling parent
+        for (child_hash, child_bytes) in &built.child_objects {
+            self.cas.put(child_hash, child_bytes)?;
+            self.plane
+                .put_manifest(&self.tenant_id, &child_hash.hex(), child_bytes)
+                .await?;
+        }
+        let manifest = built.manifest;
         let (manifest_hash, manifest_bytes) = manifest.serialize();
         // mirror the manifest object into the local CAS (hydration path reads it offline)
         self.cas.put(&manifest_hash, &manifest_bytes)?;
