@@ -46,7 +46,7 @@ DB="$SRV_HOME/meta.db"
 PASS=0; FAIL=0; A_PID=""; B_PID=""; S_PID=""
 
 say(){ echo "[wo1] $*"; }
-gate(){ if [ "$1" = ok ]; then PASS=$((PASS+1)); echo "[wo1] GATE $2: PASS ($3)"; else FAIL=$((FAIL+1)); echo "[wo1] GATE $2: FAIL ($3)"; fi }
+gate(){ if [ "$1" = ok ]; then PASS=$((PASS+1)); echo "[wo1] GATE $2: PASS ($3)"; else FAIL=$((FAIL+1)); echo "[wo1] GATE $2: FAIL ($3)"; dump_logs; fi }
 cleanup(){ for p in "$A_PID" "$B_PID" "$S_PID"; do [ -n "$p" ] && kill "$p" 2>/dev/null; done; wait 2>/dev/null; }
 trap cleanup EXIT
 
@@ -72,16 +72,41 @@ for p in d.get('projects',[]):
     if p.get('project_id')==sys.argv[1]: print(p.get(sys.argv[2],''))
 print('')" "$1" "$2"; }
 wait_state(){ # home project want_state [want_files]
-  local i=0
+  # Error-state policy (gate-3 lesson, 2026-09-01): a sync pass can fail
+  # transiently on a contended runner — the daemon sets state=error for the
+  # backoff window and RECOVERS on the next pass (the loop is the re-entry
+  # point). Failing the gate on the FIRST error observation turned a transient
+  # into a red run while gates 4-6 proved the device had converged. Policy:
+  # tolerate errors until they persist ERROR_GRACE seconds CONTINUOUSLY, then
+  # fail fast with last_error; report last_error at timeout too.
+  local i=0 err_since="" last_err=""
   while [ "$i" -lt "$TIMEOUT" ]; do
     local st fs
-    st=$(status_json "$1" | field "$2" state)
-    fs=$(status_json "$1" | field "$2" files_synced)
+    local sj; sj=$(status_json "$1")
+    st=$(printf '%s' "$sj" | field "$2" state)
+    fs=$(printf '%s' "$sj" | field "$2" files_synced)
+    last_err=$(printf '%s' "$sj" | field "$2" last_error)
     if [ "$st" = "$3" ] && { [ "$#" -lt 5 ] || [ "$fs" = "$4" ]; }; then return 0; fi
-    if [ "$st" = "error" ]; then say "project $2 entered error state"; return 1; fi
+    if [ "$st" = "error" ]; then
+      [ -z "$err_since" ] && err_since=$i
+      if [ $((i - err_since)) -ge "${ERROR_GRACE:-45}" ]; then
+        say "project $2 in error state for ${ERROR_GRACE:-45}s (last_error: ${last_err:-unknown})"
+        return 1
+      fi
+    else
+      err_since=""
+    fi
     sleep 1; i=$((i+1))
   done
+  [ -n "$last_err" ] && [ "$last_err" != "" ] && say "project $2 last_error: $last_err"
   return 1; }
+dump_logs(){ # on gate failure: daemon output IS the diagnosis (soak lesson 2d243c3)
+  for lg in "$WORK"/daemon*.log "$WORK"/server.log; do
+    [ -f "$lg" ] || continue
+    say "--- tail $lg ---"
+    tail -40 "$lg" || true
+  done
+}
 
 [ -x "$BIN" ] || { say "missing $BIN — build release first (cargo build --release -p cairn-cli)"; exit 2; }
 FREE_MB=$(df -Pk "$PWD" | tail -1 | awk '{print int($3/1024)}')

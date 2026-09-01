@@ -112,9 +112,62 @@ pub fn hex_decode(s: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
+const B64_ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/// Base64 (RFC 4648 standard alphabet, `=` padding). Used for the
+/// `x-amz-checksum-sha256` header, which S3 specifies as base64 — MinIO rejects
+/// hex values with `InvalidArgument: Invalid checksum provided` (quirk S1,
+/// proven against the pinned MinIO: hex 400, base64 200, wrong-base64 400
+/// `XAmzContentChecksumMismatch`).
+#[must_use]
+pub fn b64_encode(bytes: &[u8]) -> String {
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = u32::from(chunk[0]);
+        let b1 = chunk.get(1).map_or(0, |v| u32::from(*v));
+        let b2 = chunk.get(2).map_or(0, |v| u32::from(*v));
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(B64_ALPHABET[(n >> 18) as usize & 63] as char);
+        out.push(B64_ALPHABET[(n >> 12) as usize & 63] as char);
+        out.push(if chunk.len() > 1 {
+            B64_ALPHABET[(n >> 6) as usize & 63] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            B64_ALPHABET[n as usize & 63] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn b64_matches_rfc4648_known_answers() {
+        // RFC 4648 §10 test vectors
+        assert_eq!(b64_encode(b""), "");
+        assert_eq!(b64_encode(b"f"), "Zg==");
+        assert_eq!(b64_encode(b"fo"), "Zm8=");
+        assert_eq!(b64_encode(b"foo"), "Zm9v");
+        assert_eq!(b64_encode(b"foob"), "Zm9vYg==");
+        assert_eq!(b64_encode(b"fooba"), "Zm9vYmE=");
+        assert_eq!(b64_encode(b"foobar"), "Zm9vYmFy");
+        // DE AD BE EF — classic known answer
+        assert_eq!(b64_encode(&[0xDE, 0xAD, 0xBE, 0xEF]), "3q2+7w==");
+        // SHA-256-sized input (32 bytes → 44 chars, one '=' pad)
+        let d: Vec<u8> = (0..32u8).collect();
+        let b64 = b64_encode(&d);
+        assert_eq!(b64.len(), 44);
+        assert!(b64.ends_with('='));
+        // base64 of a hex digest must equal base64 of the raw bytes
+        let round = hex_decode(&hex_encode(&d)).unwrap();
+        assert_eq!(b64_encode(&round), b64);
+    }
 
     #[test]
     fn hash_is_stable() {

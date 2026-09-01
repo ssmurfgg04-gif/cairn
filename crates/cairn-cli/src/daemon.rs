@@ -85,6 +85,7 @@ impl CtlStatus for CtlStatusSvc {
                     pending_outbox: v.pending_outbox,
                     cursor: v.cursor,
                     files_synced: v.files_synced,
+                    last_error: v.last_error.clone().unwrap_or_default(),
                 });
             }
         }

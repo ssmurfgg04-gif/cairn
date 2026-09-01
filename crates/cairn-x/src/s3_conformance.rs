@@ -187,6 +187,41 @@ pub async fn run(cfg: &ConformanceCfg) -> anyhow::Result<Vec<CheckResult>> {
         detail: format!("corrupt PUT -> {} (want 400/403)", resp.status()),
     });
 
+    // -- (4b) HOST-ONLY presign + base64 checksum header (the DAEMON path, quirk S1) --
+    // Sessions presign host-only; the client attaches `x-amz-checksum-sha256`
+    // (base64 per RFC 4648 — hex is rejected 400 "Invalid checksum provided").
+    // The bucket then verifies the value against the payload, so corrupt
+    // uploads are rejected at the bucket WITHOUT checksum-bound presigning.
+    let ck_hex = SigV4Presigner::sha256_hex(&payload);
+    let ck_b64 = cairn_core::hash::b64_encode(
+        &cairn_core::hash::hex_decode(&ck_hex).expect("valid hex"),
+    );
+    let url = presigner.presign_put_host_only(&obj_key, 3600, now);
+    let resp = http
+        .put(&url)
+        .header("x-amz-checksum-sha256", &ck_b64)
+        .body(payload.clone())
+        .send()
+        .await?;
+    out.push(CheckResult {
+        name: "host_only_put_base64_checksum_ok",
+        ok: resp.status().is_success(),
+        detail: format!("host-only PUT + base64 checksum -> {}", resp.status()),
+    });
+    let url = presigner.presign_put_host_only(&obj_key, 3600, now);
+    let bad_b64 = cairn_core::hash::b64_encode(&[0u8; 32]);
+    let resp = http
+        .put(&url)
+        .header("x-amz-checksum-sha256", bad_b64)
+        .body(payload.clone())
+        .send()
+        .await?;
+    out.push(CheckResult {
+        name: "host_only_put_rejects_wrong_checksum",
+        ok: resp.status().as_u16() == 400 || resp.status().as_u16() == 403,
+        detail: format!("host-only PUT + wrong base64 -> {} (want 400/403)", resp.status()),
+    });
+
     // -- (5) expired URL -> 403 --
     let url = presigner.presign_get(&obj_key, 3600, now - 3_600_000 - 60_000);
     let resp = http.get(&url).send().await?;

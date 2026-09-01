@@ -44,6 +44,10 @@ pub async fn build_state(
         match crate::storage::S3ObjectStore::from_env() {
             Some(s3) => {
                 tracing::info!(backend = "s3", "object store: real SigV4 bucket backend");
+                // quirk S1: nothing created the bucket before — the soak's S1
+                // gate died on NoSuchBucket. Create-or-verify at startup so a
+                // miswired bucket is a config error, not a per-save surprise.
+                s3.ensure_bucket().await?;
                 Arc::new(s3)
             }
             None => {

@@ -159,14 +159,26 @@ impl LocalFsStore {
                 return plain(StatusCode::FORBIDDEN, "invalid or expired signature");
             }
             // bucket-rejects-corrupt: x-amz-checksum-sha256 required and verified
-            let Some(provided) = headers
-                .get("x-amz-checksum-sha256")
-                .and_then(|v| v.to_str().ok())
-            else {
+            if headers.get("x-amz-checksum-sha256").is_none() {
                 return plain(StatusCode::BAD_REQUEST, "x-amz-checksum-sha256 required");
             };
             let digest = Sha256::digest(&body);
-            if provided != cairn_core::hash::hex_encode(&digest) {
+            // The header is base64 on the S3 wire (RFC 4648, quirk S1); the dev
+            // local-Fs backend additionally accepts hex so older gate scripts
+            // and the conformance suite's hex-bound URLs keep working.
+            let provided = headers
+                .get("x-amz-checksum-sha256")
+                .and_then(|v| v.to_str().ok());
+            let matches = match provided {
+                Some(b64) if b64.len() == 44 && b64.ends_with('=') => {
+                    cairn_core::hash::hex_decode(b64)
+                        .map(|raw| raw == digest.as_slice())
+                        .unwrap_or(false)
+                }
+                Some(hex_ck) => hex_ck == cairn_core::hash::hex_encode(&digest),
+                None => false,
+            };
+            if !matches {
                 return plain(
                     StatusCode::BAD_REQUEST,
                     "checksum mismatch — corrupt upload rejected",
@@ -656,6 +668,64 @@ pub struct S3ObjectStore {
 }
 
 impl S3ObjectStore {
+    /// Idempotent CreateBucket at startup (quirk S1 follow-up: the soak's S1
+    /// gate failed on `NoSuchBucket` because NOTHING created the bucket — the
+    /// checksum error had masked it). 200/201 created and 409
+    /// BucketAlreadyOwnedByYou both mean "usable"; 403 is tolerated with a
+    /// warning because real deployments often grant a token that can write but
+    /// not create (the runbook then owns bucket provisioning); anything else
+    /// fails the startup loudly — a miswired bucket is a CONFIG error, not a
+    /// per-save surprise.
+    pub async fn ensure_bucket(&self) -> Result<(), CairnError> {
+        let now = cairn_core::clock::WallClock.now_millis();
+        let payload_hash = SigV4Presigner::sha256_hex(b"");
+        let (canonical_path, url) = if self.presigner.path_style {
+            (
+                format!("/{}", self.presigner.bucket),
+                format!("{}/{}", self.presigner.endpoint, self.presigner.bucket),
+            )
+        } else {
+            // virtual-host: the bucket is IN the endpoint host already
+            ("/".to_string(), format!("{}/", self.presigner.endpoint))
+        };
+        let (auth, amz_date) = self.presigner.authorization_header_path(
+            "PUT",
+            &canonical_path,
+            &payload_hash,
+            now,
+        );
+        let resp = self
+            .http
+            .put(&url)
+            .header("Authorization", auth)
+            .header("x-amz-date", amz_date)
+            .header("x-amz-content-sha256", &payload_hash)
+            .send()
+            .await
+            .map_err(|e| {
+                CairnError::new(
+                    cairn_core::ErrorKind::Unavailable,
+                    format!("bucket ensure: {e}"),
+                )
+            })?;
+        match resp.status().as_u16() {
+            200 | 201 | 409 => Ok(()),
+            403 => {
+                tracing::warn!(
+                    "bucket create denied (token may lack CreateBucket) — assuming the bucket pre-exists; first write will fail loudly if not"
+                );
+                Ok(())
+            }
+            s => Err(CairnError::new(
+                cairn_core::ErrorKind::Unavailable,
+                format!(
+                    "bucket ensure: HTTP {s} for {} (check CAIRN_S3_ENDPOINT/credentials)",
+                    self.presigner.bucket
+                ),
+            )),
+        }
+    }
+
     /// Build from the standard `CAIRN_S3_*` environment; `None` when unset/incomplete.
     /// `CAIRN_S3_PATH_STYLE=1` switches to path-style addressing (MinIO,
     /// self-hosted gateways, localhost targets — no wildcard DNS needed).

@@ -321,19 +321,44 @@ impl Plane for GrpcPlane {
         bytes: &[u8],
         checksum_hex: &str,
     ) -> Result<(), CairnError> {
+        // x-amz-checksum-sha256 is BASE64 on the wire (RFC 4648 of the raw
+        // SHA-256). Hex values are rejected by S3/MinIO with 400
+        // "InvalidArgument: Invalid checksum provided" when the checksum is not
+        // bound into the presign signature (quirk S1) — the soak's S1 gate
+        // caught this on a REAL MinIO backend.
+        let checksum_b64 = cairn_core::hash::b64_encode(
+            &cairn_core::hash::hex_decode(checksum_hex)
+                .ok_or_else(|| CairnError::new(ErrorKind::Internal, "bad checksum hex"))?,
+        );
         let r = self
             .http
             .put(url)
-            .header("x-amz-checksum-sha256", checksum_hex)
+            .header("x-amz-checksum-sha256", checksum_b64)
             .body(bytes.to_vec())
             .send()
             .await;
         match r {
             Ok(resp) if resp.status().is_success() => Ok(()),
-            Ok(resp) => Err(CairnError::new(
-                ErrorKind::Unavailable,
-                format!("presigned PUT: HTTP {}", resp.status()),
-            )),
+            // S3 error responses carry an XML body whose <Code> names the exact
+            // failure (SignatureDoesNotMatch vs AuthorizationQueryParametersError
+            // vs InvalidRequest...) — surface it, a bare status string sends us
+            // guessing (the soak-s3 400 hunt, 2026-09-01).
+            Ok(resp) => {
+                let status = resp.status();
+                let body = resp
+                    .text()
+                    .await
+                    .unwrap_or_default()
+                    .lines()
+                    .map(str::trim)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let detail: String = body.chars().take(300).collect();
+                Err(CairnError::new(
+                    ErrorKind::Unavailable,
+                    format!("presigned PUT: HTTP {status} {detail}"),
+                ))
+            }
             Err(e) => Err(CairnError::new(
                 ErrorKind::Unavailable,
                 format!("presigned PUT: {e}"),

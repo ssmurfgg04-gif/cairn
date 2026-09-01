@@ -81,6 +81,47 @@ studio-hardware human gate. Same lesson shaped the attach-acceptance 4a
 visibility window (30 s flaky → 120 s window / 30 s threshold + bounded
 sweep budget so the sweep stops starving the pull loop).
 
+### W10. PARTIAL population policy + unregistered FETCH_PLACEHOLDERS = 60 s freeze, then os error 426
+Registering the sync root with nextcloud's policy set (we copied
+`CF_POPULATION_POLICY_PARTIAL`, cfapiwrapper.cpp:887) but WITHOUT registering
+`CF_CALLBACK_TYPE_FETCH_PLACEHOLDERS` compiles, connects, hydrates, and
+validates fine — then the FIRST app-side create of a NEW file in the root
+(`std::fs::write`) hangs for the filter's fixed 60 s callback timeout and
+fails with `ERROR_CLOUD_FILE_REQUEST_TIMEOUT` (426). With PARTIAL population
+the filter treats "an attempt to open a file underneath the directory" as a
+population query; a callback type absent from the table is not "skipped" —
+the provider just never answers, and nothing else times it out. This sat
+latent for two CI rounds because the write-back gate died earlier (W5) and
+create is the first user-side operation on a not-yet-known path.
+**Fix:** register FETCH_PLACEHOLDERS + CANCEL_FETCH_PLACEHOLDERS in BOTH
+connect tables and answer via `CfExecute(CF_OPERATION_TYPE_TRANSFER_PLACEHOLDERS)`
+with `DISABLE_ON_DEMAND_POPULATION` (empty answer for v1: attach pre-creates
+every placeholder); additionally set
+`CF_PLACEHOLDER_CREATE_FLAG_DISABLE_ON_DEMAND_POPULATION` on created file
+placeholders so the filter never waits on population for them. Cited from
+nextcloud/desktop cfapiwrapper.cpp:656-657 (table), :887 (same PARTIAL
+policy), :183 (the DISABLE flag on the transfer), :1095 (the flag on file
+entries). See `cfapi.rs::transfer_placeholders`. Test gate: the W2 create in
+`cfapi_roundtrip.rs` now completes in-process as the regression tripwire.
+
+## S3 / wire
+
+### S1. `x-amz-checksum-sha256` is BASE64 on the wire — hex gets 400 "Invalid checksum provided"
+Session presigns are HOST-ONLY (checksum not bound into SignedHeaders), and the
+daemon attaches `x-amz-checksum-sha256` itself. We computed that header as
+lowercase HEX — every presigned PUT returned `400 InvalidArgument: Invalid
+checksum provided` and soak S1 never converged, while the wire-conformance job
+stayed green because its checksum-bound check signs the SAME hex value into the
+signature (signed values skip MinIO's base64 decode; unsigned values don't).
+Proven against the pinned MinIO (RELEASE.2024-06-13T22-53-53Z): hex header →
+400; correct base64 → 200; WRONG base64 → 400 `XAmzContentChecksumMismatch` —
+so the bucket still rejects corrupt uploads with a host-only presign, no
+checksum-bound session extension needed for that property. **Fix:** send
+base64 (cairn-core `b64_encode` of the raw SHA-256); the dev local-Fs verifier
+accepts base64 + hex. Diagnosability lesson: a bare "HTTP 400" cost two CI
+round-trips — presign failures now carry the S3 error XML body
+(plane_grpc put_presigned). Diagnosed 2026-09-01.
+
 ## Linux
 
 ### L1. GitHub Actions ubuntu runners allow `sudo` — use it for cold-cache honesty
