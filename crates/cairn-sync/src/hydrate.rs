@@ -78,6 +78,26 @@ pub async fn materialize_missing(
         std::fs::write(&target, &bytes).map_err(|e| {
             CairnError::new(ErrorKind::Io, format!("write {}: {e}", target.display()))
         })?;
+        // Restore the journaled mtime (punch #5): the echo check suppresses watcher
+        // events only while on-disk size AND mtime match the row — hydration must
+        // produce a file whose stat matches the journaled row, or every hydration
+        // would classify as a local edit and re-push forever. Restoring mtimes is
+        // also what editors expect (NLE re-link decisions read mtime).
+        if row.mtime > 0 {
+            let f = std::fs::File::options()
+                .append(true)
+                .open(&target)
+                .map_err(|e| {
+                    CairnError::new(ErrorKind::Io, format!("reopen {}: {e}", target.display()))
+                })?;
+            f.set_modified(millis_to_systemtime(row.mtime))
+                .map_err(|e| {
+                    CairnError::new(
+                        ErrorKind::Io,
+                        format!("set mtime {}: {e}", target.display()),
+                    )
+                })?;
+        }
         // header cache fill so the I1 open path works immediately after hydration
         let head: Vec<u8> = bytes
             .iter()
@@ -100,6 +120,16 @@ pub async fn materialize_missing(
         stats.paths.push(row.path.clone());
     }
     Ok(stats)
+}
+
+/// Journaled millis → SystemTime (exact at millisecond granularity — the encoding
+/// rows use, so stat round-trips match bit-for-bit).
+fn millis_to_systemtime(ms: i64) -> std::time::SystemTime {
+    if ms <= 0 {
+        std::time::UNIX_EPOCH
+    } else {
+        std::time::UNIX_EPOCH + std::time::Duration::from_millis(u64::try_from(ms).unwrap_or(0))
+    }
 }
 
 async fn hydrate_one(

@@ -382,7 +382,9 @@ mod tls_gate_tests {
     #[tokio::test]
     async fn plaintext_remote_ip_is_refused_too() {
         std::env::remove_var("CAIRN_ALLOW_INSECURE_REMOTE");
-        assert!(connect_channel("http://203.0.113.7:7443", None).await.is_err());
+        assert!(connect_channel("http://203.0.113.7:7443", None)
+            .await
+            .is_err());
     }
 
     /// Loopback plaintext stays allowed (dev topology, matches doctor's posture).

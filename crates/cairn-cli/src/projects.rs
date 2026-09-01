@@ -84,12 +84,19 @@ pub struct ProjectRuntime {
     pub workspace: PathBuf,
     pub view: RwLock<ProjView>,
     /// Paths hydrated recently — watcher echoes are suppressed ONLY while the on-disk
-    /// file still matches the journaled size (a real edit changes the size → syncs).
+    /// file matches BOTH the journaled size AND journaled mtime (punch #5): a hydration
+    /// echo has both; a size-preserving edit (byte flip, LUT swap, metadata rewrite)
+    /// still touches mtime → NOT an echo → must sync. Silent divergence is the worst
+    /// failure class a sync product has; the belt-and-braces [`ProjectRuntime::
+    /// reconcile_sweep`] catches whatever the watcher misses entirely.
     hydrated_recently: Mutex<HashMap<String, Instant>>,
     /// Set by the watcher when an event names a path with NO local row (brand-new file);
     /// the loop then runs a rescan (idempotent) so new local files sync too.
     pub rescan_requested: AtomicBool,
     pub files_synced: AtomicU64,
+    /// Monotonic sweep counter — rotates the bounded rehash sample so successive
+    /// sweeps cover different files (full coverage over time, bounded cost per sweep).
+    sweep_counter: AtomicU64,
     abort: tokio::sync::watch::Sender<bool>,
 }
 
@@ -102,8 +109,11 @@ impl ProjectRuntime {
     }
 
     /// True when this event is an echo of our own hydration: the path was recently
-    /// materialized AND its on-disk size still equals the journaled size. An editor save
-    /// (append/rewrite) changes the size → NOT an echo → must sync.
+    /// materialized AND its on-disk state still equals the journaled size AND mtime.
+    /// (punch #5) An echo has both; ANY real edit — including size-preserving ones
+    /// (in-place byte flip, LUT swap, metadata rewrite) — touches mtime, so it is NOT
+    /// suppressed and gets synced. Size-only checks silently swallow size-preserving
+    /// edits: the worst failure class a sync product has.
     pub async fn should_suppress(&self, store: &Store, workspace: &Path, rel: &str) -> bool {
         {
             let map = self.hydrated_recently.lock().await;
@@ -117,7 +127,8 @@ impl ProjectRuntime {
         let Ok(meta) = std::fs::metadata(workspace.join(rel)) else {
             return false;
         };
-        meta.len() == row.size
+        let mtime = cairn_sync::scan::mtime_millis(&meta);
+        meta.len() == row.size && mtime == row.mtime
     }
 
     pub fn stop(&self) {
@@ -197,6 +208,7 @@ pub async fn attach(
         hydrated_recently: Mutex::new(HashMap::new()),
         rescan_requested: AtomicBool::new(false),
         files_synced: AtomicU64::new(0),
+        sweep_counter: AtomicU64::new(0),
         abort: tokio::sync::watch::channel(false).0,
     });
     RUNTIMES.write().await.insert(pid.clone(), Arc::clone(&rt));
@@ -413,10 +425,61 @@ async fn run_loop(
     );
 
     let mut tick = tokio::time::interval(Duration::from_millis(1000));
+    // periodic reconciliation sweep (punch #5, belt-and-braces): full stat walk +
+    // bounded rotating rehash sample. Interval/budgets are env-tunable so the
+    // acceptance harness can exercise the sweep quickly.
+    let sweep_secs: u64 = std::env::var("CAIRN_SWEEP_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(300);
+    let sweep_files: usize = std::env::var("CAIRN_SWEEP_SAMPLE_FILES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(8);
+    let sweep_bytes: u64 = std::env::var("CAIRN_SWEEP_SAMPLE_BYTES")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(256 * 1024 * 1024);
+    let mut last_sweep = tokio::time::Instant::now();
     loop {
         tokio::select! {
             _ = shutdown.changed() => return Ok(()),
             _ = tick.tick() => {}
+        }
+        if last_sweep.elapsed().as_secs() >= sweep_secs {
+            last_sweep = tokio::time::Instant::now();
+            let counter = rt.sweep_counter.fetch_add(1, Ordering::Relaxed);
+            match cairn_sync::scan::reconcile_sweep(
+                store,
+                &pid,
+                &rt.workspace,
+                counter,
+                sweep_files,
+                sweep_bytes,
+            ) {
+                Ok(s) if s.rehash_dirty > 0 => {
+                    // silent divergence FOUND and redirtied — this log line matters:
+                    // it means the belt-and-braces layer caught what the watcher missed
+                    tracing::warn!(
+                        project = %pid,
+                        rehash_dirty = s.rehash_dirty,
+                        rehashed = s.rehashed,
+                        stat_redirtied = s.stat_redirtied,
+                        "reconcile sweep found diverged file(s); re-pushing"
+                    );
+                }
+                Ok(s) => {
+                    tracing::debug!(
+                        project = %pid,
+                        rehashed = s.rehashed,
+                        bytes = s.bytes_rehashed,
+                        skipped_transform = s.skipped_transform,
+                        stat_redirtied = s.stat_redirtied,
+                        "reconcile sweep clean"
+                    );
+                }
+                Err(e) => tracing::warn!(project = %pid, "reconcile sweep failed: {e}"),
+            }
         }
         {
             let mut v = rt.view.write().await;
