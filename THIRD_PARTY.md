@@ -15,6 +15,8 @@ any) carries provenance headers; preference order is: crates > port-the-approach
 | rclone | MIT | Transfer/backoff/presign patterns, full-jitter retry, AIMD-style concurrency discipline | `cairn-server/src/storage/sigv4.rs`, `cairn-sync/src/retry.rs` |
 | git | GPLv2 (format spec ONLY) | Packfile + .idx two-file format concepts (versioned byte, sorted idx, verify-before-switch). No git code copied. | `cairn-server/src/jobs/pack.rs` |
 | SQLite | Public domain | WAL discipline, busy_timeout, single-writer patterns, PRAGMA user_version migrations | `cairn-store/src/db.rs`, `cairn-server/src/db.rs` |
+| Blender Foundation | GPL/CC (demo assets) | REAL production .blend (`BMW27.blend`, gzip-compressed by Blender itself) used as the real-container normalization evidence — bytes committed under `crates/cairn-core/tests/data/` | `cairn-core/tests/real_blend_roundtrip.rs` |
+| nextcloud/desktop | AGPL-3.0 | CfAPI walking-skeleton patterns studied (CfRegisterSyncRoot policies, FETCH_DATA→TRANSFER_DATA with 4096-block alignment, self-hydration deadlock guard, SyncRootManager registry keys) | `cairn-fs-win/src/cfapi.rs` (approach) |
 | AWS SigV4 | documentation | Presigned URL canonical request format (we implement the signer ourselves — see ADR-0005) | `cairn-server/src/storage/sigv4.rs` |
 
 ## Skill / design references (installed)

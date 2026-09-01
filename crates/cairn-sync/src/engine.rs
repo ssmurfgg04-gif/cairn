@@ -106,7 +106,18 @@ impl Engine {
             std::borrow::Cow::Owned(cairn_core::normalize::decompress_inner(&bytes, transform)?)
         };
         // stable-state gate is enforced by the watcher; a size+mtime mismatch here re-dirties
-        let sh = cairn_core::chunker::StreamHash::compute(&content);
+        // transformed containers chunk FINE (project-class granularity — a 512-byte edit in
+        // a 6MB .blend must not re-upload a 4MB chunk); media keeps the coarse profile
+        let sh = if transform == cairn_core::normalize::Transform::None {
+            cairn_core::chunker::StreamHash::compute(&content)
+        } else {
+            cairn_core::chunker::StreamHash::compute_with(
+                &content,
+                cairn_core::CHUNK_MIN_FINE,
+                cairn_core::CHUNK_AVG_FINE,
+                cairn_core::CHUNK_MAX_FINE,
+            )
+        };
         // transformed containers chunk with plain zstd-3 (the inner payload has no ext to
         // sniff; dict training does not apply to canonical payloads)
         let policy = if transform == cairn_core::normalize::Transform::None {
@@ -412,8 +423,31 @@ impl Engine {
         if !cairn_core::pathutil::find_case_collisions(&rows).is_empty() {
             tracing::warn!(path = %copy_path, "case-insensitive collision detected");
         }
+        // The copy MUST get a real row NOW: process_file tracks an existing row through
+        // the pipeline (mark_synced_with_stat updates by path) — without a row the
+        // device syncs the copy's content but keeps NO local record of the file, and
+        // only ever learns it back via journal replay (a sim-green state that hid a
+        // real divergence; caught when the sweep + byte budgets exposed it).
+        let meta = std::fs::metadata(&copy_full)
+            .map_err(|e| CairnError::new(ErrorKind::Io, format!("stat copy: {e}")))?;
+        self.store.put_file(&cairn_store::FileRow {
+            path: copy_path.clone(),
+            project_id: self.project_id.clone(),
+            manifest_hash: None,
+            size: meta.len(),
+            mode: "file".into(),
+            mtime: crate::scan::mtime_millis(&meta),
+            local_state: LocalState::Dirty.as_str().into(),
+        })?;
+        // The ORIGINAL path's local content now lives at the copy path; this device has
+        // no local claim on the original anymore. Leaving the row `Conflict` would keep
+        // push_phase re-processing a file that no longer exists (fs::read → error loop,
+        // blocking pull forever — the divergence the sim caught). `Clean` hands the path
+        // back to the journal: the next pull of the winner's upsert flips it to
+        // placeholder and hydration materializes the winner's content (§7.1 end state:
+        // original = winner, copy = ours, both preserved).
         self.store
-            .set_file_state(&self.project_id, path, LocalState::Conflict.as_str())?;
+            .set_file_state(&self.project_id, path, LocalState::Clean.as_str())?;
         // re-append for the new path (content already chunked + uploaded); boxed because the
         // conflict path is strictly one level deep per file
         let mut inner = PassStats::default();

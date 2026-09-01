@@ -13,3 +13,6 @@ Cargo.lock.orig
 .env
 .DS_Store
 .wo1-acceptance/
+
+# golden-corpus bytes are reproducible via `cairn-x corpus-gen`; only manifest.json is committed
+crates/cairn-core/corpus/**/*.dat

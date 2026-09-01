@@ -33,6 +33,8 @@ pub const CHUNK_MIN: usize = 1024 * 1024;
 pub const CHUNK_AVG: usize = 4 * 1024 * 1024; // boundary mask 2^22
 pub const CHUNK_MAX: usize = 16 * 1024 * 1024;
 
+pub use chunker::{CHUNK_AVG_FINE, CHUNK_MAX_FINE, CHUNK_MIN_FINE};
+
 /// Header cache: first 2MB + last 1MB per pointer (SPEC §5.1).
 pub const HEADER_HEAD_BYTES: usize = 2 * 1024 * 1024;
 pub const HEADER_TAIL_BYTES: usize = 1024 * 1024;

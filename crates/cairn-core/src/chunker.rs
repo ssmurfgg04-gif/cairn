@@ -10,6 +10,14 @@
 
 use crate::{CHUNK_AVG, CHUNK_MAX, CHUNK_MIN};
 
+/// FINE profile for normalized project containers (chunk-input normalization):
+/// project files are KB-MB class where 1/4/16MB chunks make any edit re-upload
+/// megabytes. Media keeps the coarse profile; containers chunk fine under the
+/// same `normalize_containers` flag.
+pub const CHUNK_MIN_FINE: usize = 64 * 1024;
+pub const CHUNK_AVG_FINE: usize = 256 * 1024;
+pub const CHUNK_MAX_FINE: usize = 1024 * 1024;
+
 /// 64-bit Gear boundary mask: 2^22 → expected average chunk 4MB on random data.
 pub const BOUNDARY_MASK: u64 = (1 << 22) - 1;
 
@@ -127,6 +135,15 @@ impl FastCdc {
         c.finish(&mut spans);
         spans
     }
+    /// Convenience: chunk with an explicit profile (fine-grained project containers).
+    #[must_use]
+    pub fn cut_with(buf: &[u8], min: usize, avg: usize, max: usize) -> Vec<ChunkSpan> {
+        let mut c = FastCdc::new(min, avg, max);
+        let mut spans = Vec::new();
+        c.push(buf, &mut spans);
+        c.finish(&mut spans);
+        spans
+    }
 }
 
 /// Spans + per-chunk hashes + whole-stream hash in one pass over an in-memory buffer
@@ -147,7 +164,15 @@ impl StreamHash {
     /// Single-pass hash+chunk of an in-memory buffer.
     #[must_use]
     pub fn compute(buf: &[u8]) -> Self {
-        let spans = FastCdc::cut(buf);
+        Self::compute_with(buf, CHUNK_MIN, CHUNK_AVG, CHUNK_MAX)
+    }
+
+    /// Single-pass hash+chunk with an explicit profile. Normalized project containers
+    /// use the FINE profile (CHUNK_*_FINE): with media-tuned 1/4/16MB params a
+    /// 512-byte edit inside a 6MB .blend killed a whole 4MB chunk (78% of bytes
+    /// re-uploaded — real-container evidence); project-class granularity fixes that.
+    pub fn compute_with(buf: &[u8], min: usize, avg: usize, max: usize) -> Self {
+        let spans = FastCdc::cut_with(buf, min, avg, max);
         let mut chunk_hashes = Vec::with_capacity(spans.len());
         let mut stream = blake3::Hasher::new();
         stream.update(buf);

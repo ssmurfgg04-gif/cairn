@@ -1,10 +1,23 @@
 //! Chunk-input normalization (review round): compressed project containers defeat
-//! content-addressed sync. A 5KB XML edit inside a gzip'd `.prproj` (or zip'd `.drp`)
-//! re-randomizes the ENTIRE compressed stream — chunking the raw wrapper yields ~zero
-//! reuse no matter how good the chunker is. The fix: sniff the container, chunk the
-//! CANONICAL INNER payload, record the transform in the manifest (v2), and recompress on
-//! serve. NLEs decompress on open, so wrapper byte-identity is irrelevant; the payload is
-//! hash-verified as always.
+//! content-addressed sync. A 5KB XML edit inside a gzip'd `.prproj` re-randomizes the
+//! ENTIRE compressed stream — chunking the raw wrapper yields ~zero reuse no matter how
+//! good the chunker is. The fix: sniff the container, chunk the CANONICAL INNER payload,
+//! record the transform in the manifest (v2), and recompress on serve. NLEs decompress on
+//! open, so wrapper byte-identity is irrelevant; the payload is hash-verified as always.
+//!
+//! **Scope: GZIP-ONLY** (review round 3). The zip branch was scoped OUT: `.drp` (Resolve)
+//! is a MULTI-ENTRY zip archive — there is no single inner payload to chunk, and a
+//! multi-entry wrapper cannot be rebuilt from one concatenated payload without storing
+//! the entry table. The old zip path (concatenate members, rebuild single-member zip) was
+//! therefore WRONG in the wild, not just weak. Until a per-entry-table codec is designed
+//! and proven, zip containers sync as opaque bytes (correct, zero reuse) and the Zip
+//! transform arms reject loudly instead of silently corrupting. The `Zip` wire tag stays
+//! parseable so v2 manifests remain forward-compatible.
+//!
+//! Real-container evidence: `tests/data/BMW27.blend` — a REAL Blender Foundation
+//! production file (already gzip-compressed by Blender itself, `1f 8b` magic, inner
+//! payload starts with `BLENDER-v`). The round-trip test exercises the full pipeline on
+//! those real bytes.
 //!
 //! Flag-gated (`normalize_containers`, default OFF) until it soaks behind AttachRoot.
 
@@ -16,9 +29,12 @@ pub enum Transform {
     /// Store/chunk the raw bytes (default).
     #[default]
     None,
-    /// gzip container (`.prproj`): chunk the decompressed stream, re-gzip on serve.
+    /// gzip container (`.prproj`, compressed `.blend`): chunk the decompressed stream,
+    /// re-gzip on serve.
     Gzip,
-    /// zip container (`.drp`): chunk the canonical single-member payload, re-zip on serve.
+    /// zip container (`.drp`): SCOPED OUT — multi-entry archives cannot be rebuilt
+    /// from a concatenated payload. The tag stays parseable for v2 forward
+    /// compatibility; the codec arms reject loudly.
     Zip,
 }
 
@@ -46,13 +62,17 @@ impl Transform {
 }
 
 /// Sniff a container by magic: gzip `1f 8b`, zip `PK\x03\x04`.
+///
+/// zip sniffs as [`Transform::None`] (review round 3 scoping): a multi-entry zip
+/// (.drp) has no single inner payload, and "treat as zip" was wrong in the wild.
+/// Opaque bytes are CORRECT — they just get zero wrapper-reuse, honestly.
 #[must_use]
 pub fn sniff(buf: &[u8]) -> Transform {
     if buf.len() >= 2 && buf[0] == 0x1f && buf[1] == 0x8b {
         Transform::Gzip
-    } else if buf.len() >= 4 && buf[0] == b'P' && buf[1] == b'K' && buf[2] == 3 && buf[3] == 4 {
-        Transform::Zip
     } else {
+        // zip (`PK\x03\x04`) deliberately NOT claimed: scoped out until a
+        // per-entry-table codec exists (see module docs)
         Transform::None
     }
 }
@@ -62,6 +82,9 @@ fn err(what: &str) -> CairnError {
 }
 
 /// Extract the canonical inner payload (the bytes we actually chunk).
+///
+/// The Zip arm REJECTS loudly (review round 3): multi-entry archives cannot be rebuilt
+/// from one concatenated payload — see module docs. Never silently corrupt.
 pub fn decompress_inner(buf: &[u8], t: Transform) -> Result<Vec<u8>, CairnError> {
     match t {
         Transform::None => Ok(buf.to_vec()),
@@ -72,26 +95,16 @@ pub fn decompress_inner(buf: &[u8], t: Transform) -> Result<Vec<u8>, CairnError>
                 .map_err(|e| err(&format!("gzip: {e}")))?;
             Ok(out)
         }
-        Transform::Zip => {
-            let mut cursor = std::io::Cursor::new(buf);
-            let mut archive =
-                zip::ZipArchive::new(&mut cursor).map_err(|e| err(&format!("zip: {e}")))?;
-            // canonical payload: all members in archive order, concatenated. Recompression
-            // rebuilds a single-member zip (member names are not content identity).
-            let mut out = Vec::with_capacity(buf.len() * 2);
-            for i in 0..archive.len() {
-                let mut f = archive
-                    .by_index(i)
-                    .map_err(|e| err(&format!("zip member {i}: {e}")))?;
-                std::io::Read::read_to_end(&mut f, &mut out)
-                    .map_err(|e| err(&format!("zip read: {e}")))?;
-            }
-            Ok(out)
-        }
+        Transform::Zip => Err(err(
+            "zip normalization is scoped OUT (multi-entry archives have no single inner \
+             payload and cannot be rebuilt without the entry table); the file syncs as \
+             opaque bytes instead",
+        )),
     }
 }
 
 /// Rebuild the wrapper for serving/editors: payload → container bytes.
+/// The Zip arm REJECTS loudly (scoped out — see module docs).
 pub fn recompress(payload: &[u8], t: Transform, name: &str) -> Result<Vec<u8>, CairnError> {
     match t {
         Transform::None => Ok(payload.to_vec()),
@@ -100,21 +113,9 @@ pub fn recompress(payload: &[u8], t: Transform, name: &str) -> Result<Vec<u8>, C
             std::io::Write::write_all(&mut enc, payload).map_err(|e| err(&format!("gzip: {e}")))?;
             enc.finish().map_err(|e| err(&format!("gzip finish: {e}")))
         }
-        Transform::Zip => {
-            let mut w = std::io::Cursor::new(Vec::new());
-            {
-                let mut zip = zip::ZipWriter::new(&mut w);
-                let opts = zip::write::SimpleFileOptions::default()
-                    .compression_method(zip::CompressionMethod::Deflated);
-                let member = name.rsplit('/').next().unwrap_or(name);
-                zip.start_file(member, opts)
-                    .map_err(|e| err(&format!("zip: {e}")))?;
-                std::io::Write::write_all(&mut zip, payload)
-                    .map_err(|e| err(&format!("zip: {e}")))?;
-                zip.finish().map_err(|e| err(&format!("zip finish: {e}")))?;
-            }
-            Ok(w.into_inner())
-        }
+        Transform::Zip => Err(err(
+            "zip normalization is scoped OUT (see module docs); serve the file as opaque bytes",
+        )),
     }
 }
 
@@ -123,9 +124,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sniff_gzip_zip_and_none() {
+    fn sniff_gzip_only_zip_scoped_to_none() {
         assert_eq!(sniff(&[0x1f, 0x8b, 1, 2]), Transform::Gzip);
-        assert_eq!(sniff(b"PK\x03\x04rest"), Transform::Zip);
+        // review round 3: zip is scoped OUT — multi-entry archives (like .drp) have no
+        // single inner payload; they sync as opaque bytes instead (correct, zero reuse)
+        assert_eq!(sniff(b"PK\x03\x04rest"), Transform::None);
         assert_eq!(sniff(b"<xml/>"), Transform::None);
         assert_eq!(sniff(&[]), Transform::None);
     }
@@ -140,32 +143,15 @@ mod tests {
     }
 
     #[test]
-    fn zip_roundtrip_recovers_payload_regardless_of_member_names() {
-        let payload = b"<drp><timeline/></drp>".repeat(50);
-        // "original" archive may have many members — canonical payload concatenates
-        let multi = multi_member_zip(&payload, &["a.xml", "b.xml"]);
-        assert_eq!(sniff(&multi), Transform::Zip);
-        let canonical = decompress_inner(&multi, Transform::Zip).unwrap();
-        assert_eq!(canonical, payload);
-        // serve path: rebuild a single-member zip from the canonical payload
-        let wrapper = recompress(&canonical, Transform::Zip, "resolve.drp").unwrap();
-        assert_eq!(decompress_inner(&wrapper, Transform::Zip).unwrap(), payload);
-    }
-
-    fn multi_member_zip(payload: &[u8], names: &[&str]) -> Vec<u8> {
-        let mut w = std::io::Cursor::new(Vec::new());
-        {
-            let mut zip = zip::ZipWriter::new(&mut w);
-            let opts = zip::write::SimpleFileOptions::default()
-                .compression_method(zip::CompressionMethod::Deflated);
-            let chunks = payload.chunks(payload.len() / names.len().max(1) + 1);
-            for (name, chunk) in names.iter().zip(chunks) {
-                zip.start_file(*name, opts).unwrap();
-                std::io::Write::write_all(&mut zip, chunk).unwrap();
-            }
-            zip.finish().unwrap();
-        }
-        w.into_inner()
+    fn zip_transform_arms_reject_loudly() {
+        // scoped OUT (review round 3): the arms must REJECT, never silently mangle
+        let err1 = decompress_inner(b"PK\x03\x04whatever", Transform::Zip).unwrap_err();
+        assert!(err1.message.contains("scoped OUT"), "{}", err1.message);
+        let err2 = recompress(b"payload", Transform::Zip, "resolve.drp").unwrap_err();
+        assert!(err2.message.contains("scoped OUT"), "{}", err2.message);
+        // wire tag stays parseable for v2 forward compatibility
+        assert_eq!(Transform::Zip.tag(), 2);
+        assert_eq!(Transform::from_tag(2), Some(Transform::Zip));
     }
 
     #[test]
