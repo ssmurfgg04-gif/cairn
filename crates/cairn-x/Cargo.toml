@@ -10,6 +10,7 @@ cairn-core = { path = "../cairn-core" }
 cairn-store = { path = "../cairn-store" }
 cairn-sync = { path = "../cairn-sync" }
 cairn-server = { path = "../cairn-server" }
+cairn-fs-linux = { path = "../cairn-fs-linux" }
 clap = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }

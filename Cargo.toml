@@ -97,6 +97,9 @@ strip = true
 
 [workspace.lints.rust]
 unsafe_code = "deny"
+# `cfg(kani)` gates the BMC harnesses (crates/cairn-core/src/proofs.rs) — set by the
+# Kani driver, invisible to normal rustc without this declaration (WO6-invariants).
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }

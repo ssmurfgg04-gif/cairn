@@ -135,5 +135,41 @@ CI bugs and one real Windows bug:
 | WO6-4 soak + COLD-FETCH | ✅ | scripts/soak.sh (6 gates; REAL-S3 / DRY-RUN modes), `just soak-5gb`; 6/6 local green at 2 scales incl. 30% kill point; CI `soak-s3` job (500 MiB, MinIO via pinned binary); COLD-FETCH p50 3.87–4.28 ms loopback LocalFs; **soak caught a real bug**: scan/watcher double-enqueue → 2 journal upserts per path with different random request_ids → fixed with content-derived idempotency key `req-<blake3(tenant\|project\|path\|manifest\|size\|mtime)>` (+unit test) |
 | S3 wire conformance | ✅ | 9/9 vs MinIO; CI job now runs the pinned dl.min.io binary as a plain step (GHA service containers DROP image CMD — the official minio image printed USAGE; bitnami/minio:latest no longer exists) |
 | Windows CI repair | ✅ | eviction.rs u64 out-params (verified vs vendored windows-rs source); win_attach crate::-path + Hash::from_hex Option fix — windows-cfapi-roundtrip + windows-macos-compile jobs compile AND RUN again |
-| WO6-5..10 + UI dashboard | ⏳ in progress | burst variant, PLATFORM_QUIRKS, actionlint/ratchet/nightly-keepalive, zstd-dict ADR, security sweep, BETA_RUNBOOK, dashboard |
+| WO6-5 burst bench | ✅ | `cairn-x burst` (32 workers × 32 files × 8 MiB, byte-verified): first-2-MiB p95 **2.37 ms** (gate <50 ms, PASS), 212 opens/s; lockstep header-serve p95 330 ms exposes single-connection SQLite serialization — reader-pool finding, documented in BENCHMARKS.md, `burst_note=` in output |
+| WO6-6/7 (quirks, actionlint, ratchet, nightly) | ✅ | f96ff19 + d82e003 + 46d000a/e746fe9 (CI repair round) |
+| WO6-8 zstd-dict ADR | ✅ | ADR-0013: per-project dictionaries become content-addressed CAS objects (`t{t}/d/{hash}`) fetched on demand at hydration; dict object = single source of truth; closes the last multi-device compression gap post-beta |
+| WO6-9 security sweep | ✅ | `scripts/security-sweep.sh` + `just security` + CI `security` job (RustSec + secret-shape scan with AWS-doc-vector allowlist + unsafe policy + TLS fail-closed + I3 + token-log + scope checks). **Found and fixed a real vulnerability**: pushed journal ops carried UNVALIDATED paths into `root.join(path)` on every peer (cross-device write-outside-root) — now `pathutil::validate_rel_path` enforces containment at journal append (authoritative), apply/replay, and snapshot restore; `INVALID_PATH` error kind; server `#![forbid(unsafe_code)]` |
+| WO6-10 runbook/BETA-READY refresh | ✅ | this matrix + NLE human-gate matrix (docs/design/nle-test-matrix.md) + public-bucket exposure notes (docs/design/public-bucket-exposure-notes.md) + runbook links |
+| UI dashboard (ctl parity, no stubs) | ✅ | every ctl action on the loopback UI through the SAME svc impls the gRPC ctl serves: attach/detach, snapshot create/list/restore, pin/unpin, recall jobs w/ progress, real leases (leases_local), projects w/ last_error, blob storage stats (`Cas::blob_stats`), flags, doctor; `scripts/dashboard-smoke.sh` **20/20 live checks** |
+| Server-side checksum accept (a064178 residual) | ✅ fixed | the dev object endpoint hex-DECODED the daemon's base64 `x-amz-checksum-sha256` → every presigned PUT 400'd → nothing reached the journal. Added strict `hash::b64_decode` (RFC 4648, Kani-proven roundtrip) + accept arm fixed; this was the ROOT CAUSE of the `snapshot_seq=0` mystery below |
+| snapshot_seq=0 mystery | ✅ resolved | NOT a fold bug: fold reads `MAX(seq) FROM journal` (unit test pins seq=1 on first op) — the smoke's pushes were failing on the checksum bug above, so the journal was EMPTY and a fold of an empty journal legitimately carries seq 0. With the fix live, the smoke asserts and gets **seq 6** after 6 files sync |
+| Kani invariants (WO6-invariants) | ✅ harnesses | `cairn-core/src/proofs.rs`: 8 `#[kani::proof]` harnesses over the bounded input space — b64/hex roundtrip identity, validate_rel_path containment (I3), traversal-position rejection, sniff magic exactness, policy totality, commit parse∘build frozen-format identity (I2), bloom no-false-negative (I2 adversarial-bloom). CI `kani.yml` shards ONE harness per runner (8 jobs, nightly re-proof); local run covers the cheap shards |
 | 5GB soak with REAL bucket | ⛔ HUMAN-GATE | needs the user's CAIRN_S3_* credentials (`just soak-5gb`); everything except the cloud wire is proven |
+
+## Session log — 2026-09-01 (round-6 completion, sandbox-recovery run)
+
+Sandbox was wiped between sessions: toolchain, repo clone, and the local-only
+dashboard work were all lost; the last pushed commit was a064178. Re-orient,
+rebuild, and close every remaining Round-6 item:
+
+- **Recovered**: fresh clone at a064178, toolchain reinstalled, all Round-6 work
+  re-landed and pushed (see matrix above — the dashboard rebuild landed CLEANER:
+  20/20 smoke vs the interrupted session's 17/18).
+- **seq=0 mystery RESOLVED** (the open item from the interrupted session): the
+  fold was never wrong — the server's dev object endpoint was hex-decoding the
+  daemon's base64 `x-amz-checksum-sha256` (the cut-off half of the a064178 S1
+  fix), so every presigned PUT 400'd, the journal stayed EMPTY, and a fold of an
+  empty journal legitimately reports snapshot_seq 0 (unit test pins the non-empty
+  case at seq 1). Fixed with a strict `hash::b64_decode` + accept arm; live smoke
+  now proves seq 6 after 6 files sync. The smoke's original assertion was right
+  to be suspicious — of the SYNC, not the fold.
+- **Security round (WO6-9)**: swept, found a REAL cross-device path-traversal
+  vulnerability (pushed journal ops → `root.join(path)`), fixed at all three
+  trust boundaries with Kani-exhausted containment proofs. Sweep script + CI job
+  so it never regresses silently.
+- **Remaining honest gaps**: 5GB real-bucket soak (needs CAIRN_S3_* creds —
+  human gate); Explorer badge shell integration (installer work); ZstdDict
+  cross-device sync (ADR-0013 now freezes the design — dicts as CAS objects);
+  reader-pool for the lockstep header-serve number (BENCHMARKS.md finding);
+  windows-cfapi-roundtrip job red at a064178 (FETCH_PLACEHOLDERS) — watching the
+  next CI run on this push.

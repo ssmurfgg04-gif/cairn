@@ -30,6 +30,29 @@ jobs:
         with: { components: rustfmt }
       - run: cargo fmt --all -- --check
 
+  # WO6-9 security sweep: RustSec advisories + the repo's own gate script
+  # (secret-shape scan, unsafe policy, path-traversal gates, TLS fail-closed, I3).
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install --locked cargo-audit
+      - run: bash scripts/security-sweep.sh
+
+  # WO6-5 burst bench on a real runner: concurrent-open I1 (gate = first-2-MiB
+  # p95 < 50 ms, the CfAPI-parity series; the lockstep header-serve number is
+  # environment-sensitive and reported with the reader-pool caveat, not gated).
+  burst:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p cairn-x
+      - run: ./target/release/cairn-x burst --files 32 --file-mb 8 --workers 32 --opens 25
+
   clippy:
     runs-on: ubuntu-latest
     steps:

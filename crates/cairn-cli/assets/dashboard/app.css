@@ -251,6 +251,44 @@ body {
 
 .foot { padding-top: 16px; }
 
+/* ---------- WO6-UI: action rows, inputs, buttons, recall jobs ---------- */
+
+.action-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 10px 0 14px; }
+
+.input {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 7px 10px;
+  font-size: 12.5px;
+  min-width: 180px;
+  border-radius: 2px;
+}
+.input:focus { outline: none; border-color: #4a443c; }
+.input::placeholder { color: var(--faint); font-family: var(--sans); }
+
+select.input { appearance: none; cursor: pointer; }
+
+.btn {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-family: var(--sans);
+  font-size: 12.5px;
+  padding: 7px 14px;
+  cursor: pointer;
+  border-radius: 2px;
+  transition: color 160ms var(--ease), border-color 160ms var(--ease), transform 160ms var(--ease);
+}
+.btn:hover { color: var(--text); border-color: #4a443c; }
+.btn:active { transform: scale(0.96); }
+.btn-ghost { background: transparent; }
+
+.recall-jobs { display: grid; gap: 10px; }
+.recall-job { border: 1px solid var(--border); padding: 10px 12px; border-radius: 2px; }
+.recall-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-size: 12px; }
+.recall-job .meter { height: 3px; }
+
 @media (max-width: 900px) {
   .frame { flex-direction: column; }
   .side { width: 100%; height: auto; position: static; border-right: none; border-bottom: 1px solid var(--border); }

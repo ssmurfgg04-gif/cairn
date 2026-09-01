@@ -60,6 +60,24 @@ pub async fn append(
     op: JournalOp,
     lease_token: u64,
 ) -> Result<(u64, bool), CairnError> {
+    // WO6-9 security gate (authoritative): EVERY op path must stay inside the project
+    // root. This is the single server-side choke point all devices push through —
+    // rejecting here protects every peer's hydration/restore/apply path.
+    for p in paths_of(&op) {
+        if let Err(e) = cairn_core::pathutil::validate_rel_path(&p) {
+            crate::db::audit(
+                pool,
+                clock,
+                tenant_id,
+                device_id,
+                "journal.append.invalid_path",
+                project_id,
+                &e.message,
+            )
+            .await;
+            return Err(e);
+        }
+    }
     let (op_blob, primary_path) = encode(&op)?;
     let mut conn = crate::db::begin_immediate(pool).await?;
 
@@ -295,6 +313,43 @@ mod tests {
         .unwrap();
         assert!(!dedup);
         assert_eq!((s1, s2), (1, 2));
+    }
+
+    /// WO6-9 security gate: traversal/absolute paths are rejected at the authoritative
+    /// choke point — they must NEVER reach the journal (peers replay journal ops into
+    /// filesystem joins).
+    #[tokio::test]
+    async fn append_rejects_path_traversal() {
+        let (_d, pool, clock) = setup().await;
+        for bad in [
+            "../escape.mov",
+            "/etc/passwd",
+            "sub/../../out.mov",
+            r"win\path.mov",
+            "C:drive.mov",
+            "",
+        ] {
+            let r = append(&pool, &clock, "t1", "p1", "d1", "r-bad", upsert(bad, 0), 0).await;
+            assert!(r.is_err(), "must reject: {bad:?}");
+            assert_eq!(r.unwrap_err().kind, cairn_core::ErrorKind::InvalidPath);
+        }
+        // nothing landed in the journal
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM journal")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(n, 0);
+        // a rename with a bad OLD path is rejected too
+        let op = JournalOp {
+            op: Some(cairn_proto::pb::journal_op::Op::Rename(RenameOp {
+                old_path: "../old.mov".into(),
+                new_path: "new.mov".into(),
+                manifest_hash: "m".into(),
+                base_seq: 0,
+            })),
+        };
+        let r = append(&pool, &clock, "t1", "p1", "d1", "r-rename", op, 0).await;
+        assert_eq!(r.unwrap_err().kind, cairn_core::ErrorKind::InvalidPath);
     }
 
     #[tokio::test]

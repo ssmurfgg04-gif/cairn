@@ -624,6 +624,10 @@ impl CtlSnapshots for CtlSnapshotsSvc {
         let mut bytes_total = 0u64;
         let mut manifest_cache: HashMap<String, cairn_core::manifest::Manifest> = HashMap::new();
         for (path, manifest_hex) in &entries {
+            // WO6-9: tree entries were written from pushed journal ops; never let a
+            // crafted commit materialize bytes OUTSIDE the target directory.
+            cairn_core::pathutil::validate_rel_path(path)
+                .map_err(|e| Status::invalid_argument(e.message))?;
             let bytes = cairn_sync::hydrate::hydrate_one(
                 plane.as_ref(),
                 &cas,

@@ -19,6 +19,18 @@ pub fn apply_entry(
     let Some(op) = entry.op.op.as_ref() else {
         return Ok(());
     };
+    // WO6-9 defense in depth: the server rejects traversal paths at append, but replay
+    // must never trust that an older/compromised server filtered — validate before the
+    // path can reach a filesystem join (hydration writes root.join(path)).
+    let paths: Vec<&str> = match op {
+        OpKind::FileUpsert(u) => vec![&u.path],
+        OpKind::FileDelete(d) => vec![&d.path],
+        OpKind::Rename(r) => vec![&r.old_path, &r.new_path],
+        OpKind::LeaseEvent(_) => vec![],
+    };
+    for p in paths {
+        cairn_core::pathutil::validate_rel_path(p)?;
+    }
     match op {
         OpKind::FileUpsert(u) => {
             // Local dirty rows keep their state: local edits win locally and the server's

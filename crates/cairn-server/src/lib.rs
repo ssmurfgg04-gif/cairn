@@ -4,6 +4,10 @@
 //! I3 tenancy: every lookup carries tenant_id — enforced structurally (composite keys, scoped
 //! keys) and tested (cross-tenant isolation tests).
 
+// The server is pure Rust logic over SQLite + HTTP clients: zero unsafe (WO6-9 policy —
+// FFI exceptions live in cairn-store::eviction / cairn-fs-win, reviewed and documented).
+#![forbid(unsafe_code)]
+
 pub mod auth;
 pub mod db;
 pub mod error_map;

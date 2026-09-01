@@ -60,6 +60,9 @@ pub enum ErrorKind {
     Compression,
     /// Filesystem/IO error.
     Io,
+    /// Journal op / tree path escaped the project root (WO6-9 security gate):
+    /// absolute path, `..` traversal, backslash separator, or NUL/control bytes.
+    InvalidPath,
 }
 
 impl ErrorKind {
@@ -86,6 +89,7 @@ impl ErrorKind {
             ErrorKind::LocalCasCorrupt => "CHECKSUM_MISMATCH",
             ErrorKind::Compression => "CHECKSUM_MISMATCH",
             ErrorKind::Io => "UNAVAILABLE",
+            ErrorKind::InvalidPath => "INVALID_PATH",
         }
     }
 
@@ -99,7 +103,8 @@ impl ErrorKind {
             | ErrorKind::ChunkVerification
             | ErrorKind::LocalCasCorrupt
             | ErrorKind::Unauthenticated
-            | ErrorKind::PermissionDenied => RetryClass::Never,
+            | ErrorKind::PermissionDenied
+            | ErrorKind::InvalidPath => RetryClass::Never,
             ErrorKind::NotFound
             | ErrorKind::SessionExpired
             | ErrorKind::SessionFull
