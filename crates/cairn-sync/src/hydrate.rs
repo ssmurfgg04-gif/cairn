@@ -143,13 +143,19 @@ async fn hydrate_one(
     let manifest = if let Some(m) = manifest_cache.get(manifest_hash_hex) {
         m.clone()
     } else {
-        let bytes =
-            match cas.get(&Hash::from_hex(manifest_hash_hex).ok_or_else(|| {
-                CairnError::new(ErrorKind::ManifestFormat, "bad manifest hash hex")
-            })?) {
-                Ok(b) => b,
-                Err(_) => plane.get_manifest(tenant, manifest_hash_hex).await?,
-            };
+        let hash = Hash::from_hex(manifest_hash_hex)
+            .ok_or_else(|| CairnError::new(ErrorKind::ManifestFormat, "bad manifest hash hex"))?;
+        let bytes = match cas.get(&hash) {
+            Ok(b) => b,
+            Err(_) => {
+                let fetched = plane.get_manifest(tenant, manifest_hash_hex).await?;
+                // cache locally (hash-verified put): the reconcile sweep and offline
+                // re-materialization need manifests in the local CAS — a hydrated device
+                // whose CAS lacks the manifest silently skips rehash reconciliation.
+                cas.put(&hash, &fetched)?;
+                fetched
+            }
+        };
         let m = Manifest::parse(&bytes)?;
         manifest_cache.insert(manifest_hash_hex.to_string(), m.clone());
         m
