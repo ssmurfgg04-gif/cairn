@@ -52,3 +52,37 @@ region + tail — chunk-hash reuse ≫ the 70% acceptance gate, and content
 addressing turns "upload the file" into "upload the delta" without any diff
 format. Container formats (gzip'd .prproj / zip'd .drp) are excluded from these
 reuse guarantees until the flag-gated normalization soaks — see STATUS.md.
+
+## COLD-FETCH first byte (WO6-4, 2026-09-01)
+
+**Definition.** A device that has NEVER seen a chunk (fresh process, empty
+client store) fetches one stored chunk through the REAL download path:
+`GetDownloadUrl` (presign RPC) → presigned GET, body streamed. The number is
+the time to the FIRST BODY BYTE (presign + server round trip + first data).
+It is the hydration-latency floor every cold open pays before any bytes flow.
+
+**Instrumentation.** `GrpcPlane::measure_cold_fetch` (crates/cairn-sync) +
+`cairn-x cold-fetch --home <device> --hash <chunk> --iters N` (p50/p95/max
+reported). Wire test: `crates/cairn-server/tests/cold_fetch.rs` drives the
+same fn against an in-process server. In the soak, gate S4 picks the LARGEST
+stored chunk and asserts the body byte-count equals the chunk size.
+
+| environment | first byte p50 | first byte p95 | notes |
+|---|---|---|---|
+| LocalFs server, loopback, 16 MiB chunk (dry-run soak, 150–200 MiB corpus, kill−9-resumed state) | **3.87–4.28 ms** | 5.15–8.03 ms | 5 runs, fresh device C per run; body byte-count verified |
+| MinIO S3 backend, loopback (CI `soak-s3` job, 500 MiB corpus) | measured on CI | measured on CI | presigned GET through the real SigV4 wire; number lands in the run log |
+| Cloud bucket (user's CAIRN_S3_*) | — | — | pending real credentials — HUMAN-GATE; `just soak-5gb` prints it |
+
+**Honest coldness caveat.** "Cold" here = fresh process + empty client state.
+The server's OS page cache may hold the chunk (loopback + local disk); on a
+real bucket, the first fetch is a genuine network+bucket round trip. Where
+privileges allow, run `CAIRN_SOAK_DROP_CACHES=1 bash scripts/soak.sh` — the
+script drops the page cache (root/sudo) and says so in the log; when it
+cannot, it prints the limitation instead of pretending.
+
+**I1 provenance (WO6-5).** The Windows I1 number (first 2 MiB through the
+CfAPI callback, gate < 50 ms) is environment-sensitive: 16.32 ms on a calm
+windows-latest runner (2026-08-31, run 33478971953) vs 55.46 ms on a
+contended one (2026-09-01, run 33497721283). The CI gate therefore takes the
+BEST of 3 fresh-placeholder hydrations (capability, not contention) and
+prints every sample. Budgets: Linux FUSE-parity burst variant → WO6-5.
