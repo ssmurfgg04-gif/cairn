@@ -173,3 +173,33 @@ rebuild, and close every remaining Round-6 item:
   reader-pool for the lockstep header-serve number (BENCHMARKS.md finding);
   windows-cfapi-roundtrip job red at a064178 (FETCH_PLACEHOLDERS) — watching the
   next CI run on this push.
+
+## Review round — 2026-09-02 (external code review fixes + ADR-0014 collaboration)
+
+An external review flagged three "real bugs" and a P0-gap list. Audited against the
+actual tree, then fixed — the P0 gaps were already built (cairn-sync engine/scan/
+hydrate/watch ≈2.1k lines, cairn-store cas/outbox/state/eviction), but the three
+bugs were REAL and one class of them was silent data destruction:
+
+| Item | Verdict | Fix |
+|---|---|---|
+| `build_with_transform` discards child manifest bytes | ✅ REAL — fanout files (>8,192 chunks) referenced child manifests that were never storable → unresolvable + GC-invisible | `Manifest::build_tree_with_transform` → `BuiltManifest { manifest, child_objects }` (leaf-first); engine push stores children (CAS+plane) BEFORE the parent |
+| `assemble_file` loads whole file into RAM | ✅ REAL — `Vec::with_capacity(total_len)` on the hydrate path; 50GB BRAW = instant OOM | `assemble_file_into<W: Write>` streams chunk-by-chunk with identical I2 verification; hydrate streams (gzip re-encodes mid-stream; zip rejects pre-I/O); restore = temp-file + atomic rename; recall streams to sink; dropped `local_raw` (it duplicated every fetched byte in RAM) |
+| Chunker byte-by-byte (perf ceiling) | ✅ REAL | three-zone `push`: Zone A `[0,min-64)` skips gear updates PROVABLY (contributions shifted out of 64-bit gear — zero per-byte work, ~25% of bytes); Zone B 63-byte warm-up; Zone C lean check loop. Differential tests pin BIT-IDENTICAL cuts vs the original byte loop (6 profiles × 4 shapes × push boundaries); golden corpus reuse ratios UNCHANGED (0.856/0.879) — chunk identities preserved, no protocol break |
+| `flatten()` on Node manifests | ✅ FOUND DURING AUDIT — returned ZERO-FILLED placeholder entries: GC freed live child chunks of fanout files (silent data destruction), pins protected nothing, FUSE read fanout files as empty, `fully_local` permanently false | `flatten()` on Node now returns an HONEST empty vec + `flatten_deep` recursive walker; every caller migrated (server GC live-set w/ depth guard, pin_file_chunks, FUSE ranged reads, CfAPI fully_local + fetch, sim shadow check) |
+| FUSE read = whole-file assembly per read | ✅ REAL (same family) | `read_ranged_verified`: fetch + verify ONLY chunks intersecting `[offset, offset+size)` |
+| cairn-sync / cairn-store "20 lines, empty" | ❌ STALE (review of an old snapshot) | engine 534 + scan 567 + hydrate 464 + plane_grpc 582 + aimd/apply/watch/retry; store cas 327 + db 697 + outbox + state + eviction + headers. Review's P0 list predates WO6 — no action |
+
+**ADR-0014 (teams want concurrent work — the manual pen is gone):**
+- Phase 1 SHIPPED: `native_collab.rs` — Premiere Productions (`.prodsys`) and
+  operator-declared (`.cairn-native-collab`) workloads → Cairn takes NO lease; the
+  vendor engine arbitrates. No proprietary schema sniffing, ever.
+- Phase 3 SHIPPED: ephemeral pid-bound leases — 15s TTL, 5s daemon heartbeat
+  (renew-in-place, no token bump), auto-release on close, dead-process reaper
+  (audited `kill(pid,0)`/`OpenProcess` probes). A crashed editor's pen now frees in
+  ≤15s with zero human action; fencing (SPEC §8) unchanged as the correctness floor.
+- Phase 2 (decomposition into sub-project scopes — per-path leases already enforce
+  it) documented as the default team workflow; Phase 4 (OTIO/FCPXML 3-way merge)
+  = v2; proprietary `.prproj` XML merge REJECTED (silent-corruption risk).
+- Client store schema v3 (`pid`, `project_id`, `device_id` on `leases_local`);
+  server wire UNCHANGED.
