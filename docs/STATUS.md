@@ -85,6 +85,22 @@ the decision.** CfAPI is the product surface; the macOS FileProvider option is d
 | WO2 on real Windows (automated) | ✅ CI / 🟨 human | `windows-cfapi-roundtrip` job on windows-latest (a REAL Windows VM): register sync root → 8MiB placeholder → child probe hydrates THROUGH the CfAPI callback → BLAKE3 byte-identity + I1 (<50ms first-2MB) measured through the filter. Remaining HUMAN gates: Explorer badge, Notepad flow, NLE matrix (studio box) |
 | I1 through Linux FUSE (punch #8) | ✅ | `FsMetrics` (log-scaled latency buckets, first-byte vs all-read percentiles, hit vs hydration counts, bytes) recorded in read_range so every entry point lands in one metric; snapshot() for ctl/dashboard; I1-through-read-path < 50ms test (same shape as the Windows probe) |
 
+### CI live for the first time (2026-09-01, same round)
+
+Discovery: every workflow run since the sharded-sim commit had failed INSTANTLY with
+zero jobs — `ci.yml` carried a fatal YAML syntax error (colon-space inside a plain
+scalar on the two echo-summary lines). CI never executed anything on this repo until
+today. With the file fixed, the first real runs surfaced and fixed three more latent
+CI bugs and one real Windows bug:
+
+| Job | Result | Notes |
+|---|---|---|
+| windows-cfapi-roundtrip (windows-latest = REAL Windows VM) | ✅ | sync root registered against the real cldflt driver; 8 MiB placeholder created; CHILD process hydrated THROUGH the CfAPI callback; BLAKE3 byte-identity verified; **I1 measured through the filter: first 2 MiB in 16.32 ms (gate < 50 ms)** — the project's first real Windows invariant measurement. Fixes this required: CF_CALLBACK_REGISTRATION_END sentinel is CF_CALLBACK_TYPE_INVALID (0xFFFFFFFF), not 0 (E_INVALIDARG on connect); CfAPI wants plain DOS paths, not `\\?\`-prefixed |
+| attach-acceptance (ubuntu runner) | ✅ | the full 8-gate WO1 suite (attach 500 MiB, kill -9 mid-scan, convergence, delta metering, byte budgets, sweep-catches-silent-divergence, doctor) green on a real runner |
+| test / clippy / fmt / coverage | ✅ | coverage gate set to the MEASURED 74.9% baseline (was an unmeasured 85% aspiration); test+coverage jobs now regenerate the deterministic corpus (bytes git-ignored by design) |
+| windows-macos-compile | ✅ | cairn-fs-win compiles natively on Windows (windows-rs 0.58) |
+| sim-sharded / fuzz-nightly | skipped | correctly schedule-gated; first firing = tonight |
+
 ### Known gaps (honest, post-round-4)
 
 - The 5GB real-bucket soak (punch #3) still needs `CAIRN_S3_*` credentials — env-gated,
