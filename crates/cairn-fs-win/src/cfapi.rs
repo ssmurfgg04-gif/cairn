@@ -50,6 +50,37 @@ const STATUS_UNSUCCESSFUL: i32 = 0xC000_0001u32 as i32;
 /// `len` bytes from `offset` (hash-verified — see Cas::get) or an error.
 pub trait PlaceholderSource: Send + Sync {
     fn fetch(&self, manifest_hash_hex: &str, offset: u64, len: u32) -> Result<Vec<u8>, i32>;
+
+    /// On-demand population query (FETCH_PLACEHOLDERS callback): the filter asks
+    /// which REMOTE entries exist under `dir_path` matching `pattern` (null pattern
+    /// arrives as an empty string = everything). The answer is transferred back via
+    /// CF_OPERATION_TYPE_TRANSFER_PLACEHOLDERS — see `transfer_placeholders`.
+    ///
+    /// Cairn v1 answers EMPTY by design: attach pre-creates every placeholder
+    /// (CfCreatePlaceholders batch), so there is never a remote entry the filter
+    /// does not already know. The callback must still be REGISTERED and ANSWERED:
+    /// the registered population policy is PARTIAL (nextcloud's policy set), and
+    /// with PARTIAL the filter BLOCKS any open of a not-yet-known path until the
+    /// provider completes the population — an unregistered callback means the
+    /// operation hangs for the filter's fixed 60 s timeout and fails with
+    /// ERROR_CLOUD_FILE_REQUEST_TIMEOUT (426). That was quirk W10, paid for on the
+    /// real windows-latest VM. The machinery below transfers REAL entries when a
+    /// source returns them (nextcloud cfApiSendPlaceholdersTransferInfo shape).
+    fn fetch_placeholders(&self, dir_path: &str, pattern: &str) -> Vec<PopulateEntry> {
+        let _ = (dir_path, pattern);
+        Vec::new()
+    }
+}
+
+/// One remote entry offered by `fetch_placeholders` (transferred to the filter as a
+/// CF_PLACEHOLDER_CREATE_INFO during on-demand population).
+pub struct PopulateEntry {
+    /// File name relative to `dir_path` (no separators).
+    pub name: String,
+    /// Placeholder identity — for Cairn this is the file manifest hash (hex).
+    pub identity_hex: String,
+    pub size: u64,
+    pub is_directory: bool,
 }
 
 /// Outcome of a write-open validation (WO6-1 §2, docs/design/write-back.md).
@@ -203,6 +234,7 @@ pub fn create_placeholder(
 ) -> Result<(), i32> {
     use windows::Win32::Storage::CloudFilters::{
         CfCreatePlaceholders, CF_CREATE_FLAGS, CF_PLACEHOLDER_CREATE_FLAGS,
+        CF_PLACEHOLDER_CREATE_FLAG_DISABLE_ON_DEMAND_POPULATION,
         CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC, CF_PLACEHOLDER_CREATE_INFO,
     };
     use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_NORMAL, FILE_BASIC_INFO};
@@ -226,8 +258,13 @@ pub fn create_placeholder(
         FileIdentity: identity_w.as_ptr().cast::<c_void>(),
         FileIdentityLength: (identity_w.len() as u32) * 2,
         // MARK_IN_SYNC (nextcloud/desktop): otherwise the filter nags the provider with
-        // sync-state callbacks and Explorer shows the wrong state
-        Flags: CF_PLACEHOLDER_CREATE_FLAGS(CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC.0),
+        // sync-state callbacks and Explorer shows the wrong state.
+        // DISABLE_ON_DEMAND_POPULATION (quirk W10): this file exists remotely NOW; the
+        // filter must never wait on a population query to satisfy opens of it.
+        Flags: CF_PLACEHOLDER_CREATE_FLAGS(
+            CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC.0
+                | CF_PLACEHOLDER_CREATE_FLAG_DISABLE_ON_DEMAND_POPULATION.0,
+        ),
         Result: Default::default(),
         CreateUsn: 0,
     };
@@ -260,8 +297,9 @@ pub fn connect(
     source: std::sync::Arc<dyn PlaceholderSource>,
 ) -> Result<Connection, i32> {
     use windows::Win32::Storage::CloudFilters::{
-        CfConnectSyncRoot, CF_CALLBACK_REGISTRATION, CF_CALLBACK_TYPE_FETCH_DATA,
-        CF_CALLBACK_TYPE_NONE, CF_CONNECT_FLAGS, CF_CONNECT_FLAG_BLOCK_SELF_IMPLICIT_HYDRATION,
+        CfConnectSyncRoot, CF_CALLBACK_REGISTRATION, CF_CALLBACK_TYPE_CANCEL_FETCH_PLACEHOLDERS,
+        CF_CALLBACK_TYPE_FETCH_DATA, CF_CALLBACK_TYPE_FETCH_PLACEHOLDERS, CF_CALLBACK_TYPE_NONE,
+        CF_CONNECT_FLAGS, CF_CONNECT_FLAG_BLOCK_SELF_IMPLICIT_HYDRATION,
         CF_CONNECT_FLAG_REQUIRE_FULL_FILE_PATH, CF_CONNECT_FLAG_REQUIRE_PROCESS_INFO,
     };
     let root_w = wide(root);
@@ -280,6 +318,17 @@ pub fn connect(
         CF_CALLBACK_REGISTRATION {
             Type: CF_CALLBACK_TYPE_FETCH_DATA,
             Callback: Some(on_fetch),
+        },
+        // Population callbacks (quirk W10): the PARTIAL population policy makes the
+        // filter WAIT for FETCH_PLACEHOLDERS on any open of a not-yet-known path —
+        // an unregistered table here means a 60 s ERROR_CLOUD_FILE_REQUEST_TIMEOUT.
+        CF_CALLBACK_REGISTRATION {
+            Type: CF_CALLBACK_TYPE_FETCH_PLACEHOLDERS,
+            Callback: Some(on_fetch_placeholders),
+        },
+        CF_CALLBACK_REGISTRATION {
+            Type: CF_CALLBACK_TYPE_CANCEL_FETCH_PLACEHOLDERS,
+            Callback: Some(on_cancel_fetch_placeholders),
         },
         // CF_CALLBACK_REGISTRATION_END = { CF_CALLBACK_TYPE_INVALID, NULL } — INVALID is
         // 0xFFFFFFFF (windows-rs exports it as CF_CALLBACK_TYPE_NONE = -1). A 0 type here
@@ -326,7 +375,8 @@ pub fn connect_write_back(
 ) -> Result<Connection, i32> {
     use windows::Win32::Storage::CloudFilters::{
         CfConnectSyncRoot, CF_CALLBACK_REGISTRATION, CF_CALLBACK_TYPE_FETCH_DATA,
-        CF_CALLBACK_TYPE_NONE, CF_CALLBACK_TYPE_NOTIFY_DELETE,
+        CF_CALLBACK_TYPE_FETCH_PLACEHOLDERS, CF_CALLBACK_TYPE_NONE,
+        CF_CALLBACK_TYPE_CANCEL_FETCH_PLACEHOLDERS, CF_CALLBACK_TYPE_NOTIFY_DELETE,
         CF_CALLBACK_TYPE_NOTIFY_FILE_CLOSE_COMPLETION,
         CF_CALLBACK_TYPE_NOTIFY_FILE_OPEN_COMPLETION, CF_CALLBACK_TYPE_VALIDATE_DATA,
         CF_CONNECT_FLAGS, CF_CONNECT_FLAG_BLOCK_SELF_IMPLICIT_HYDRATION,
@@ -342,6 +392,36 @@ pub fn connect_write_back(
             let (info, params) = (&*info, &*params);
             let src = ctx_as_write_source(info);
             serve_fetch(&**src, info, params);
+        }
+    }
+    // Write-side population handler: same answer as the read one, but the callback
+    // context is an Arc<dyn WriteBackSource> — a different vtable, so a different
+    // extern fn (supertrait method calls work through the coercion).
+    extern "system" fn on_fetch_placeholders_wb(
+        info: *const windows::Win32::Storage::CloudFilters::CF_CALLBACK_INFO,
+        params: *const windows::Win32::Storage::CloudFilters::CF_CALLBACK_PARAMETERS,
+    ) {
+        unsafe {
+            let (info, params) = (&*info, &*params);
+            let src = ctx_as_write_source(info);
+            let self_pid = windows::Win32::System::Threading::GetCurrentProcessId();
+            let req_pid = if info.ProcessInfo.is_null() {
+                0
+            } else {
+                (*info.ProcessInfo).ProcessId
+            };
+            if req_pid == self_pid {
+                transfer_placeholders(info, &[], STATUS_UNSUCCESSFUL);
+                return;
+            }
+            let path = pcwstr_to_string(info.NormalizedPath);
+            let pattern = if params.Anonymous.FetchPlaceholders.Pattern.0.is_null() {
+                String::new()
+            } else {
+                pcwstr_to_string(params.Anonymous.FetchPlaceholders.Pattern)
+            };
+            let entries = (**src).fetch_placeholders(&path, &pattern);
+            transfer_placeholders(info, &entries, 0);
         }
     }
     extern "system" fn on_validate(
@@ -391,6 +471,15 @@ pub fn connect_write_back(
         CF_CALLBACK_REGISTRATION {
             Type: CF_CALLBACK_TYPE_FETCH_DATA,
             Callback: Some(on_fetch_wb),
+        },
+        // Population callbacks (quirk W10) — MANDATORY under the PARTIAL policy.
+        CF_CALLBACK_REGISTRATION {
+            Type: CF_CALLBACK_TYPE_FETCH_PLACEHOLDERS,
+            Callback: Some(on_fetch_placeholders_wb),
+        },
+        CF_CALLBACK_REGISTRATION {
+            Type: CF_CALLBACK_TYPE_CANCEL_FETCH_PLACEHOLDERS,
+            Callback: Some(on_cancel_fetch_placeholders),
         },
         CF_CALLBACK_REGISTRATION {
             Type: CF_CALLBACK_TYPE_VALIDATE_DATA,
@@ -676,6 +765,137 @@ fn ack_delete(info: &windows::Win32::Storage::CloudFilters::CF_CALLBACK_INFO) {
     }
 }
 
+/// Complete a FETCH_PLACEHOLDERS callback via CfExecute(TRANSFER_PLACEHOLDERS).
+/// Shape mirrors nextcloud/desktop `cfApiSendPlaceholdersTransferInfo`: empty
+/// answers carry counts 0 and `DISABLE_ON_DEMAND_POPULATION` so the filter stops
+/// re-asking for directories whose content the provider fully controls (Cairn v1:
+/// attach pre-creates everything — quirk W10). `status` propagates as the
+/// operation's CompletionStatus (success = "here is the authoritative answer").
+fn transfer_placeholders(
+    info: &windows::Win32::Storage::CloudFilters::CF_CALLBACK_INFO,
+    entries: &[PopulateEntry],
+    status: i32,
+) {
+    use windows::Win32::Storage::CloudFilters::{
+        CfExecute, CF_OPERATION_INFO, CF_OPERATION_PARAMETERS, CF_OPERATION_PARAMETERS_0_7,
+        CF_OPERATION_TRANSFER_PLACEHOLDERS_FLAG_DISABLE_ON_DEMAND_POPULATION,
+        CF_OPERATION_TRANSFER_PLACEHOLDERS_FLAGS, CF_OPERATION_TYPE_TRANSFER_PLACEHOLDERS,
+        CF_PLACEHOLDER_CREATE_FLAG_DISABLE_ON_DEMAND_POPULATION, CF_PLACEHOLDER_CREATE_FLAGS,
+        CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC, CF_PLACEHOLDER_CREATE_INFO,
+    };
+    use windows::Win32::Storage::FileSystem::FILE_ATTRIBUTE_DIRECTORY;
+    // name/identity wide buffers must outlive the CfExecute call
+    let names: Vec<Vec<u16>> = entries.iter().map(|e| wide(&e.name)).collect();
+    let idents: Vec<Vec<u16>> = entries.iter().map(|e| wide(&e.identity_hex)).collect();
+    let ft = filetime_now();
+    let infos: Vec<CF_PLACEHOLDER_CREATE_INFO> = entries
+        .iter()
+        .zip(names.iter())
+        .zip(idents.iter())
+        .map(|((e, name), ident)| {
+            let mut info = CF_PLACEHOLDER_CREATE_INFO {
+                RelativeFileName: PCWSTR(name.as_ptr()),
+                FsMetadata: Default::default(),
+                FileIdentity: ident.as_ptr().cast::<c_void>(),
+                FileIdentityLength: (ident.len() as u32) * 2,
+                // MARK_IN_SYNC: the provider IS the authority for what it transfers
+                Flags: CF_PLACEHOLDER_CREATE_FLAGS(
+                    CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC.0
+                        | CF_PLACEHOLDER_CREATE_FLAG_DISABLE_ON_DEMAND_POPULATION.0,
+                ),
+                Result: Default::default(),
+                CreateUsn: 0,
+            };
+            info.FsMetadata.FileSize = e.size as i64;
+            info.FsMetadata.BasicInfo.FileAttributes = if e.is_directory {
+                FILE_ATTRIBUTE_DIRECTORY.0 as u32
+            } else {
+                0 // plain file attributes
+            };
+            info.FsMetadata.BasicInfo.CreationTime = ft;
+            info.FsMetadata.BasicInfo.LastWriteTime = ft;
+            info.FsMetadata.BasicInfo.LastAccessTime = ft;
+            info.FsMetadata.BasicInfo.ChangeTime = ft;
+            info
+        })
+        .collect();
+    let mut op_params = CF_OPERATION_PARAMETERS::default();
+    op_params.Anonymous.TransferPlaceholders = CF_OPERATION_PARAMETERS_0_7 {
+        Flags: CF_OPERATION_TRANSFER_PLACEHOLDERS_FLAGS(
+            CF_OPERATION_TRANSFER_PLACEHOLDERS_FLAG_DISABLE_ON_DEMAND_POPULATION.0,
+        ),
+        CompletionStatus: windows::Win32::Foundation::NTSTATUS(status),
+        PlaceholderTotalCount: infos.len() as i64,
+        PlaceholderArray: if infos.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            infos.as_ptr() as *mut CF_PLACEHOLDER_CREATE_INFO
+        },
+        PlaceholderCount: infos.len() as u32,
+        EntriesProcessed: infos.len() as u32,
+    };
+    // Same ABI rule proven in round 4: ParamSize = offsetof(union) + sizeof(member).
+    op_params.ParamSize = (std::mem::offset_of!(CF_OPERATION_PARAMETERS, Anonymous)
+        + std::mem::size_of::<CF_OPERATION_PARAMETERS_0_7>()) as u32;
+    let op = CF_OPERATION_INFO {
+        StructSize: std::mem::size_of::<CF_OPERATION_INFO>() as u32,
+        Type: CF_OPERATION_TYPE_TRANSFER_PLACEHOLDERS,
+        ConnectionKey: info.ConnectionKey,
+        TransferKey: info.TransferKey,
+        CorrelationVector: std::ptr::null(),
+        SyncStatus: std::ptr::null(),
+        RequestKey: info.RequestKey,
+    };
+    // SAFETY: keys are the filter's own; infos/names/idents outlive the call.
+    unsafe {
+        let _ = CfExecute(&op, &mut op_params);
+    }
+}
+
+/// FETCH_PLACEHOLDERS handler: the filter wants remote entries under a directory
+/// (population policy PARTIAL makes answering MANDATORY — quirk W10). Self-PID
+/// requests complete with a failed empty transfer (nextcloud: implicit population
+/// from the provider itself "will lead to a deadlock").
+extern "system" fn on_fetch_placeholders(
+    info: *const windows::Win32::Storage::CloudFilters::CF_CALLBACK_INFO,
+    params: *const windows::Win32::Storage::CloudFilters::CF_CALLBACK_PARAMETERS,
+) {
+    unsafe {
+        let info = &*info;
+        let params = &*params;
+        let self_pid = windows::Win32::System::Threading::GetCurrentProcessId();
+        let req_pid = if info.ProcessInfo.is_null() {
+            0
+        } else {
+            (*info.ProcessInfo).ProcessId
+        };
+        let src = ctx_as_read_source(info);
+        if req_pid == self_pid {
+            transfer_placeholders(info, &[], STATUS_UNSUCCESSFUL);
+            return;
+        }
+        let path = pcwstr_to_string(info.NormalizedPath);
+        // Pattern may be null (enumerate everything)
+        let pattern = if params.Anonymous.FetchPlaceholders.Pattern.0.is_null() {
+            String::new()
+        } else {
+            pcwstr_to_string(params.Anonymous.FetchPlaceholders.Pattern)
+        };
+        let entries = (**src).fetch_placeholders(&path, &pattern);
+        transfer_placeholders(info, &entries, 0);
+    }
+}
+
+/// CANCEL_FETCH_PLACEHOLDERS handler: the originating request went away. The
+/// completion for the cancelled callback is no longer accepted by the filter and
+/// the next query re-fires FETCH_PLACEHOLDERS — there is no CfExecute for a cancel
+/// (nextcloud logs and returns).
+extern "system" fn on_cancel_fetch_placeholders(
+    _info: *const windows::Win32::Storage::CloudFilters::CF_CALLBACK_INFO,
+    _params: *const windows::Win32::Storage::CloudFilters::CF_CALLBACK_PARAMETERS,
+) {
+}
+
 /// Complete (a chunk of) a FETCH_DATA hydration via CfExecute(TRANSFER_DATA).
 /// `status != 0` marks the whole hydration failed (CompletionStatus propagates).
 unsafe fn complete_transfer(
@@ -907,6 +1127,7 @@ pub struct BulkEntry {
 pub fn create_placeholders_batch(root: &str, entries: &[BulkEntry]) -> Result<usize, (usize, i32)> {
     use windows::Win32::Storage::CloudFilters::{
         CfCreatePlaceholders, CF_CREATE_FLAGS, CF_PLACEHOLDER_CREATE_FLAGS,
+        CF_PLACEHOLDER_CREATE_FLAG_DISABLE_ON_DEMAND_POPULATION,
         CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC, CF_PLACEHOLDER_CREATE_INFO,
     };
     use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_NORMAL, FILE_BASIC_INFO};
@@ -951,8 +1172,13 @@ pub fn create_placeholders_batch(root: &str, entries: &[BulkEntry]) -> Result<us
                 FsMetadata: Default::default(),
                 FileIdentity: ident_ptr.as_ptr().cast::<c_void>(),
                 FileIdentityLength: (ident_ptr.len() as u32) * 2,
-                // MARK_IN_SYNC: attach writes what the server has — it IS in sync
-                Flags: CF_PLACEHOLDER_CREATE_FLAGS(CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC.0),
+                // MARK_IN_SYNC: attach writes what the server has — it IS in sync.
+                // DISABLE_ON_DEMAND_POPULATION: files are pre-created at attach; the
+                // filter must never wait on population for them (quirk W10).
+                Flags: CF_PLACEHOLDER_CREATE_FLAGS(
+                    CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC.0
+                        | CF_PLACEHOLDER_CREATE_FLAG_DISABLE_ON_DEMAND_POPULATION.0,
+                ),
                 Result: Default::default(),
                 CreateUsn: 0,
             };

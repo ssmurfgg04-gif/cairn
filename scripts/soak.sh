@@ -76,14 +76,29 @@ dump_logs(){ # on gate failure: show the daemon's last words so CI logs are self
   echo
 }
 wait_state(){ local i=0
+  # Error-state policy mirrors wo1-acceptance.sh: transient pass errors
+  # (state=error for one 5s backoff window) must not fail the gate — only
+  # CONTINUOUS errors past ERROR_GRACE are fatal, with last_error reported.
+  local err_since="" last_err=""
   while [ "$i" -lt "$TIMEOUT" ]; do
     local st fs
-    st=$(status_json "$1" | field "$2" state)
-    fs=$(status_json "$1" | field "$2" files_synced)
+    local sj; sj=$(status_json "$1")
+    st=$(printf '%s' "$sj" | field "$2" state)
+    fs=$(printf '%s' "$sj" | field "$2" files_synced)
+    last_err=$(printf '%s' "$sj" | field "$2" last_error)
     if [ "$st" = "$3" ] && { [ "$#" -lt 5 ] || [ "$fs" = "$4" ]; }; then return 0; fi
-    if [ "$st" = "error" ]; then say "project $2 entered error state"; return 1; fi
+    if [ "$st" = "error" ]; then
+      [ -z "$err_since" ] && err_since=$i
+      if [ $((i - err_since)) -ge "${ERROR_GRACE:-45}" ]; then
+        say "project $2 in error state for ${ERROR_GRACE:-45}s (last_error: ${last_err:-unknown})"
+        return 1
+      fi
+    else
+      err_since=""
+    fi
     sleep 1; i=$((i+1))
   done
+  [ -n "$last_err" ] && say "project $2 last_error: $last_err"
   return 1; }
 tree_hash(){ (cd "$1" && find . -type f -exec sha256sum {} \; | sort | sha256sum | cut -d' ' -f1); }
 

@@ -173,6 +173,8 @@ Following the recipe above, the WO1 AttachRoot walking skeleton added:
      (`t{n}/c/…`); this exposes the existing server-side registration with auth.
 2. **New message fields** (appended, existing numbers immutable):
    - `ProjectStatus.files_synced = 6` — synced FILE rows for `cairn status`.
+   - `ProjectStatus.last_error = 7` — last sync-pass error message ("" = none);
+     surfaces transient pass failures to gates/ctl without daemon-log access.
    - `GetDownloadUrlRequest.chunk = 4` — presign the chunk-key namespace for
      hydration GETs (default `false` preserves the frozen manifest semantics).
 3. **Semantics unchanged**: ports, handshake, error codes, auth model, journal

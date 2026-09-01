@@ -79,7 +79,7 @@ jobs:
       - name: Shard summary
         if: always()
         run: |
-          echo "shard ${{ matrix.shard }}: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+          echo "shard ${{ matrix.shard }}: ${{ job.status }}" >> "$GITHUB_STEP_SUMMARY"
 
   sim-sharded-summary:
     needs: sim-sharded

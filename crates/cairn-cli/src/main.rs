@@ -299,6 +299,7 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
                                     "files_synced": p.files_synced,
                                     "cursor": p.cursor,
                                     "pending_outbox": p.pending_outbox,
+                                    "last_error": p.last_error,
                                 })).collect::<Vec<_>>(),
                             }))?
                         );

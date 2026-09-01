@@ -503,6 +503,8 @@ message ProjectStatus {
   uint64 pending_outbox = 4;
   uint64 cursor = 5;
   uint64 files_synced = 6;    // ADDITIVE (post-freeze): rows in synced/clean/pinned state
+  string last_error = 7;      // ADDITIVE: last sync-pass error message ("" = none);
+                              // surfaces transient pass failures to gates/ctl
   reserved 100 to 199;
 }
 
