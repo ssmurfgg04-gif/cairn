@@ -69,7 +69,7 @@ impl DaemonSource {
     /// Is the manifest's content fully in the local CAS? (bounded: leaf chunks with
     /// early exit; the fanout is small relative to file size)
     fn fully_local(&self, manifest_hex: &str) -> bool {
-        let Ok(h) = Hash::from_hex(manifest_hex) else {
+        let Some(h) = Hash::from_hex(manifest_hex) else {
             return false;
         };
         let Ok(bytes) = self.cas.get(&h) else {

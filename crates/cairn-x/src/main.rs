@@ -4,6 +4,7 @@
 #![forbid(unsafe_code)]
 
 pub mod bench;
+pub mod cold_fetch;
 pub mod corpus;
 pub mod corpus_real;
 pub mod crash;
@@ -99,6 +100,23 @@ pub enum Cmd {
         #[arg(long)]
         i_own_the_target: bool,
     },
+    /// COLD-FETCH first-byte measurement (WO6-4): one stored chunk fetched
+    /// through the REAL plane (presign + presigned GET, streamed) from a fresh
+    /// process with empty client state. Reports first-byte p50/p95/max.
+    ColdFetch {
+        /// Device home directory with an enrolled identity (CAIRN_HOME).
+        #[arg(long, env = "CAIRN_HOME")]
+        home: String,
+        /// Server URL (defaults to the identity's enrolled server).
+        #[arg(long)]
+        server: Option<String>,
+        /// Chunk hash (hex) to fetch — soak scripts pick the largest stored chunk.
+        #[arg(long)]
+        hash: String,
+        /// Measured fetches (median/percentiles reported).
+        #[arg(long, default_value_t = 5)]
+        iters: usize,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -191,5 +209,16 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Cmd::Bench { iters } => bench::run(iters),
+        Cmd::ColdFetch {
+            home,
+            server,
+            hash,
+            iters,
+        } => cold_fetch::run(cold_fetch::ColdFetchArgs {
+            home,
+            server,
+            hash,
+            iters,
+        }),
     }
 }

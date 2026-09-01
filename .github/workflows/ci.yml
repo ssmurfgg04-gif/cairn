@@ -99,35 +99,33 @@ jobs:
   # bucket access beyond the ephemeral container's own.
   s3-wire-conformance:
     runs-on: ubuntu-latest
-    services:
-      minio:
-        # bitnami/minio:latest vanished from Docker Hub (2026 catalog reshuffle) and
-        # broke this job; the OFFICIAL image is pinned to a verified tag. No
-        # in-container --health-cmd: minio/minio ships no bash (the old /dev/tcp
-        # healthcheck would never run) — the "wait for MinIO" step below polls
-        # /minio/health/live from the runner instead.
-        image: minio/minio:RELEASE.2024-06-13T22-53-53Z
-        env:
-          MINIO_ROOT_USER: cairntest
-          MINIO_ROOT_PASSWORD: cairntest-secret-123
-          MINIO_SITE_REGION: us-east-1
-          MINIO_REGION: us-east-1
-        ports:
-          - 19000:9000
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: Wait for MinIO to answer (runner-side, image-agnostic)
+      - name: Start MinIO (pinned binary, plain step)
+        # Why not a service container: GHA services run the image ENTRYPOINT but
+        # drop image CMD — bitnami's wrapper entrypoint survived that, the official
+        # image runs bare `minio` and prints USAGE. bitnami/minio:latest no longer
+        # exists (2026 catalog reshuffle), so run the pinned official binary directly:
+        # full arg control, no docker indirection, same server the wire tests target.
         run: |
-          for i in $(seq 1 30); do
+          curl -sfL --retry 5 \
+            https://dl.min.io/server/minio/release/linux-amd64/archive/minio.RELEASE.2024-06-13T22-53-53Z \
+            -o /tmp/minio
+          chmod +x /tmp/minio
+          MINIO_ROOT_USER=cairntest MINIO_ROOT_PASSWORD=cairntest-secret-123 \
+          MINIO_SITE_REGION=us-east-1 MINIO_REGION=us-east-1 \
+            /tmp/minio server /tmp/minio-data \
+            --address 127.0.0.1:19000 --console-address 127.0.0.1:19001 \
+            > /tmp/minio.log 2>&1 &
+          for i in $(seq 1 60); do
             if curl -sf http://127.0.0.1:19000/minio/health/live >/dev/null; then
               echo "MinIO live after ${i} probe(s)"; exit 0
             fi
-            sleep 2
+            sleep 1
           done
-          echo "MinIO never became healthy"; docker logs "$(docker ps -aq --filter ancestor=minio/minio:RELEASE.2024-06-13T22-53-53Z | head -1)" || true
-          exit 1
+          echo "MinIO never became healthy:"; cat /tmp/minio.log; exit 1
       - run: cargo build --release -p cairn-x
       - run: |
           ./target/release/cairn-x s3-conformance \
