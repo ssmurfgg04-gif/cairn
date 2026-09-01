@@ -124,3 +124,16 @@ CI bugs and one real Windows bug:
   is not yet exercised end-to-end in the acceptance script.
 - The 5 GB-class soak remains env-gated (`CAIRN_E2E_BYTES=5000000000`) — the
   sandbox disk cannot hold it; CI runners or hardware can.
+
+## Round 6 (WO6-1…WO6-10) — 2026-09-01
+
+| Item | Status | Evidence |
+|---|---|---|
+| WO6-1 write-back (design → CfAPI → gates) | ✅ code+CI / 🟨 Windows runtime | docs/design/write-back.md; VALIDATE_DATA hydrate-before-write, CfConvertToPlaceholder, CfSetInSyncState, bulk CfCreatePlaceholders, lease auto-acquire, W1–W6 CI gates. Gates compile+run on real runners; W4/W5 notification-polling hardened after first real run |
+| WO6-2 storage management | ✅ | pins (files v2 + Cas chunk pins), LRU eviction (60% target, PURE policy fn), min-age guard, disk probes (statvfs / GetDiskFreeSpaceExW via flattened u64 out-params — windows-rs 0.58 has no ULARGE_INTEGER export) |
+| WO6-3 ctl completeness | ✅ | CtlSnapshots/CtlPins/CtlRecall implemented; doctor ctl_completeness; commit formats centralized in cairn-core::commit |
+| WO6-4 soak + COLD-FETCH | ✅ | scripts/soak.sh (6 gates; REAL-S3 / DRY-RUN modes), `just soak-5gb`; 6/6 local green at 2 scales incl. 30% kill point; CI `soak-s3` job (500 MiB, MinIO via pinned binary); COLD-FETCH p50 3.87–4.28 ms loopback LocalFs; **soak caught a real bug**: scan/watcher double-enqueue → 2 journal upserts per path with different random request_ids → fixed with content-derived idempotency key `req-<blake3(tenant\|project\|path\|manifest\|size\|mtime)>` (+unit test) |
+| S3 wire conformance | ✅ | 9/9 vs MinIO; CI job now runs the pinned dl.min.io binary as a plain step (GHA service containers DROP image CMD — the official minio image printed USAGE; bitnami/minio:latest no longer exists) |
+| Windows CI repair | ✅ | eviction.rs u64 out-params (verified vs vendored windows-rs source); win_attach crate::-path + Hash::from_hex Option fix — windows-cfapi-roundtrip + windows-macos-compile jobs compile AND RUN again |
+| WO6-5..10 + UI dashboard | ⏳ in progress | burst variant, PLATFORM_QUIRKS, actionlint/ratchet/nightly-keepalive, zstd-dict ADR, security sweep, BETA_RUNBOOK, dashboard |
+| 5GB soak with REAL bucket | ⛔ HUMAN-GATE | needs the user's CAIRN_S3_* credentials (`just soak-5gb`); everything except the cloud wire is proven |
