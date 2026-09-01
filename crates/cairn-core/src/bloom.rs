@@ -7,9 +7,11 @@
 /// Simple double-hashing bloom filter backed by BLAKE3 digests.
 #[derive(Debug, Clone)]
 pub struct Bloom {
-    bits: Vec<u64>,
-    num_bits: u64,
-    k: u32,
+    /// Bit array (words). pub(crate): the Kani proofs inspect the layout directly
+    /// (crates/cairn-core/src/proofs.rs) without exposing it outside the crate.
+    pub(crate) bits: Vec<u64>,
+    pub(crate) num_bits: u64,
+    pub(crate) k: u32,
 }
 
 impl Bloom {
@@ -45,7 +47,7 @@ impl Bloom {
     pub fn insert(&mut self, item: &[u8]) {
         let (h1, h2) = self.hashes(item);
         for i in 0..self.k {
-            let idx = (h1.wrapping_add(u64::from(i).wrapping_mul(h2))) % self.num_bits;
+            let idx = self.probe_idx(h1, h2, i);
             self.bits[(idx / 64) as usize] |= 1u64 << (idx % 64);
         }
     }
@@ -55,12 +57,19 @@ impl Bloom {
     pub fn might_contain(&self, item: &[u8]) -> bool {
         let (h1, h2) = self.hashes(item);
         for i in 0..self.k {
-            let idx = (h1.wrapping_add(u64::from(i).wrapping_mul(h2))) % self.num_bits;
+            let idx = self.probe_idx(h1, h2, i);
             if self.bits[(idx / 64) as usize] & (1u64 << (idx % 64)) == 0 {
                 return false;
             }
         }
         true
+    }
+
+    /// The k-probe index for digest words (h1, h2) at probe i — the single place the
+    /// double-hash arithmetic lives, so insert and query can never diverge (the
+    /// no-false-negative guarantee is THIS function being pure + in-bounds; Kani-proven).
+    pub(crate) fn probe_idx(&self, h1: u64, h2: u64, i: u32) -> usize {
+        (h1.wrapping_add(u64::from(i).wrapping_mul(h2)) % self.num_bits) as usize
     }
 
     fn hashes(&self, item: &[u8]) -> (u64, u64) {
