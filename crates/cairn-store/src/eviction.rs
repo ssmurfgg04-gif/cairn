@@ -50,16 +50,16 @@ pub fn disk_space(path: &Path) -> Result<DiskSpace, CairnError> {
 pub fn disk_space(path: &Path) -> Result<DiskSpace, CairnError> {
     use std::os::windows::ffi::OsStrExt as _;
     use windows::core::PCWSTR;
-    use windows::Win32::Foundation::ULARGE_INTEGER;
     use windows::Win32::Storage::FileSystem::GetDiskFreeSpaceExW;
     let mut w: Vec<u16> = path
         .as_os_str()
         .encode_wide()
         .chain(std::iter::once(0))
         .collect();
-    let mut free = ULARGE_INTEGER::default();
-    let mut total = ULARGE_INTEGER::default();
-    let mut _total_free = ULARGE_INTEGER::default();
+    // windows-rs 0.58 flattens the ULARGE_INTEGER out-params to *mut u64.
+    let mut free = 0u64;
+    let mut total = 0u64;
+    let mut _total_free = 0u64;
     // SAFETY: w is NUL-terminated; out pointers are valid locals.
     let rc = unsafe {
         GetDiskFreeSpaceExW(
@@ -70,10 +70,7 @@ pub fn disk_space(path: &Path) -> Result<DiskSpace, CairnError> {
         )
     };
     rc.map_err(|e| CairnError::new(ErrorKind::Io, format!("GetDiskFreeSpaceExW: {e}")))?;
-    Ok(DiskSpace {
-        free: free.0,
-        total: total.0,
-    })
+    Ok(DiskSpace { free, total })
 }
 
 /// PURE policy: how many CAS bytes must go so the disk reaches `target_free_pct`?
