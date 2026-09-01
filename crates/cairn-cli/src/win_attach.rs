@@ -259,8 +259,21 @@ impl WriteBackSource for DaemonSource {
             return;
         }
         let rel = self.rel_path(full_path);
-        // lease auto-acquire (WO6-1 §5): token lands in leases_local; the push
-        // path already threads store.get_lease into every journal append.
+        // ADR-0014 Phase 1 (native passthrough): a vendor multi-user engine (Premiere
+        // Productions `.prodsys`, operator-declared Resolve collab) owns arbitration for
+        // this file — Cairn takes NO lease and adds no second pen. Correctness is
+        // unaffected: unleased appends carry token 0 by design (SPEC §8).
+        if cairn_sync::native_collab::is_passthrough(&self.root, &rel) {
+            tracing::debug!(path = %rel, "native collab passthrough: vendor arbitrates, no lease");
+            let _ = self.store.drop_lease(&rel);
+            return;
+        }
+        // lease auto-acquire (WO6-1 §5) — now ADR-0014 Phase 3 EPHEMERAL: 15s TTL bound
+        // to THIS process (pid), kept alive by the daemon heartbeat (5s), auto-reaped on
+        // process death and released on close. Crashed editors free their pen in
+        // seconds — no human unblocking (the old 60s TTL + no reaper was the "manual
+        // pen" problem). Expired leases still fail the append with STALE_LEASE, which
+        // surfaces as a conflict (never silent overwrite).
         let store = self.store.clone();
         let plane = Arc::clone(&self.plane);
         let tenant = self.tenant_id.clone();
@@ -268,16 +281,26 @@ impl WriteBackSource for DaemonSource {
         let device = self.device_id.clone();
         let rel2 = rel.clone();
         self.rt.spawn(async move {
-            // 60s TTL + renewal rides the open/close cycle; expired leases fail
-            // the append with STALE_LEASE which surfaces as a conflict (never
-            // silent overwrite).
             match plane
-                .acquire_lease(&tenant, &project, &rel2, &device, 60_000)
+                .acquire_lease(
+                    &tenant,
+                    &project,
+                    &rel2,
+                    &device,
+                    cairn_sync::LEASE_TTL_MS,
+                )
                 .await
             {
                 Ok((token, expires_at)) => {
-                    let _ = store.put_lease(&rel2, token, expires_at);
-                    tracing::info!(path = %rel2, token, "lease auto-acquired on open");
+                    let _ = store.put_lease_pid(
+                        &rel2,
+                        token,
+                        expires_at,
+                        Some(i64::from(std::process::id())),
+                        Some(&project),
+                        Some(&device),
+                    );
+                    tracing::info!(path = %rel2, token, "ephemeral lease acquired on open (pid-bound)");
                 }
                 Err(e) => {
                     // non-fatal: file opens, but save-back races another device
@@ -289,6 +312,25 @@ impl WriteBackSource for DaemonSource {
 
     fn close_notified(&self, full_path: &str) {
         let rel = self.rel_path(full_path);
+        // ADR-0014 Phase 3: the editor closed the file — hand the pen back IMMEDIATELY
+        // (best-effort; a failed release is harmless: the 15s TTL expires it anyway).
+        if let Some((token, _)) = self.store.get_lease(&rel) {
+            let plane = Arc::clone(&self.plane);
+            let tenant = self.tenant_id.clone();
+            let project = self.project_id.clone();
+            let device = self.device_id.clone();
+            let rel2 = rel.clone();
+            self.rt.spawn(async move {
+                match plane
+                    .release_lease(&tenant, &project, &rel2, &device, token)
+                    .await
+                {
+                    Ok(()) => tracing::debug!(path = %rel2, "lease released on close"),
+                    Err(e) => tracing::debug!(path = %rel2, "lease release on close: {e}"),
+                }
+            });
+            let _ = self.store.drop_lease(&rel);
+        }
         // dirty-mark via the SAME predicate the engine trusts (size+mtime vs the
         // journaled row): hydration echoes stay suppressed, real edits dirty.
         let Some(row) = self.store.get_file(&self.project_id, &rel) else {

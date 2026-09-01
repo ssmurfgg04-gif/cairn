@@ -518,6 +518,28 @@ impl Plane for GrpcPlane {
         c.release(req).await.map_err(|s| from_wire(&s))?;
         Ok(())
     }
+
+    async fn renew_lease(
+        &self,
+        tenant: &str,
+        project: &str,
+        path: &str,
+        device: &str,
+        token: u64,
+        ttl_ms: u64,
+    ) -> Result<i64, CairnError> {
+        let mut c = LeaseClient::new(self.channel.clone());
+        let req = self.authed(cairn_proto::pb::RenewRequest {
+            tenant_id: tenant.into(),
+            project_id: project.into(),
+            path: path.into(),
+            device_id: device.into(),
+            token,
+            ttl_ms,
+        })?;
+        let out = c.renew(req).await.map_err(|s| from_wire(&s))?;
+        Ok(out.into_inner().expires_at)
+    }
 }
 
 #[cfg(test)]

@@ -39,7 +39,7 @@ pub struct Store {
 }
 
 /// Current client schema version (`PRAGMA user_version`).
-pub const CLIENT_SCHEMA_VERSION: i64 = 2;
+pub const CLIENT_SCHEMA_VERSION: i64 = 3;
 
 impl Store {
     /// Open (or create) the store at `root` (a directory). Applies migrations.
@@ -166,6 +166,24 @@ impl Store {
             .map_err(|e| CairnError::new(cairn_core::ErrorKind::Io, format!("migrate v2: {e}")))?;
             conn.pragma_update(None, "user_version", 2)
                 .map_err(|e| CairnError::new(cairn_core::ErrorKind::Io, format!("set v2: {e}")))?;
+        }
+        if v < 3 {
+            // ADR-0014 Phase 3: process-bound ephemeral leases. `pid` records the
+            // OWNING process on this device — the daemon heartbeat renews while it
+            // lives and rows whose process died are reaped, so a crashed editor
+            // releases its pen in seconds (no human unblocking). project_id/device_id
+            // give the heartbeat the context to renew and server-release correctly.
+            // NULLs = legacy rows: expire via TTL exactly as before.
+            conn.execute_batch(
+                r"
+                ALTER TABLE leases_local ADD COLUMN pid INTEGER;
+                ALTER TABLE leases_local ADD COLUMN project_id TEXT;
+                ALTER TABLE leases_local ADD COLUMN device_id TEXT;
+                ",
+            )
+            .map_err(|e| CairnError::new(cairn_core::ErrorKind::Io, format!("migrate v3: {e}")))?;
+            conn.pragma_update(None, "user_version", 3)
+                .map_err(|e| CairnError::new(cairn_core::ErrorKind::Io, format!("set v3: {e}")))?;
         }
         Ok(())
     }
@@ -361,13 +379,30 @@ impl Store {
 
     // ---- local leases ----
 
-    /// Record a local lease token for a path.
+    /// Record a local lease token for a path (legacy, no owning PID recorded).
     pub fn put_lease(&self, path: &str, token: u64, expires_at: i64) -> Result<(), CairnError> {
+        self.put_lease_pid(path, token, expires_at, None, None, None)
+    }
+
+    /// PID-bound lease record (ADR-0014 Phase 3): the daemon heartbeat renews while
+    /// the owning process lives; reaping frees rows whose process died, so a crashed
+    /// editor's pen self-releases in seconds instead of needing a human.
+    pub fn put_lease_pid(
+        &self,
+        path: &str,
+        token: u64,
+        expires_at: i64,
+        pid: Option<i64>,
+        project_id: Option<&str>,
+        device_id: Option<&str>,
+    ) -> Result<(), CairnError> {
         let conn = self.conn.lock().expect("store poisoned");
         conn.execute(
-            "INSERT INTO leases_local(path, token, expires_at) VALUES(?1,?2,?3)
-             ON CONFLICT(path) DO UPDATE SET token=excluded.token, expires_at=excluded.expires_at",
-            rusqlite::params![path, token as i64, expires_at],
+            "INSERT INTO leases_local(path, token, expires_at, pid, project_id, device_id)
+             VALUES(?1,?2,?3,?4,?5,?6)
+             ON CONFLICT(path) DO UPDATE SET token=excluded.token, expires_at=excluded.expires_at,
+               pid=excluded.pid, project_id=excluded.project_id, device_id=excluded.device_id",
+            rusqlite::params![path, token as i64, expires_at, pid, project_id, device_id],
         )
         .map_err(db_err)?;
         Ok(())
@@ -394,6 +429,29 @@ impl Store {
             .expect("list_leases query");
         stmt.query_map([], |r| {
             Ok((r.get(0)?, r.get::<_, i64>(1)? as u64, r.get(2)?))
+        })
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default()
+    }
+
+    /// All local leases with Phase-3 context (ADR-0014 heartbeat/reaper input).
+    pub fn list_leases_pid(&self) -> Vec<LeaseRow> {
+        let conn = self.conn.lock().expect("store poisoned");
+        let mut stmt = conn
+            .prepare(
+                "SELECT path, token, expires_at, pid, project_id, device_id
+                 FROM leases_local ORDER BY path",
+            )
+            .expect("list_leases_pid query");
+        stmt.query_map([], |r| {
+            Ok(LeaseRow {
+                path: r.get(0)?,
+                token: r.get::<_, i64>(1)?.max(0) as u64,
+                expires_at: r.get(2)?,
+                pid: r.get(3)?,
+                project_id: r.get(4)?,
+                device_id: r.get(5)?,
+            })
         })
         .map(|rows| rows.filter_map(|r| r.ok()).collect())
         .unwrap_or_default()
@@ -584,6 +642,60 @@ impl Store {
     }
 }
 
+/// Is a process alive on THIS device? (ADR-0014 Phase 3 reaping primitive.)
+/// `kill(pid, 0)` returns Ok (signal permitted) or EPERM (exists, not ours) for live
+/// processes; ESRCH means gone. Fail-safe for callers: only ESRCH counts as dead.
+#[cfg(unix)]
+#[must_use]
+#[allow(unsafe_code)] // process-alive probe: kill(pid, 0) — same class as the eviction probes
+pub fn process_alive(pid: i64) -> bool {
+    if pid <= 0 {
+        return false;
+    }
+    // SAFETY: kill with signal 0 performs only the existence/permission check —
+    // no memory is touched, no signal is delivered.
+    let r = unsafe { libc::kill(pid as libc::pid_t, 0) };
+    r == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+/// Windows twin of [`process_alive`]: `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)`
+/// succeeds for any existing process we can query; a stale PID fails to open.
+#[cfg(windows)]
+#[must_use]
+#[allow(unsafe_code)] // process-alive probe: OpenProcess/CloseHandle — same class as eviction probes
+pub fn process_alive(pid: i64) -> bool {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+    if pid <= 0 {
+        return false;
+    }
+    // SAFETY: OpenProcess only reads the process table; the handle (if any) is
+    // closed on every path below.
+    let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid as u32) };
+    let alive = handle.is_ok();
+    if let Ok(h) = handle {
+        // SAFETY: h came from a successful OpenProcess and is closed exactly once.
+        unsafe {
+            let _ = CloseHandle(h);
+        }
+    }
+    alive
+}
+
+/// One local lease row with its Phase-3 context (ADR-0014).
+#[derive(Debug, Clone)]
+pub struct LeaseRow {
+    pub path: String,
+    pub token: u64,
+    pub expires_at: i64,
+    /// Owning process on this device (None = legacy row).
+    pub pid: Option<i64>,
+    /// Project the lease belongs to (None = legacy row).
+    pub project_id: Option<String>,
+    /// Acquiring device (None = legacy row).
+    pub device_id: Option<String>,
+}
+
 fn db_err(e: rusqlite::Error) -> CairnError {
     CairnError::new(cairn_core::ErrorKind::Io, format!("sqlite: {e}"))
 }
@@ -605,6 +717,58 @@ mod tests {
         let (_d, s) = open_tmp();
         assert_eq!(s.schema_version().unwrap(), CLIENT_SCHEMA_VERSION);
         assert!(s.get_file("p1", "a.mov").is_none());
+    }
+
+    /// ADR-0014 Phase 3: pid-bound leases renew in place, a DEAD owner's row is
+    /// reaped, and legacy rows (pid=None) are left for TTL expiry.
+    #[test]
+    fn lease_pid_lifecycle_renew_reap_legacy() {
+        let (_d, s) = open_tmp();
+        let me = i64::from(std::process::id());
+        s.put_lease_pid("live.prproj", 7, 1_000, Some(me), Some("p1"), Some("dev1"))
+            .unwrap();
+        s.put_lease_pid(
+            "dead.prproj",
+            8,
+            2_000,
+            Some(999_999_999),
+            Some("p1"),
+            Some("dev1"),
+        )
+        .unwrap();
+        s.put_lease("legacy.prproj", 9, 3_000).unwrap();
+
+        let rows = s.list_leases_pid();
+        assert_eq!(rows.len(), 3);
+        let live = rows.iter().find(|r| r.path == "live.prproj").unwrap();
+        assert_eq!(
+            (live.token, live.pid, live.project_id.as_deref()),
+            (7, Some(me), Some("p1"))
+        );
+
+        // "heartbeat": renew the live row in place (same token, new expiry, same pid)
+        s.put_lease_pid("live.prproj", 7, 5_000, Some(me), Some("p1"), Some("dev1"))
+            .unwrap();
+        assert_eq!(s.get_lease("live.prproj"), Some((7, 5_000)));
+
+        // reap: dead owner's row disappears; mine and legacy stay
+        let reaped: Vec<String> = s
+            .list_leases_pid()
+            .into_iter()
+            .filter(|r| matches!(r.pid, Some(p) if p > 0 && !process_alive(p)))
+            .map(|r| r.path)
+            .collect();
+        assert_eq!(reaped, vec!["dead.prproj".to_string()]);
+        for p in &reaped {
+            s.drop_lease(p).unwrap();
+        }
+        let remaining: Vec<String> = s.list_leases_pid().into_iter().map(|r| r.path).collect();
+        assert_eq!(remaining, vec!["legacy.prproj", "live.prproj"]);
+        assert!(process_alive(me), "self-probe must see a live process");
+        assert!(
+            !process_alive(999_999_999),
+            "implausibly large pid must be dead"
+        );
     }
 
     #[test]
@@ -675,7 +839,11 @@ mod pin_tests {
             std::sync::Arc::new(cairn_core::clock::WallClock),
         )
         .unwrap();
-        assert_eq!(s.schema_version().unwrap(), 2, "pins migration applied");
+        assert_eq!(
+            s.schema_version().unwrap(),
+            3,
+            "pins + lease-ctx migrations applied"
+        );
         s.put_file(&FileRow {
             path: "hero.prproj".into(),
             project_id: "p1".into(),

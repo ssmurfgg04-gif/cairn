@@ -237,9 +237,8 @@ pub async fn hydrate_one_into<W: std::io::Write>(
     // CAS stores raw chunk content exactly like the push path does). The verified CAS
     // put IS the read-back path — no in-RAM mirror of the whole file (the old
     // `local_raw` HashMap duplicated every fetched byte and defeated the point).
-    let entries = manifest.flatten_with(&mut |child: &Hash| {
-        manifest_cache.get(&child.hex()).cloned()
-    });
+    let entries =
+        manifest.flatten_with(&mut |child: &Hash| manifest_cache.get(&child.hex()).cloned());
     for e in &entries {
         let h = e.chunk_hash;
         if cas.contains(&h) {
@@ -254,18 +253,15 @@ pub async fn hydrate_one_into<W: std::io::Write>(
     // assemble_file_into (it parses internally); get_chunk reads the verified CAS.
     let mut get_chunk = |h: &Hash| -> Option<Vec<u8>> { cas.get(h).ok() };
     match transform {
-        Transform::None => {
-            assemble_file_into(&manifest, &mut resolve, &mut get_chunk, out)
-        }
+        Transform::None => assemble_file_into(&manifest, &mut resolve, &mut get_chunk, out),
         Transform::Gzip => {
             // stream the inner payload through the gzip encoder — wrapper bytes are
             // rebuilt on the fly, wrapper byte-identity is irrelevant (normalize.rs)
-            let mut enc =
-                flate2::write::GzEncoder::new(out, flate2::Compression::default());
-            let written =
-                assemble_file_into(&manifest, &mut resolve, &mut get_chunk, &mut enc)?;
-            enc.finish()
-                .map_err(|e| CairnError::new(ErrorKind::Compression, format!("gzip finish: {e}")))?;
+            let mut enc = flate2::write::GzEncoder::new(out, flate2::Compression::default());
+            let written = assemble_file_into(&manifest, &mut resolve, &mut get_chunk, &mut enc)?;
+            enc.finish().map_err(|e| {
+                CairnError::new(ErrorKind::Compression, format!("gzip finish: {e}"))
+            })?;
             Ok(written)
         }
         Transform::Zip => unreachable!("zip rejected before any I/O"),

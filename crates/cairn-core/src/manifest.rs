@@ -429,9 +429,7 @@ where
 {
     let mut out = Vec::new();
     // Bridge the Manifest-returning resolver into the byte-returning one.
-    let mut resolve_bytes = |h: &Hash| -> Option<Vec<u8>> {
-        resolve(h).map(|m| m.serialize().1)
-    };
+    let mut resolve_bytes = |h: &Hash| -> Option<Vec<u8>> { resolve(h).map(|m| m.serialize().1) };
     assemble_file_into(manifest, &mut resolve_bytes, get_chunk, &mut out)?;
     Ok(out)
 }
@@ -457,9 +455,8 @@ where
     R: FnMut(&Hash) -> Option<Vec<u8>>,
     G: FnMut(&Hash) -> Option<Vec<u8>>,
 {
-    let entries = manifest.flatten_with(&mut |h: &Hash| {
-        resolve(h).and_then(|m| Manifest::parse(&m).ok())
-    });
+    let entries =
+        manifest.flatten_with(&mut |h: &Hash| resolve(h).and_then(|m| Manifest::parse(&m).ok()));
     if entries.len() != manifest.entry_count() {
         return Err(crate::error::CairnError {
             kind: crate::error::ErrorKind::ManifestFormat,
@@ -479,10 +476,11 @@ where
                 message: format!("chunk {} failed verification", e.chunk_hash),
             });
         }
-        out.write_all(&bytes).map_err(|io| crate::error::CairnError {
-            kind: crate::error::ErrorKind::Io,
-            message: format!("assemble write: {io}"),
-        })?;
+        out.write_all(&bytes)
+            .map_err(|io| crate::error::CairnError {
+                kind: crate::error::ErrorKind::Io,
+                message: format!("assemble write: {io}"),
+            })?;
         written += u64::from(e.len);
     }
     Ok(written)
@@ -593,7 +591,11 @@ mod tests {
         // leaf-first ordering: children precede the node (nothing to store for a leaf)
         let mut store: HashMap<Hash, Vec<u8>> = HashMap::new();
         for (h, bytes) in &built.child_objects {
-            assert_eq!(&Hash::of(bytes), h, "child hash must be BLAKE3 of its bytes");
+            assert_eq!(
+                &Hash::of(bytes),
+                h,
+                "child hash must be BLAKE3 of its bytes"
+            );
             store.insert(*h, bytes.clone());
         }
         let all = built.manifest.flatten_deep(&mut |h| store.get(h).cloned());
@@ -642,12 +644,8 @@ mod tests {
             off += 64;
         }
         let payload: Vec<u8> = (0..N).flat_map(chunk_of).collect();
-        let built = Manifest::build_tree_with_transform(
-            entries,
-            Compression::None,
-            None,
-            Transform::None,
-        );
+        let built =
+            Manifest::build_tree_with_transform(entries, Compression::None, None, Transform::None);
         assert!(matches!(built.manifest, Manifest::Node { .. }));
 
         let mut objects: HashMap<Hash, Vec<u8>> = HashMap::new();
@@ -655,7 +653,10 @@ mod tests {
             objects.insert(h, bytes);
         }
         let mut chunks: HashMap<Hash, Vec<u8>> = HashMap::new();
-        for e in built.manifest.flatten_deep(&mut |h| objects.get(h).cloned()) {
+        for e in built
+            .manifest
+            .flatten_deep(&mut |h| objects.get(h).cloned())
+        {
             let start = e.offset as usize;
             chunks.insert(
                 e.chunk_hash,
@@ -668,8 +669,7 @@ mod tests {
         let whole = assemble_file(&built.manifest, &mut resolve, &mut get).unwrap();
         assert_eq!(whole, payload);
 
-        let mut resolve2 =
-            |h: &Hash| -> Option<Vec<u8>> { objects.get(h).cloned() };
+        let mut resolve2 = |h: &Hash| -> Option<Vec<u8>> { objects.get(h).cloned() };
         let mut get2 = |h: &Hash| chunks.get(h).cloned();
         let mut streamed = Vec::new();
         let written =

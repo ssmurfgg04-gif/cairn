@@ -434,6 +434,64 @@ fn spawn_loop(
     });
 }
 
+/// ADR-0014 Phase 3 keepalive: (1) RENEW every lease this daemon process still holds
+/// for `project_id` (heartbeat, no token bump — only takeover bumps fencing tokens);
+/// (2) REAP rows whose owning process died on this machine — drop locally and
+/// best-effort server-release so peers see the pen free immediately. A renew that
+/// fails with STALE_LEASE means we were legitimately fenced: drop the local row (the
+/// next save re-acquires or surfaces a conflict — never a silent overwrite).
+async fn lease_keepalive(store: &Store, plane: &dyn Plane, tenant_id: &str, project_id: &str) {
+    let me = i64::from(std::process::id());
+    for row in store.list_leases_pid() {
+        match row.pid {
+            Some(pid) if pid == me => {
+                if row.project_id.as_deref() != Some(project_id) {
+                    continue; // another project's runtime renews its own rows
+                }
+                let device = row.device_id.clone().unwrap_or_default();
+                match plane
+                    .renew_lease(
+                        tenant_id,
+                        project_id,
+                        &row.path,
+                        &device,
+                        row.token,
+                        cairn_sync::LEASE_TTL_MS,
+                    )
+                    .await
+                {
+                    Ok(expires_at) => {
+                        let _ = store.put_lease_pid(
+                            &row.path,
+                            row.token,
+                            expires_at,
+                            Some(me),
+                            Some(project_id),
+                            Some(&device),
+                        );
+                    }
+                    Err(e) => {
+                        // fenced or server-expired: stop claiming the pen locally
+                        let _ = store.drop_lease(&row.path);
+                        tracing::debug!(path = %row.path, "lease not renewed ({e}); local row dropped");
+                    }
+                }
+            }
+            Some(pid) if pid > 0 && !cairn_store::db::process_alive(pid) => {
+                // dead process on this machine — free its pen (machine-global truth)
+                let _ = store.drop_lease(&row.path);
+                if let (Some(lproj), Some(ldev)) = (row.project_id.clone(), row.device_id.clone()) {
+                    let _ = plane
+                        .release_lease(tenant_id, &lproj, &row.path, &ldev, row.token)
+                        .await;
+                }
+                tracing::info!(path = %row.path, pid, "reaped lease of dead process");
+            }
+            _ => {} // legacy rows (no pid): expire via TTL, as before
+        }
+    }
+}
+
 async fn run_loop(
     rt: &Arc<ProjectRuntime>,
     store: &Store,
@@ -544,6 +602,11 @@ async fn run_loop(
         .and_then(|v| v.parse().ok())
         .unwrap_or(3600);
     let mut last_evict = tokio::time::Instant::now();
+    // ADR-0014 Phase 3: lease heartbeat — renew THIS daemon's ephemeral pens on the
+    // 5s cadence (3 beats per 15s TTL), reap rows whose owning process died, and
+    // server-release the reaped tokens. This is what turns a crashed editor's lock
+    // into a seconds-long blip instead of a human-gated unlock.
+    let mut last_lease_beat = tokio::time::Instant::now();
     loop {
         tokio::select! {
             _ = shutdown.changed() => return Ok(()),
@@ -605,6 +668,10 @@ async fn run_loop(
                 }
                 Err(e) => tracing::warn!(project = %pid, "reconcile sweep failed: {e}"),
             }
+        }
+        if last_lease_beat.elapsed().as_millis() >= u128::from(cairn_sync::LEASE_HEARTBEAT_MS) {
+            last_lease_beat = tokio::time::Instant::now();
+            lease_keepalive(store, plane.as_ref(), &identity.tenant_id, &pid).await;
         }
         {
             let mut v = rt.view.write().await;
