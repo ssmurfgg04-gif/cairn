@@ -20,6 +20,8 @@ windows = { version = "0.58", features = [
     "Win32_System_Registry",
     "Win32_System_CorrelationVector",
     "Win32_System_Threading",
+    "Win32_System_IO",
+    "Win32_Security",
 ] }
 windows-core = "0.58"
 
@@ -30,6 +32,11 @@ cfapi = []
 [[bin]]
 name = "cfapi-hydration-probe"
 path = "src/bin/hydration_probe.rs"
+required-features = []
+
+[[bin]]
+name = "cfapi-write-probe"
+path = "src/bin/write_probe.rs"
 required-features = []
 
 [lints]

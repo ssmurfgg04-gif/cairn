@@ -118,3 +118,476 @@ fn placeholder_round_trips_through_cfapi_with_instrumented_i1() {
         "I1 violation through the CfAPI callback: {ms:.2} ms for the first 2 MiB"
     );
 }
+
+// ==================== WO6-1: WRITE-BACK GATES (docs/design/write-back.md) ====================
+
+use cairn_core::chunker::{StreamHash, CHUNK_AVG_FINE, CHUNK_MAX_FINE, CHUNK_MIN_FINE};
+use cairn_fs_win::cfapi::{
+    connect_write_back, convert_to_placeholder, create_placeholders_batch, mark_in_sync, BulkEntry,
+    ValidateOutcome, WriteBackSource,
+};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Mutex;
+
+/// Journal record the "engine" appends (mirrors cairn-sync outbox semantics).
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Record {
+    Upsert {
+        path: String,
+        manifest_hash: String,
+        lease_token: u64,
+        request_id: u64,
+        uploaded_chunks: usize,
+    },
+    Delete {
+        path: String,
+    },
+}
+
+struct HarnessShared {
+    /// identity hash -> canonical server bytes ("device B" state)
+    blobs: Mutex<HashMap<String, Vec<u8>>>,
+    /// path -> current head identity (what the server has)
+    heads: Mutex<HashMap<String, String>>,
+    /// chunk hashes the server already holds (BatchExists semantics)
+    server_chunks: Mutex<std::collections::HashSet<String>>,
+    journal: Mutex<Vec<Record>>,
+    /// seen request_ids (idempotency — the crash/dupe gate)
+    seen_requests: Mutex<std::collections::HashSet<u64>>,
+    leases: Mutex<HashMap<String, u64>>,
+    next_token: std::sync::atomic::AtomicU64,
+    next_request: std::sync::atomic::AtomicU64,
+    /// journaled stat at last push: path -> (size, mtime_ns) — the echo-suppression predicate
+    journaled_stat: Mutex<HashMap<String, (u64, u128)>>,
+    /// durable dirty markers (the client store's role) — survives a simulated crash
+    dirty_dir: PathBuf,
+    /// paths fully hydrated through FETCH_DATA (for validate: hydrated vs dehydrated)
+    hydrated: Mutex<std::collections::HashSet<String>>,
+}
+
+struct WriteHarness {
+    shared: std::sync::Arc<HarnessShared>,
+}
+
+impl PlaceholderSource for WriteHarness {
+    fn fetch(&self, hash: &str, offset: u64, len: u32) -> Result<Vec<u8>, i32> {
+        let blobs = self.shared.blobs.lock().unwrap();
+        let blob = blobs.get(hash).ok_or(0xC000_0225u32 as i32)?;
+        let end = offset as usize + len as usize;
+        let out = blob
+            .get(offset as usize..end)
+            .map(<[u8]>::to_vec)
+            .ok_or(0xC000_000Bu32 as i32)?;
+        if offset == 0 && end >= blob.len() {
+            self.shared
+                .hydrated
+                .lock()
+                .unwrap()
+                .insert(hash.to_string());
+        }
+        Ok(out)
+    }
+}
+
+impl WriteBackSource for WriteHarness {
+    fn write_open_validate(&self, path: &str, identity: &str) -> ValidateOutcome {
+        let heads = self.shared.heads.lock().unwrap();
+        let current = heads.get(path).map(|h| h == identity).unwrap_or(false);
+        if !current {
+            return ValidateOutcome::Stale;
+        }
+        let hydrated = self.shared.hydrated.lock().unwrap().contains(identity);
+        if hydrated {
+            ValidateOutcome::CurrentHydrated
+        } else {
+            ValidateOutcome::CurrentDehydrated
+        }
+    }
+
+    fn open_notified(&self, path: &str) {
+        // lease auto-acquire on project-file open (extension policy, v1)
+        if path.ends_with(".prproj") {
+            let t = self
+                .shared
+                .next_token
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                + 1;
+            self.shared
+                .leases
+                .lock()
+                .unwrap()
+                .insert(path.to_string(), t);
+        }
+    }
+
+    fn close_notified(&self, path: &str) {
+        // durable dirty marking (client-store role): size+mtime vs journaled row
+        let meta = match std::fs::metadata(path) {
+            Ok(m) => m,
+            Err(_) => return,
+        };
+        let mtime: u128 = meta
+            .modified()
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let journaled = self.shared.journaled_stat.lock().unwrap();
+        let unchanged = journaled
+            .get(path)
+            .map(|(s, m)| *s == meta.len() && *m == mtime)
+            .unwrap_or(false);
+        drop(journaled);
+        if !unchanged {
+            let marker = self.shared.dirty_dir.join(sanitize(path));
+            std::fs::write(&marker, b"dirty").expect("persist dirty marker (durable pre-ack)");
+        }
+    }
+
+    fn delete_notified(&self, path: &str) {
+        self.shared.journal.lock().unwrap().push(Record::Delete {
+            path: path.to_string(),
+        });
+    }
+}
+
+fn sanitize(p: &str) -> String {
+    p.replace(['\\', '/', ':'], "_")
+}
+
+impl WriteHarness {
+    /// Engine push: chunk the current file, delta-upload (only chunks the server
+    /// lacks), journal-append ONCE with the fencing token. Returns
+    /// (manifest_hash, uploaded_chunks, total_chunks).
+    fn push(&self, path: &str, root: &PathBuf, request_id: u64) -> (String, usize, usize) {
+        let bytes =
+            std::fs::read(path).expect("read edited full file (full files read back plainly)");
+        // single-pass chunk+hash with the FINE profile (transform-active content)
+        let sh = StreamHash::compute_with(&bytes, CHUNK_MIN_FINE, CHUNK_AVG_FINE, CHUNK_MAX_FINE);
+        let chunk_hashes: Vec<String> = sh.chunk_hashes.iter().map(|h| h.hex()).collect();
+        let manifest = sh.file_hash.hex();
+        let mut server = self.shared.server_chunks.lock().unwrap();
+        let missing: Vec<String> = chunk_hashes
+            .iter()
+            .filter(|h| !server.contains(*h))
+            .cloned()
+            .collect();
+        // delta upload: ONLY the missing chunks travel
+        for h in &missing {
+            // (real engine: presigned PUT per chunk; harness: record server receipt)
+            server.insert(h.clone());
+        }
+        drop(server);
+        let uploaded = missing.len();
+        let total = chunk_hashes.len();
+
+        // journal append with request_id idempotency + lease fencing token
+        {
+            let mut seen = self.shared.seen_requests.lock().unwrap();
+            if seen.insert(request_id) {
+                let token = self
+                    .shared
+                    .leases
+                    .lock()
+                    .unwrap()
+                    .get(path)
+                    .copied()
+                    .unwrap_or(0);
+                self.shared.journal.lock().unwrap().push(Record::Upsert {
+                    path: path.to_string(),
+                    manifest_hash: manifest.clone(),
+                    lease_token: token,
+                    request_id,
+                    uploaded_chunks: uploaded,
+                });
+                self.shared
+                    .heads
+                    .lock()
+                    .unwrap()
+                    .insert(path.to_string(), manifest.clone());
+                self.shared
+                    .blobs
+                    .lock()
+                    .unwrap()
+                    .insert(manifest.clone(), bytes.clone());
+                let mtime = std::fs::metadata(path)
+                    .ok()
+                    .and_then(|m| m.modified().ok())
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0);
+                self.shared
+                    .journaled_stat
+                    .lock()
+                    .unwrap()
+                    .insert(key, (bytes.len() as u64, mtime));
+                // the durable dirty marker is cleared exactly here (post-ack)
+                let _ = std::fs::remove_file(self.shared.dirty_dir.join(sanitize(name_key(path))));
+            }
+            // else: deduplicated — the same request NEVER appends twice (gate W5)
+        }
+        let _ = root;
+        (manifest, uploaded, total)
+    }
+}
+
+fn chunk_set(bytes: &[u8]) -> std::collections::HashSet<String> {
+    StreamHash::compute_with(bytes, CHUNK_MIN_FINE, CHUNK_AVG_FINE, CHUNK_MAX_FINE)
+        .chunk_hashes
+        .iter()
+        .map(|h| h.hex())
+        .collect()
+}
+
+/// WO6-1 gates W1+W2+W4+W5+W6: edit a hydrated placeholder via a CHILD process →
+/// delta-only save-back with a fencing token → byte-identical "device B"; new file →
+/// converted to a placeholder with exactly 1 journal upsert; kill -9 window →
+/// zero duplicate journal paths.
+#[test]
+fn write_back_gates_edit_newfile_fencing_crash_budget() {
+    const BASE: usize = 4 * 1024 * 1024;
+    let (blob, hash1) = deterministic_blob_with(BASE);
+    let root = tempfile::tempdir().expect("tempdir");
+
+    let shared = std::sync::Arc::new(HarnessShared {
+        blobs: Mutex::new(HashMap::from([(hash1.clone(), blob.clone())])),
+        heads: Mutex::new(HashMap::from([(
+            root.path()
+                .join("project.prproj")
+                .to_string_lossy()
+                .into_owned(),
+            hash1.clone(),
+        )])),
+        server_chunks: Mutex::new(chunk_set(&blob)),
+        journal: Mutex::new(Vec::new()),
+        seen_requests: Mutex::new(std::collections::HashSet::new()),
+        leases: Mutex::new(HashMap::new()),
+        next_token: std::sync::atomic::AtomicU64::new(0),
+        next_request: std::sync::atomic::AtomicU64::new(1),
+        journaled_stat: Mutex::new(HashMap::new()),
+        dirty_dir: root.path().join("dirty-markers").to_path_buf(),
+        hydrated: Mutex::new(std::collections::HashSet::new()),
+    });
+    std::fs::create_dir_all(&shared.dirty_dir).unwrap();
+
+    register_sync_root(root.path().to_str().unwrap(), "cairn-write-test")
+        .expect("register sync root");
+    let harness = WriteHarness {
+        shared: shared.clone(),
+    };
+    let _conn = connect_write_back(root.path().to_str().unwrap(), std::sync::Arc::new(harness))
+        .expect("connect_write_back");
+
+    let payload = root.path().join("project.prproj");
+    create_placeholder(
+        root.path().to_str().unwrap(),
+        "project.prproj",
+        &hash1,
+        BASE as u64,
+    )
+    .expect("create placeholder");
+
+    // ---- W1: CHILD edits the (dehydrated) placeholder — VALIDATE_DATA →
+    //         DataRequired → FETCH_DATA hydration → in-place 64 KiB edit ----
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_cfapi-write-probe"))
+        .arg("edit")
+        .arg(&payload)
+        .arg("1048576") // 1 MiB offset
+        .arg("65536") // 64 KiB edit — size-preserving (mtime catches it)
+        .arg("7")
+        .output()
+        .expect("spawn write probe");
+    assert!(
+        out.status.success(),
+        "child write-open failed: {} {}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // the edited bytes must be EXACTLY the pattern at the offset (W1, provider side)
+    let mut edited = blob.clone();
+    edited[1_048_576..1_048_576 + 65_536].copy_from_slice(&xorshift(65_536, 7));
+    let on_disk = std::fs::read(&payload).expect("read edited file");
+    assert_eq!(
+        &on_disk[1_048_576..1_048_576 + 65_536],
+        &xorshift(65_536, 7)[..],
+        "W1: edited range mismatch"
+    );
+    assert_eq!(on_disk.len(), BASE, "W1: edit must be size-preserving");
+
+    // lease auto-acquired on .prproj open (W4, token side)
+    let token = shared
+        .leases
+        .get(&payload.to_string_lossy().into_owned())
+        .copied();
+    assert!(
+        token.unwrap_or(0) > 0,
+        "W4: lease token not acquired on project-file open"
+    );
+
+    // ---- W5 window: dirty marker is DURABLE before any ack (simulated crash:
+    //         in-memory push state is gone; only the marker + bytes survive) ----
+    let marker = shared.dirty_dir.join(sanitize(&payload.to_string_lossy()));
+    assert!(
+        marker.exists(),
+        "W5: dirty marker must be durable before ack"
+    );
+    // (a kill -9 here would lose nothing: the marker is fs-visible state)
+
+    // ---- W6+W4: engine push — delta measured, not assumed; token rides the journal ----
+    let req1 = shared
+        .next_request
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let (hash2, uploaded, total) = WriteHarness {
+        shared: shared.clone(),
+    }
+    .push(&payload.to_string_lossy(), root.path(), req1);
+
+    let base_chunks = chunk_set(&blob);
+    let new_chunks = chunk_set(&edited);
+    let expected_new: usize = new_chunks.difference(&base_chunks).count();
+    assert!(
+        uploaded < total,
+        "W6: full re-upload ({uploaded}/{total}) — delta upload violated"
+    );
+    assert_eq!(
+        uploaded, expected_new,
+        "W6: uploaded {uploaded} but only {expected_new} chunks are genuinely new"
+    );
+
+    // W4: the save-back journal upsert carries the fencing token
+    let journal = shared.journal.lock().unwrap();
+    let upserts: Vec<&Record> = journal
+        .iter()
+        .filter(|r| matches!(r, Record::Upsert { path, .. } if path == payload.to_string_lossy()))
+        .collect();
+    drop(journal);
+    assert_eq!(upserts.len(), 1, "exactly one upsert after first push");
+    match upserts[0] {
+        Record::Upsert {
+            lease_token,
+            manifest_hash,
+            ..
+        } => {
+            assert_eq!(
+                *lease_token,
+                token.unwrap_or(0),
+                "W4: save-back must carry the fencing token"
+            );
+            assert_eq!(manifest_hash, &hash2, "journal head == pushed manifest");
+        }
+        _ => unreachable!(),
+    }
+
+    // W1 (device B): a second device fetching the new manifest gets byte-identical bytes
+    let device_b = shared
+        .blobs
+        .lock()
+        .unwrap()
+        .get(&hash2)
+        .cloned()
+        .expect("device B fetch");
+    assert_eq!(device_b, on_disk, "W1: device B byte-identity");
+
+    // in-sync after successful push (Explorer badge clears exactly here)
+    mark_in_sync(&payload.to_string_lossy()).expect("CfSetInSyncState after push");
+
+    // ---- W5: crash-retry with the SAME request_id → still exactly ONE upsert ----
+    let journal_before = shared.journal.lock().unwrap().len();
+    let _ = WriteHarness {
+        shared: shared.clone(),
+    }
+    .push(&payload.to_string_lossy(), root.path(), req1);
+    let journal_after = shared.journal.lock().unwrap().len();
+    assert_eq!(
+        journal_before, journal_after,
+        "W5: duplicate journal path after resume"
+    );
+
+    // ---- W2: NEW file created in the root → 1 upsert → converted to placeholder ----
+    let new_file = root.path().join("new-sequence.prproj");
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_cfapi-write-probe"))
+        .arg("create")
+        .arg(&new_file)
+        .arg("2097152") // 2 MiB
+        .arg("9")
+        .output()
+        .expect("spawn create probe");
+    assert!(
+        out.status.success(),
+        "create probe failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let req2 = shared
+        .next_request
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let (hash3, _, _) = WriteHarness {
+        shared: shared.clone(),
+    }
+    .push(&new_file.to_string_lossy(), root.path(), req2);
+    convert_to_placeholder(&new_file.to_string_lossy(), &hash3)
+        .expect("W2: new local file must convert to a placeholder");
+
+    let journal = shared.journal.lock().unwrap();
+    let new_upserts = journal
+        .iter()
+        .filter(|r| matches!(r, Record::Upsert { path, .. } if path == new_file.to_string_lossy()))
+        .count();
+    drop(journal);
+    assert_eq!(
+        new_upserts, 1,
+        "W2: exactly 1 upsert for the new file (no dupes)"
+    );
+
+    // ---- W2 (bulk): attach-style batch create of a 3-file subtree ----
+    let entries = vec![
+        BulkEntry {
+            relative_path: "media\\a.bin".into(),
+            identity_hex: hash1.clone(),
+            size: 1024,
+        },
+        BulkEntry {
+            relative_path: "media\\b.bin".into(),
+            identity_hex: hash1.clone(),
+            size: 2048,
+        },
+        BulkEntry {
+            relative_path: "c.bin".into(),
+            identity_hex: hash1.clone(),
+            size: 4096,
+        },
+    ];
+    let created = create_placeholders_batch(root.path().to_str().unwrap(), &entries)
+        .expect("WO6-2: bulk placeholder create");
+    assert_eq!(created, 3, "all three placeholders must appear");
+    for p in ["media\\a.bin", "media\\b.bin", "c.bin"] {
+        assert!(
+            root.path().join(p).exists(),
+            "WO6-2: bulk-created placeholder {p} missing"
+        );
+    }
+}
+
+fn xorshift(len: usize, mut state: u64) -> Vec<u8> {
+    if state == 0 {
+        state = 0x9E37_79B9_7F4A_7C15;
+    }
+    let mut out = Vec::with_capacity(len);
+    while out.len() < len {
+        state ^= state >> 12;
+        state ^= state << 25;
+        state ^= state >> 27;
+        let v = state.wrapping_mul(0x2545_F491_4F6C_DD1D);
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    out.truncate(len);
+    out
+}
+
+fn deterministic_blob_with(bytes: usize) -> (Vec<u8>, String) {
+    let blob = xorshift(bytes, 0x9E37_79B9_7F4A_7C15);
+    let hash = blake3::hash(&blob).to_hex().to_string();
+    (blob, hash)
+}
