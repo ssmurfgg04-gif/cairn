@@ -194,7 +194,14 @@ pub async fn attach(
     if let Some(rt) = existing {
         // already attached: just refresh the workspace binding + identity
         rt.stop();
+        let root2 = root_path.to_path_buf();
+        let pid2 = pid.clone();
+        let id2 = identity.clone();
+        let url2 = server_url.clone();
+        let store2 = store.clone();
+        let ca2 = ca_pem.clone();
         spawn_loop(Arc::clone(&rt), store, identity, server_url, ca_pem);
+        connect_cfapi(&store2, &root2, &pid2, &id2, &url2, ca2.as_deref());
         return Ok(pid);
     }
 
@@ -212,7 +219,14 @@ pub async fn attach(
         abort: tokio::sync::watch::channel(false).0,
     });
     RUNTIMES.write().await.insert(pid.clone(), Arc::clone(&rt));
+    let root2 = root_path.to_path_buf();
+    let pid2 = pid.clone();
+    let id2 = identity.clone();
+    let url2 = server_url.clone();
+    let store2 = store.clone();
+    let ca2 = ca_pem.clone();
     spawn_loop(Arc::clone(&rt), store, identity, server_url, ca_pem);
+    connect_cfapi(&store2, &root2, &pid2, &id2, &url2, ca2.as_deref());
     Ok(pid)
 }
 
@@ -222,12 +236,85 @@ pub async fn detach(home: &Path, project_id: &str) -> Result<(), CairnError> {
     if let Some(rt) = RUNTIMES.write().await.remove(project_id) {
         rt.stop();
     }
+    #[cfg(windows)]
+    {
+        CFAPI_CONNS.lock().expect("cfapi conns").remove(project_id); // drop disconnects the sync root
+    }
     cairn_sync::workspace::clear_workspace(&store, project_id)
 }
 
 /// Registry of live runtimes for the daemon process (ctl status/list surface).
 pub static RUNTIMES: std::sync::LazyLock<RwLock<HashMap<String, Arc<ProjectRuntime>>>> =
     std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
+
+/// Live CfAPI write-back connections (Windows only): the connection must outlive
+/// the attach — dropping it disconnects the root from the filter driver.
+#[cfg(windows)]
+pub static CFAPI_CONNS: std::sync::LazyLock<
+    std::sync::Mutex<HashMap<String, cairn_fs_win::cfapi::Connection>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+
+/// Windows attach glue: register + bulk placeholders + write-back callbacks
+/// (WO6-1/WO6-2; no-op on other platforms).
+#[cfg(windows)]
+fn connect_cfapi(
+    store: &Store,
+    root: &Path,
+    pid: &str,
+    identity: &Identity,
+    server_url: &str,
+    ca_pem: Option<&[u8]>,
+) {
+    let plane: Arc<dyn cairn_sync::plane::Plane> = match tokio::runtime::Handle::try_current() {
+        Ok(h) => match h.block_on(cairn_sync::plane_grpc::GrpcPlane::connect(
+            server_url,
+            &identity.token,
+            &identity.tenant_id,
+            ca_pem,
+        )) {
+            Ok(p) => Arc::new(p),
+            Err(e) => {
+                tracing::warn!(project = %pid, "CfAPI: plane connect failed ({e}); read-only until restart");
+                return;
+            }
+        },
+        Err(_) => return,
+    };
+    let rt = tokio::runtime::Handle::current();
+    match win_attach::attach_windows(
+        store,
+        root,
+        pid,
+        &identity.tenant_id,
+        &identity.device_id,
+        plane,
+        rt,
+    ) {
+        Ok(conn) => {
+            CFAPI_CONNS
+                .lock()
+                .expect("cfapi conns")
+                .insert(pid.to_string(), conn);
+            tracing::info!(project = %pid, "CfAPI write-back connected (root registered)");
+        }
+        Err(e) => {
+            // non-fatal: sync engine still works over plain files; the filter
+            // surface (placeholders/badges/write-back) waits for reconnect
+            tracing::warn!(project = %pid, "CfAPI attach failed: {e}");
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn connect_cfapi(
+    _store: &Store,
+    _root: &Path,
+    _pid: &str,
+    _identity: &Identity,
+    _server_url: &str,
+    _ca_pem: Option<&[u8]>,
+) {
+}
 
 /// Re-attach all bound workspaces at daemon boot (crash-resume path).
 pub async fn resume_all(home: &Path) -> usize {
@@ -441,10 +528,48 @@ async fn run_loop(
         .and_then(|v| v.parse().ok())
         .unwrap_or(256 * 1024 * 1024);
     let mut last_sweep = tokio::time::Instant::now();
+    // WO6-2: LRU eviction sweep — keeps the disk at/above the free-space target so a
+    // 2–4 TB/seat library cannot fill local NVMe. 0 disables; the tiering_enabled kill
+    // switch also disables it live (no restart).
+    let evict_secs: u64 = std::env::var("CAIRN_EVICT_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(300);
+    let evict_target_pct: u64 = std::env::var("CAIRN_EVICT_TARGET_FREE_PCT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(60);
+    let evict_min_age: i64 = std::env::var("CAIRN_EVICT_MIN_AGE_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(3600);
+    let mut last_evict = tokio::time::Instant::now();
     loop {
         tokio::select! {
             _ = shutdown.changed() => return Ok(()),
             _ = tick.tick() => {}
+        }
+        if evict_secs > 0 && last_evict.elapsed().as_secs() >= evict_secs {
+            last_evict = tokio::time::Instant::now();
+            let tiering_on = store
+                .meta_get("flag:tiering_enabled")
+                .map(|v| v != "false")
+                .unwrap_or(true);
+            if tiering_on {
+                match cairn_store::eviction::evict_sweep(store, evict_target_pct, evict_min_age) {
+                    Ok(r) if r.needed => {
+                        tracing::info!(
+                            project = %pid,
+                            evicted = r.evicted_chunks,
+                            freed_mb = r.freed_bytes / (1024 * 1024),
+                            free_pct_before = r.free_before.checked_mul(100).map_or(0, |v| v / r.total),
+                            "eviction sweep: LRU chunks reclaimed (pins + fresh chunks protected)"
+                        );
+                    }
+                    Ok(_) => {} // disk above target — nothing to do
+                    Err(e) => tracing::warn!(project = %pid, "eviction sweep failed: {e}"),
+                }
+            }
         }
         if last_sweep.elapsed().as_secs() >= sweep_secs {
             last_sweep = tokio::time::Instant::now();

@@ -119,15 +119,45 @@ impl Cas {
         Ok(())
     }
 
+    /// Total local CAS bytes (rows, not on-disk du) — the eviction policy input.
+    pub fn live_bytes(&self) -> Result<u64, CairnError> {
+        let db = self.db.lock().expect("cas db poisoned");
+        let v: i64 = db
+            .query_row("SELECT COALESCE(SUM(size),0) FROM blobs", [], |r| r.get(0))
+            .map_err(|e| CairnError::new(ErrorKind::Io, format!("live_bytes: {e}")))?;
+        Ok(v as u64)
+    }
+
     /// Local GC: evict least-recently-used unpinned chunks down to `target_bytes`.
     /// Returns evicted hashes. Pinned chunks are never touched (SPEC §10).
     pub fn evict_to(&self, target_bytes: u64) -> Result<Vec<String>, CairnError> {
+        self.evict_to_policy(target_bytes, 0)
+    }
+
+    /// Policy-guarded eviction (WO6-2): like [`Cas::evict_to`], but chunks whose
+    /// atime is younger than `min_age_secs` are PROTECTED — an actively-edited
+    /// file's chunks are never reclaimed while everything else is old (the
+    /// open-file protection the work order names; on Windows CfDehydratePlaceholder
+    /// additionally fails for oplocked/open files at the OS layer).
+    pub fn evict_to_policy(
+        &self,
+        target_bytes: u64,
+        min_age_secs: i64,
+    ) -> Result<Vec<String>, CairnError> {
         let db = self.db.lock().expect("cas db poisoned");
+        // age cutoff: chunks with atime >= cutoff are PROTECTED (WO6-2 min-age guard)
+        let cutoff = self.clock_now() - min_age_secs.saturating_mul(1000);
         let mut stmt = db
-            .prepare("SELECT hash, size, pinned FROM blobs WHERE pinned=0 ORDER BY atime ASC")
+            .prepare(
+                "SELECT hash, size, pinned FROM blobs
+                 WHERE pinned=0 AND atime <= ?1
+                 ORDER BY atime ASC",
+            )
             .map_err(|e| CairnError::new(ErrorKind::Io, format!("evict q: {e}")))?;
         let rows: Vec<(String, i64)> = stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))
+            .query_map([cutoff], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+            })
             .map_err(|e| CairnError::new(ErrorKind::Io, format!("evict map: {e}")))?
             .filter_map(|r| r.ok())
             .collect();

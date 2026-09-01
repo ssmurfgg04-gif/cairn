@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use cairn_core::clock::SystemClock;
-use cairn_core::CairnError;
+use cairn_core::{CairnError, ErrorKind};
 use rusqlite::Connection;
 
 /// Local file row (mirrors `files` table).
@@ -39,7 +39,7 @@ pub struct Store {
 }
 
 /// Current client schema version (`PRAGMA user_version`).
-pub const CLIENT_SCHEMA_VERSION: i64 = 1;
+pub const CLIENT_SCHEMA_VERSION: i64 = 2;
 
 impl Store {
     /// Open (or create) the store at `root` (a directory). Applies migrations.
@@ -145,6 +145,27 @@ impl Store {
             .map_err(|e| CairnError::new(cairn_core::ErrorKind::Io, format!("migrate v1: {e}")))?;
             conn.pragma_update(None, "user_version", 1)
                 .map_err(|e| CairnError::new(cairn_core::ErrorKind::Io, format!("set v1: {e}")))?;
+        }
+        if v < 2 {
+            // WO6-2: file-level pins (ctl Pin/Unpin/ListPins). Chunk-level pinned
+            // bits live on blobs.pinned (set via Cas::pin); this table is the
+            // file-level intent + ListPins surface. Pinned files' chunks are
+            // excluded from LRU eviction by construction.
+            conn.execute_batch(
+                r"
+                BEGIN;
+                CREATE TABLE IF NOT EXISTS pins(
+                  project_id TEXT NOT NULL,
+                  path TEXT NOT NULL,
+                  pinned_at INTEGER NOT NULL,
+                  PRIMARY KEY(project_id, path)
+                );
+                COMMIT;
+                ",
+            )
+            .map_err(|e| CairnError::new(cairn_core::ErrorKind::Io, format!("migrate v2: {e}")))?;
+            conn.pragma_update(None, "user_version", 2)
+                .map_err(|e| CairnError::new(cairn_core::ErrorKind::Io, format!("set v2: {e}")))?;
         }
         Ok(())
     }
@@ -433,7 +454,101 @@ impl Store {
         .unwrap_or(0)
     }
 
-    /// Run a closure in a single serialized transaction (single-writer discipline).
+    // ---- pins (WO6-2: pin/unpin/list; eviction protection) ----
+
+    /// Pin a file: records the file-level intent AND pins every local chunk
+    /// (blobs.pinned=1) so LRU eviction can never reclaim them.
+    pub fn pin_file(&self, project_id: &str, path: &str) -> Result<(), CairnError> {
+        if self.get_file(project_id, path).is_none() {
+            return Err(CairnError::new(
+                ErrorKind::NotFound,
+                format!("cannot pin unknown file {path}"),
+            ));
+        }
+        let conn = self.conn.lock().expect("store poisoned");
+        conn.execute(
+            "INSERT INTO pins(project_id, path, pinned_at) VALUES(?1,?2,?3)
+             ON CONFLICT(project_id, path) DO UPDATE SET pinned_at=excluded.pinned_at",
+            rusqlite::params![project_id, path, self.clock.now_millis()],
+        )
+        .map_err(|e| CairnError::new(ErrorKind::Io, format!("pin_file: {e}")))?;
+        drop(conn);
+        self.pin_file_chunks(project_id, path);
+        Ok(())
+    }
+
+    /// Unpin: clears the intent AND the chunk pins (chunks become evictable again).
+    pub fn unpin_file(&self, project_id: &str, path: &str) -> Result<(), CairnError> {
+        let conn = self.conn.lock().expect("store poisoned");
+        conn.execute(
+            "DELETE FROM pins WHERE project_id=?1 AND path=?2",
+            rusqlite::params![project_id, path],
+        )
+        .map_err(|e| CairnError::new(ErrorKind::Io, format!("unpin_file: {e}")))?;
+        Ok(())
+    }
+
+    /// All pins for a project: (path, size) — the ctl ListPins surface.
+    pub fn list_pins(&self, project_id: &str) -> Vec<(String, u64)> {
+        let conn = self.conn.lock().expect("store poisoned");
+        let mut stmt = conn
+            .prepare(
+                "SELECT p.path, COALESCE(f.size, 0) FROM pins p
+                 LEFT JOIN files f ON f.project_id = p.project_id AND f.path = p.path
+                 WHERE p.project_id = ?1 ORDER BY p.path",
+            )
+            .expect("list_pins query");
+        stmt.query_map([project_id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u64))
+        })
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default()
+    }
+
+    /// File-level pin check (ctl restore/eviction protection).
+    pub fn is_pinned(&self, project_id: &str, path: &str) -> bool {
+        let conn = self.conn.lock().expect("store poisoned");
+        conn.query_row(
+            "SELECT 1 FROM pins WHERE project_id=?1 AND path=?2",
+            rusqlite::params![project_id, path],
+            |_| Ok(()),
+        )
+        .is_ok()
+    }
+
+    /// Pin all chunks belonging to a file's current manifest in the LOCAL CAS.
+    /// The manifest itself is fetched from the local CAS (it was stored at
+    /// hydration/push time); missing manifest = nothing local to pin (returns 0).
+    fn pin_file_chunks(&self, project_id: &str, path: &str) -> usize {
+        use cairn_core::hash::Hash;
+        use cairn_core::manifest::Manifest;
+        let Some(row) = self.get_file(project_id, path) else {
+            return 0;
+        };
+        let Some(hex) = row.manifest_hash.clone() else {
+            return 0;
+        };
+        let Some(h) = Hash::from_hex(&hex) else {
+            return 0;
+        };
+        let Ok(cas) = crate::Cas::open(&self.root.join("blobs"), self.conn_handle()) else {
+            return 0;
+        };
+        let Ok(bytes) = cas.get(&h) else {
+            return 0;
+        };
+        let Ok(manifest) = Manifest::parse(&bytes) else {
+            return 0;
+        };
+        let mut n = 0;
+        for e in manifest.flatten() {
+            if cas.pin(&e.chunk_hash).is_ok() {
+                n += 1;
+            }
+        }
+        n
+    }
+
     pub fn with_tx<T>(
         &self,
         f: impl FnOnce(&Connection) -> Result<T, CairnError>,
@@ -527,5 +642,43 @@ mod tests {
         });
         r2.unwrap();
         assert_eq!(s.meta_get("a").unwrap(), "1");
+    }
+}
+
+#[cfg(test)]
+mod pin_tests {
+    use super::*;
+    use crate::FileRow;
+
+    #[test]
+    fn pins_roundtrip_and_migration_v2() {
+        let dir = tempfile::tempdir().unwrap();
+        let s = Store::open(
+            dir.path(),
+            std::sync::Arc::new(cairn_core::clock::WallClock),
+        )
+        .unwrap();
+        assert_eq!(s.schema_version().unwrap(), 2, "pins migration applied");
+        s.put_file(&FileRow {
+            path: "hero.prproj".into(),
+            project_id: "p1".into(),
+            manifest_hash: None,
+            size: 4096,
+            mode: "file".into(),
+            mtime: 1,
+            local_state: "synced".into(),
+        })
+        .unwrap();
+        s.pin_file("p1", "hero.prproj").unwrap();
+        let pins = s.list_pins("p1");
+        assert_eq!(pins.len(), 1);
+        assert_eq!(pins[0].0, "hero.prproj");
+        assert_eq!(pins[0].1, 4096);
+        assert!(s.is_pinned("p1", "hero.prproj"));
+        s.unpin_file("p1", "hero.prproj").unwrap();
+        assert!(s.list_pins("p1").is_empty());
+        assert!(!s.is_pinned("p1", "hero.prproj"));
+        // pinning an unknown row fails loudly (the ctl surface depends on it)
+        assert!(s.pin_file("p1", "missing.mov").is_err());
     }
 }
