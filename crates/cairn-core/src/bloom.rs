@@ -48,7 +48,7 @@ impl Bloom {
         let (h1, h2) = self.hashes(item);
         for i in 0..self.k {
             let idx = self.probe_idx(h1, h2, i);
-            self.bits[(idx / 64) as usize] |= 1u64 << (idx % 64);
+            self.bits[idx / 64] |= 1u64 << (idx % 64);
         }
     }
 
@@ -58,7 +58,7 @@ impl Bloom {
         let (h1, h2) = self.hashes(item);
         for i in 0..self.k {
             let idx = self.probe_idx(h1, h2, i);
-            if self.bits[(idx / 64) as usize] & (1u64 << (idx % 64)) == 0 {
+            if self.bits[idx / 64] & (1u64 << (idx % 64)) == 0 {
                 return false;
             }
         }
