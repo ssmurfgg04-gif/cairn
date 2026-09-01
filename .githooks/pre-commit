@@ -1,0 +1,13 @@
+#!/bin/sh
+# WO6-7: pre-commit gate — fmt + workflow lint (actionlint when installed).
+# Install once: git config core.hooksPath .githooks
+set -e
+cd "$(git rev-parse --show-toplevel)"
+if command -v actionlint >/dev/null 2>&1; then
+  actionlint .github/workflows/*.yml
+else
+  echo "[pre-commit] actionlint not installed — skipping workflow lint (cargo install / brew actionlint)"
+fi
+if command -v cargo >/dev/null 2>&1; then
+  cargo fmt --all -- --check
+fi

@@ -1,0 +1,41 @@
+# WO6-7 nightly keepalive: GitHub disables scheduled workflows after 60 days
+# without repository activity. This workflow runs monthly, does one useful
+# thing (verify the nightly's own recent health from inside CI), and commits
+# an empty keepalive marker to main so the activity clock resets.
+name: keepalive
+on:
+  schedule:
+    - cron: "0 4 1 * *" # 04:00 UTC, 1st of every month
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify the nightly fired in the last 30 days (best-effort, informative)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The nightly (ci.yml @ schedule) must have produced runs recently.
+          # Counting via the API keeps the check inside CI instead of a human's memory.
+          set +e
+          COUNT=$(gh api "repos/${{ github.repository }}/actions/runs?event=schedule&per_page=30" \
+            --jq '[.workflow_runs[] | select(.created_at > (now - 2592000 | todateiso8601))] | length')
+          echo "scheduled runs in the last 30 days: ${COUNT:-?}"
+          if [ "${COUNT:-0}" = "0" ]; then
+            echo "::warning::no scheduled runs in 30 days — check ci.yml cron + repo activity"
+          fi
+      - name: Keepalive commit (resets the 60-day auto-disable clock)
+        run: |
+          git config user.name "cairn-keepalive"
+          git config user.email "actions@users.noreply.github.com"
+          git commit --allow-empty -m "chore: keepalive — scheduled workflows auto-disable after 60d of repo inactivity"
+          if ! git push origin HEAD:main; then
+            echo "push rejected (non-fast-forward or protected branch) — schedule check the branch rules"
+          fi
