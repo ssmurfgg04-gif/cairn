@@ -31,21 +31,17 @@ pub struct DaemonState {
     pub started: Instant,
     /// Kill switches (config_flags mirror; daemon-side copy, server-side authoritative).
     pub flags: RwLock<Vec<(String, String)>>,
-    /// WO6-3: live recall jobs (ctl RecallStatus surface).
-    pub recall_jobs: RwLock<HashMap<String, crate::daemon::RecallJob>>,
-    /// Clonable handle into `recall_jobs` for background tasks.
-    pub recall_jobs_arc: std::sync::Arc<RwLock<HashMap<String, crate::daemon::RecallJob>>>,
+    /// WO6-3: live recall jobs (ctl RecallStatus surface); shared with background tasks.
+    pub recall_jobs: std::sync::Arc<RwLock<HashMap<String, crate::daemon::RecallJob>>>,
 }
 
 impl DaemonState {
     fn new(home: PathBuf) -> Self {
-        let jobs = Arc::new(RwLock::new(HashMap::new()));
         DaemonState {
             home,
             started: Instant::now(),
             flags: RwLock::new(default_flags()),
-            recall_jobs: RwLock::new(HashMap::new()),
-            recall_jobs_arc: jobs,
+            recall_jobs: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 }
@@ -476,7 +472,7 @@ fn bearer_md(
         .map_err(|_| Status::internal("bad token chars"))
 }
 
-async fn bearer(home: &std::path::Path) -> Result<(String, String), Status> {
+fn bearer(home: &std::path::Path) -> Result<(String, String), Status> {
     let store = cairn_store::Store::open(home, Arc::new(WallClock))
         .map_err(|e| Status::failed_precondition(e.message))?;
     let id = crate::projects::load_identity(&store)
@@ -496,7 +492,7 @@ impl CtlSnapshots for CtlSnapshotsSvc {
     ) -> Result<Response<CreateSnapshotResponse>, Status> {
         let req = request.into_inner();
         let (mut client, _url) = server_ctx(&self.state.home).await?;
-        let (tenant, token) = bearer(&self.state.home).await?;
+        let (tenant, token) = bearer(&self.state.home)?;
         let mut r = Request::new(FoldNowRequest {
             tenant_id: tenant,
             project_id: req.project_id.clone(),
@@ -520,7 +516,7 @@ impl CtlSnapshots for CtlSnapshotsSvc {
     ) -> Result<Response<ListSnapshotsResponse>, Status> {
         let req = request.into_inner();
         let (mut client, _url) = server_ctx(&self.state.home).await?;
-        let (tenant, token) = bearer(&self.state.home).await?;
+        let (tenant, token) = bearer(&self.state.home)?;
         // head ref → walk the commit chain (parents) up to a bounded depth
         let mut r = Request::new(cairn_proto::pb::ListRefsRequest {
             tenant_id: tenant.clone(),
@@ -576,7 +572,7 @@ impl CtlSnapshots for CtlSnapshotsSvc {
     ) -> Result<Response<RestoreSnapshotResponse>, Status> {
         let req = request.into_inner();
         let (_client, _url) = server_ctx(&self.state.home).await?;
-        let (tenant, token) = bearer(&self.state.home).await?;
+        let (tenant, token) = bearer(&self.state.home)?;
         // commit → tree → (path, manifest) entries
         let mut cr = Request::new(GetManifestRequest {
             tenant_id: tenant.clone(),
@@ -666,7 +662,7 @@ async fn download_commit(
     home: &std::path::Path,
     mut request: Request<GetManifestRequest>,
 ) -> Result<Vec<u8>, Status> {
-    let (_tenant, token) = bearer(home).await?;
+    let (_tenant, token) = bearer(home)?;
     let store = cairn_store::Store::open(home, Arc::new(WallClock))
         .map_err(|e| Status::failed_precondition(e.message))?;
     let id = crate::projects::load_identity(&store)
@@ -780,14 +776,14 @@ impl CtlRecall for CtlRecallSvc {
         } else {
             Some(req.path.clone())
         };
-        self.state.recall_jobs_arc.write().await.insert(
+        self.state.recall_jobs.write().await.insert(
             job_id.clone(),
             RecallJob {
                 state: "running".into(),
                 ..RecallJob::default()
             },
         );
-        let registry = Arc::clone(&self.state.recall_jobs_arc);
+        let registry = Arc::clone(&self.state.recall_jobs);
         tokio::spawn(async move {
             let Ok(store) = cairn_store::Store::open(&home, Arc::new(WallClock)) else {
                 registry.write().await.insert(
@@ -821,7 +817,7 @@ impl CtlRecall for CtlRecallSvc {
         request: Request<RecallStatusRequest>,
     ) -> Result<Response<RecallStatusResponse>, Status> {
         let req = request.into_inner();
-        let jobs = self.state.recall_jobs_arc.read().await;
+        let jobs = self.state.recall_jobs.read().await;
         let Some(job) = jobs.get(&req.job_id) else {
             return Err(Status::not_found(format!(
                 "unknown recall job {}",
