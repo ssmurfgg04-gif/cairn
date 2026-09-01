@@ -65,3 +65,13 @@ tls-dev-cert:
     echo "dev TLS cert: ./.cairn-server/keys/tls-dev/server.pem"
     echo "run server with: --tls-cert ./.cairn-server/keys/tls-dev/server.pem --tls-key ./.cairn-server/keys/tls-dev/server.key"
     echo "login with:      cairn login --server https://localhost:7443 --ca ./.cairn-server/keys/tls-dev/server.pem --code <code>"
+
+# WO6-4 soak: 5GB-class ingest, kill -9 at ~50%, resume, byte-identity,
+# zero-dup journal, COLD-FETCH first byte. Needs ~3.2x SIZE_MB free disk.
+# DRY-RUN (no CAIRN_S3_*) = LocalFs objects; set CAIRN_S3_* for the REAL wire.
+soak-5gb SIZE_MB="5000":
+    SIZE_MB={{SIZE_MB}} bash scripts/soak.sh
+
+# quick validation variant (CI-parity scale, ~2GB disk)
+soak-quick:
+    SIZE_MB=400 bash scripts/soak.sh

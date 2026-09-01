@@ -281,7 +281,7 @@ fn connect_cfapi(
         Err(_) => return,
     };
     let rt = tokio::runtime::Handle::current();
-    match win_attach::attach_windows(
+    match crate::win_attach::attach_windows(
         store,
         root,
         pid,

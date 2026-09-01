@@ -20,6 +20,7 @@ hex = { workspace = true }
 rand = { workspace = true }
 notify = { workspace = true }
 reqwest = { workspace = true }
+futures = { workspace = true }
 rusqlite = { workspace = true }
 
 [lints]

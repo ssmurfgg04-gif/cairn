@@ -118,6 +118,19 @@ pub struct GrpcPlane {
     pub http: reqwest::Client,
 }
 
+/// One COLD-FETCH measurement (see [`GrpcPlane::measure_cold_fetch`]).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ColdFetchSample {
+    /// presign RPC (GetDownloadUrl) duration
+    pub presign_ms: f64,
+    /// presign + HTTP round trip until the FIRST body byte (the cold-fetch latency)
+    pub first_byte_ms: f64,
+    /// presign + full body transfer
+    pub total_ms: f64,
+    /// body bytes actually received (must equal the chunk size)
+    pub bytes: u64,
+}
+
 impl GrpcPlane {
     /// Connect to the metadata server (`http(s)://host:port`); `tenant_id` is stamped into
     /// every payload that carries a tenant field (server cross-checks it against the token).
@@ -165,6 +178,67 @@ impl GrpcPlane {
             .map_err(|e| CairnError::new(ErrorKind::Internal, format!("auth header: {e}")))?;
         req.metadata_mut().insert("authorization", v);
         Ok(req)
+    }
+
+    /// WO6-4 COLD-FETCH instrumentation (docs/BENCHMARKS.md): ONE real download-path
+    /// fetch — `GetDownloadUrl` (presign) → presigned GET — with the body streamed so
+    /// the time-to-FIRST-BYTE is separated from total transfer time. This is the exact
+    /// code path a cold hydration takes on a device that has never seen the chunk
+    /// (fresh store, no local CAS); "cold" here means fresh process + empty client
+    /// state, NOT a dropped server page cache (see BENCHMARKS.md for the honest
+    /// caveat and the drop-caches escalation used when privileges allow).
+    ///
+    /// Inherent on GrpcPlane (not on the [`Plane`] trait): harness-only measurement.
+    pub async fn measure_cold_fetch(
+        &self,
+        tenant: &str,
+        hash_hex: &str,
+    ) -> Result<ColdFetchSample, CairnError> {
+        use futures::StreamExt;
+        let mut c = DownloadClient::new(self.channel.clone());
+        let req = self.authed(cairn_proto::pb::GetDownloadUrlRequest {
+            tenant_id: tenant.into(),
+            manifest_hash: hash_hex.into(),
+            path: String::new(),
+            chunk: true,
+        })?;
+        let t0 = std::time::Instant::now();
+        let out = c.get_download_url(req).await.map_err(|s| from_wire(&s))?;
+        let url = out.into_inner().url;
+        let presign_ms = t0.elapsed().as_secs_f64() * 1e3;
+        let r = self.http.get(&url).send().await;
+        match r {
+            Ok(resp) if resp.status().is_success() => {
+                let mut stream = resp.bytes_stream();
+                let mut first_byte_ms = None;
+                let mut total_bytes = 0u64;
+                while let Some(item) = stream.next().await {
+                    let b = item.map_err(|e| {
+                        CairnError::new(ErrorKind::Unavailable, format!("object GET: {e}"))
+                    })?;
+                    if first_byte_ms.is_none() {
+                        first_byte_ms = Some(t0.elapsed().as_secs_f64() * 1e3);
+                    }
+                    total_bytes += b.len() as u64;
+                }
+                let total_ms = t0.elapsed().as_secs_f64() * 1e3;
+                Ok(ColdFetchSample {
+                    presign_ms,
+                    first_byte_ms: first_byte_ms
+                        .ok_or_else(|| CairnError::new(ErrorKind::Unavailable, "empty body"))?,
+                    total_ms,
+                    bytes: total_bytes,
+                })
+            }
+            Ok(resp) => Err(CairnError::new(
+                ErrorKind::Unavailable,
+                format!("object GET: HTTP {}", resp.status()),
+            )),
+            Err(e) => Err(CairnError::new(
+                ErrorKind::Unavailable,
+                format!("object GET: {e}"),
+            )),
+        }
     }
 }
 
