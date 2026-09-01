@@ -18,9 +18,12 @@
     </div>
     <nav class="nav" id="nav">
       <a href="#overview" class="nav-item is-active">Overview</a>
+      <a href="#projects" class="nav-item">Projects</a>
       <a href="#activity" class="nav-item">Activity</a>
       <a href="#leases" class="nav-item">Leases</a>
       <a href="#snapshots" class="nav-item">Snapshots</a>
+      <a href="#pins" class="nav-item">Pins</a>
+      <a href="#recall" class="nav-item">Recall</a>
       <a href="#storage" class="nav-item">Storage</a>
       <a href="#flags" class="nav-item">Kill switches</a>
       <a href="#doctor" class="nav-item">Doctor</a>
@@ -75,6 +78,21 @@
       </article>
     </section>
 
+    <section id="projects" class="card">
+      <h3 class="card-title">Attached projects</h3>
+      <div class="action-row">
+        <input id="attach-root" class="input mono" type="text" placeholder="/path/to/workspace — attach a root">
+        <input id="attach-project" class="input mono" type="text" placeholder="project id (optional)">
+        <button type="button" class="btn" id="btn-attach">attach</button>
+      </div>
+      <table class="table">
+        <thead><tr><th>project</th><th>root</th><th>state</th><th>files</th><th>outbox</th><th>last error</th><th>actions</th></tr></thead>
+        <tbody id="project-body">
+          <tr><td colspan="7" class="empty">No attached projects — attach a root above or via `cairn attach`.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
     <section id="activity" class="card">
       <h3 class="card-title">Journal activity</h3>
       <table class="table">
@@ -99,12 +117,47 @@
     <section id="snapshots" class="card">
       <h3 class="card-title">Snapshots</h3>
       <p class="note">Snapshots fold from the journal every 5,000 entries, every 24h, on demand, or at project close.</p>
+      <div class="action-row">
+        <select id="snapshot-project" class="input mono"></select>
+        <input id="snapshot-label" class="input mono" type="text" placeholder="label (e.g. before color pass)">
+        <button type="button" class="btn" id="btn-snapshot">create snapshot</button>
+        <button type="button" class="btn btn-ghost" id="btn-snapshots-refresh">refresh</button>
+      </div>
       <table class="table">
-        <thead><tr><th>commit</th><th>label</th><th>seq</th><th>author</th></tr></thead>
+        <thead><tr><th>commit</th><th>label</th><th>seq</th><th>author</th><th>actions</th></tr></thead>
         <tbody id="snapshot-body">
-          <tr><td colspan="4" class="empty">Snapshots list is served by the storage server after the first fold.</td></tr>
+          <tr><td colspan="5" class="empty">Snapshots list is served by the storage server after the first fold.</td></tr>
         </tbody>
       </table>
+    </section>
+
+    <section id="pins" class="card">
+      <h3 class="card-title">Pins</h3>
+      <p class="note">Pinned files are recalled into local storage and exempt from LRU eviction.</p>
+      <div class="action-row">
+        <select id="pin-project" class="input mono"></select>
+        <input id="pin-path" class="input mono" type="text" placeholder="relative path to pin (e.g. scene.prproj)">
+        <button type="button" class="btn" id="btn-pin">pin</button>
+      </div>
+      <table class="table">
+        <thead><tr><th>path</th><th>size</th><th>state</th><th>actions</th></tr></thead>
+        <tbody id="pin-body">
+          <tr><td colspan="4" class="empty">No pins on this machine.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="recall" class="card">
+      <h3 class="card-title">Recall jobs</h3>
+      <p class="note">Recall materializes files from the bucket into local storage (progress per job).</p>
+      <div class="action-row">
+        <select id="recall-project" class="input mono"></select>
+        <input id="recall-path" class="input mono" type="text" placeholder="one path (optional — whole project if empty)">
+        <button type="button" class="btn" id="btn-recall">start recall</button>
+      </div>
+      <div id="recall-jobs" class="recall-jobs">
+        <p class="note">No recall jobs yet.</p>
+      </div>
     </section>
 
     <section id="storage" class="card">

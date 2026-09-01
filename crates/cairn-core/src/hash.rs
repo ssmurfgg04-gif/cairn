@@ -143,9 +143,101 @@ pub fn b64_encode(bytes: &[u8]) -> String {
     out
 }
 
+/// Base64 decode — strict inverse of [`b64_decode`]'s encoder (RFC 4648 standard
+/// alphabet, `=` padding only at the end). `None` on any invalid char, misplaced
+/// padding, or impossible length. Used by the dev object endpoint to decode the
+/// `x-amz-checksum-sha256` header the daemon sends (quirk S1: base64 on the wire).
+#[must_use]
+pub fn b64_decode(s: &str) -> Option<Vec<u8>> {
+    if s.len() % 4 != 0 {
+        return None;
+    }
+    let val = |c: u8| -> Option<u32> {
+        match c {
+            b'A'..=b'Z' => Some(u32::from(c - b'A')),
+            b'a'..=b'z' => Some(u32::from(c - b'a') + 26),
+            b'0'..=b'9' => Some(u32::from(c - b'0') + 52),
+            b'+' => Some(62),
+            b'/' => Some(63),
+            _ => None,
+        }
+    };
+    let bytes = s.as_bytes();
+    // padding: only the final 1 or 2 chars may be '='
+    let pad = bytes.iter().rev().take_while(|&&c| c == b'=').count();
+    if pad > 2 {
+        return None;
+    }
+    let body = &bytes[..bytes.len() - pad];
+    if body.iter().any(|&c| val(c).is_none()) {
+        return None;
+    }
+    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
+    for chunk in bytes.chunks(4) {
+        if chunk.len() != 4 {
+            return None; // unreachable given the len%4 check, but stay strict
+        }
+        let n0 = val(chunk[0])?;
+        let n1 = val(chunk[1])?;
+        if chunk[2] == b'=' {
+            if chunk[3] != b'=' || pad != 2 {
+                return None;
+            }
+            out.push(((n0 << 2) | (n1 >> 4)) as u8);
+        } else if chunk[3] == b'=' {
+            if pad != 1 {
+                return None;
+            }
+            let n2 = val(chunk[2])?;
+            out.push(((n0 << 2) | (n1 >> 4)) as u8);
+            out.push((((n1 & 0xF) << 4) | (n2 >> 2)) as u8);
+        } else {
+            let n2 = val(chunk[2])?;
+            let n3 = val(chunk[3])?;
+            out.push(((n0 << 2) | (n1 >> 4)) as u8);
+            out.push((((n1 & 0xF) << 4) | (n2 >> 2)) as u8);
+            out.push((((n2 & 0x3) << 6) | n3) as u8);
+        }
+    }
+    Some(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn b64_decode_roundtrips_and_is_strict() {
+        // RFC 4648 §10 vectors, both directions
+        for (raw, enc) in [
+            (&b""[..], ""),
+            (&b"f"[..], "Zg=="),
+            (&b"fo"[..], "Zm8="),
+            (&b"foo"[..], "Zm9v"),
+            (&b"foob"[..], "Zm9vYg=="),
+            (&b"fooba"[..], "Zm9vYmE="),
+            (&b"foobar"[..], "Zm9vYmFy"),
+        ] {
+            assert_eq!(b64_encode(raw), enc);
+            assert_eq!(b64_decode(enc).as_deref(), Some(raw));
+        }
+        // 32 raw bytes (the checksum shape): roundtrip both ways
+        let raw: Vec<u8> = (0..32u8).collect();
+        let enc = b64_encode(&raw);
+        assert_eq!(enc.len(), 44);
+        assert!(enc.ends_with('='));
+        assert_eq!(b64_decode(&enc).as_deref(), Some(raw.as_slice()));
+        // strictness
+        assert_eq!(b64_decode("Zg="), None, "bad length");
+        assert_eq!(b64_decode("Zg!="), None, "invalid char");
+        assert_eq!(b64_decode("=Zg="), None, "misplaced padding");
+        assert_eq!(b64_decode("Z=== Zm9v"), None, "space is not alphabet");
+        assert_eq!(b64_decode("ZZ==Zm9v"), None, "padding mid-string");
+        // a hex-encoded digest is a DIFFERENT byte string than the raw digest —
+        // the exact failure mode the server's accept arm had (hex_decode on b64)
+        let digest_raw = b64_decode(&b64_encode(&[7u8; 32])).expect("valid b64");
+        assert_ne!(hex_encode(&[7u8; 32]).into_bytes(), digest_raw);
+    }
 
     #[test]
     fn b64_matches_rfc4648_known_answers() {

@@ -118,9 +118,111 @@ pub fn find_case_collisions(paths: &[String]) -> Vec<String> {
     out
 }
 
+/// Max stored-path length (bytes). Deep tree paths only; NLE project trees live well
+/// under this. A cap keeps validation O(1) and bounds SQLite key sizes.
+pub const MAX_REL_PATH_BYTES: usize = 1024;
+
+/// Validate a stored journal/tree path stays INSIDE the project root (WO6-9 security
+/// gate, SPEC §7.1 "the path is a project-relative POSIX path").
+///
+/// Rejects: empty paths, absolute paths (POSIX or Windows drive/UNC), backslash
+/// separators (Windows smuggling — a `\` is never legal in a stored path), any `.` or
+/// `..` component, empty components (double slashes), trailing slashes, NUL and other
+/// C0 control characters, and paths over [`MAX_REL_PATH_BYTES`].
+///
+/// Enforced at EVERY trust boundary: server journal append (authoritative choke point),
+/// client apply/replay, and snapshot restore materialization. Failures are loud and
+/// never retried (`INVALID_PATH`, retry = Never).
+///
+/// # Errors
+/// `INVALID_PATH` with the reason; the message never echoes the full offending path
+/// (it could itself contain control characters).
+pub fn validate_rel_path(path: &str) -> Result<(), crate::CairnError> {
+    let reject = |why: &str| {
+        Err(crate::CairnError::new(
+            crate::ErrorKind::InvalidPath,
+            format!("invalid stored path: {why}"),
+        ))
+    };
+    if path.is_empty() {
+        return reject("empty");
+    }
+    if path.len() > MAX_REL_PATH_BYTES {
+        return reject("exceeds length cap");
+    }
+    if path.bytes().any(|b| b < 0x20 || b == 0x7f) {
+        return reject("control character");
+    }
+    if path.contains('\\') {
+        return reject("backslash separator");
+    }
+    if path.starts_with('/') {
+        return reject("absolute path");
+    }
+    // Windows drive (`X:`) and UNC (`\\`) — the backslash check already kills UNC, but
+    // a drive prefix can ride a plain POSIX-shaped string, so check it explicitly.
+    let bytes = path.as_bytes();
+    if bytes.len() >= 2 && bytes[1] == b':' && bytes[0].is_ascii_alphabetic() {
+        return reject("drive-prefixed path");
+    }
+    for comp in path.split('/') {
+        if comp.is_empty() {
+            return reject("empty component (double slash or trailing slash)");
+        }
+        if comp == "." || comp == ".." {
+            return reject("traversal component");
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validate_accepts_honest_project_paths() {
+        for p in [
+            "shot.mov",
+            "A001_C001_07107.braw",
+            "sub/dir/timeline.prproj",
+            " deeply nested/every day/renders/final_v2.exr",
+            "ünïcode-nfc-shot.mov",
+            ".hidden/file.json",
+        ] {
+            assert!(validate_rel_path(p).is_ok(), "should accept: {p}");
+        }
+        let long = format!("{}end.mov", "x/".repeat((MAX_REL_PATH_BYTES - 8) / 2));
+        assert!(long.len() <= MAX_REL_PATH_BYTES);
+        assert!(validate_rel_path(&long).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_traversal_and_escapes() {
+        for p in [
+            "",
+            "/etc/passwd",
+            "//absolute",
+            "..",
+            "../escape.mov",
+            "sub/../../escape.mov",
+            "sub/..",
+            "a/./b.mov",
+            "a//b.mov",
+            "trailing/",
+            r"win\path.mov",
+            r"..\\escape",
+            "C:drive.mov",
+            "C:/drive/path.mov",
+            "nul\0byte.mov",
+            "bell\u{7}.mov",
+            &format!("a{}", "x".repeat(MAX_REL_PATH_BYTES + 1)),
+        ] {
+            let err = validate_rel_path(p);
+            assert!(err.is_err(), "should reject: {p:?}");
+            assert_eq!(err.unwrap_err().kind, crate::ErrorKind::InvalidPath);
+        }
+    }
 
     #[test]
     fn nfc_is_idempotent_and_stable() {

@@ -44,6 +44,11 @@ doctor:
 
 ci: fmt-check clippy test
 
+# WO6-9: security sweep (RustSec advisories, secret-shape scan, unsafe policy,
+# path-traversal gates, TLS fail-closed, I3 scoping, token logging, scope checks).
+security:
+    bash scripts/security-sweep.sh
+
 wo1-acceptance:
     SIZE_MB=${SIZE_MB:-500} bash scripts/wo1-acceptance.sh
 

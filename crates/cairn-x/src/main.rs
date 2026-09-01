@@ -4,6 +4,7 @@
 #![forbid(unsafe_code)]
 
 pub mod bench;
+pub mod burst;
 pub mod cold_fetch;
 pub mod corpus;
 pub mod corpus_real;
@@ -117,6 +118,26 @@ pub enum Cmd {
         #[arg(long, default_value_t = 5)]
         iters: usize,
     },
+    /// BURST open benchmark (WO6-5): N concurrent workers open files through the
+    /// FUSE-parity read path with warm header cache; gate = first-byte and
+    /// first-2-MiB p95 < 50 ms (SPEC §2 I1, cached) under load.
+    Burst {
+        /// Distinct files in the store.
+        #[arg(long, default_value_t = 32)]
+        files: usize,
+        /// Per-file size in MiB.
+        #[arg(long, default_value_t = 8)]
+        file_mb: usize,
+        /// Concurrent open workers (the burst width).
+        #[arg(long, default_value_t = 32)]
+        workers: usize,
+        /// Opens per worker (samples = workers × opens).
+        #[arg(long, default_value_t = 25)]
+        opens: usize,
+        /// I1 gate in ms (SPEC §2).
+        #[arg(long, default_value_t = 50.0)]
+        gate_ms: f64,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -219,6 +240,19 @@ fn main() -> anyhow::Result<()> {
             server,
             hash,
             iters,
+        }),
+        Cmd::Burst {
+            files,
+            file_mb,
+            workers,
+            opens,
+            gate_ms,
+        } => burst::run(burst::BurstArgs {
+            files,
+            file_mb,
+            workers,
+            opens,
+            gate_ms,
         }),
     }
 }

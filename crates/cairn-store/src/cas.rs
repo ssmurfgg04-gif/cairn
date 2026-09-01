@@ -128,6 +128,33 @@ impl Cas {
         Ok(v as u64)
     }
 
+    /// Storage stats for the dashboard (WO6-UI): object count, total bytes, and the
+    /// pinned subset (eviction-exempt). Real aggregates over the blobs table — the
+    /// dashboard renders these verbatim, no placeholders.
+    pub fn blob_stats(&self) -> Result<(u64, u64, u64, u64), CairnError> {
+        let db = self.db.lock().expect("cas db poisoned");
+        let (count, total): (i64, i64) = db
+            .query_row(
+                "SELECT COUNT(*), COALESCE(SUM(size),0) FROM blobs",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .map_err(|e| CairnError::new(ErrorKind::Io, format!("blob_stats: {e}")))?;
+        let (pinned_count, pinned_bytes): (i64, i64) = db
+            .query_row(
+                "SELECT COUNT(*), COALESCE(SUM(size),0) FROM blobs WHERE pinned=1",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .map_err(|e| CairnError::new(ErrorKind::Io, format!("blob_stats: {e}")))?;
+        Ok((
+            count as u64,
+            total as u64,
+            pinned_count as u64,
+            pinned_bytes as u64,
+        ))
+    }
+
     /// Local GC: evict least-recently-used unpinned chunks down to `target_bytes`.
     /// Returns evicted hashes. Pinned chunks are never touched (SPEC §10).
     pub fn evict_to(&self, target_bytes: u64) -> Result<Vec<String>, CairnError> {

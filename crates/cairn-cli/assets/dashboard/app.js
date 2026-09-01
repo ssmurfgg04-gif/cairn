@@ -35,6 +35,41 @@ async function getJSON(url) {
   return res.json();
 }
 
+async function postJSON(url, body) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body || {}),
+  });
+  return res.json();
+}
+
+/* ---------- selected project (shared by snapshot/pin/recall controls) ---------- */
+
+let PROJECTS = [];
+
+function selectedProject(selectId) {
+  const el = $(selectId);
+  if (el && el.value) return el.value;
+  return PROJECTS.length > 0 ? PROJECTS[0].project_id : "";
+}
+
+function fillProjectSelects() {
+  for (const id of ["snapshot-project", "pin-project", "recall-project"]) {
+    const el = $(id);
+    if (!el) continue;
+    const prev = el.value;
+    el.innerHTML = "";
+    for (const p of PROJECTS) {
+      const opt = document.createElement("option");
+      opt.value = p.project_id;
+      opt.textContent = p.project_id;
+      el.appendChild(opt);
+    }
+    if (prev && PROJECTS.some((p) => p.project_id === prev)) el.value = prev;
+  }
+}
+
 /* ---------- status header + overview ---------- */
 
 async function refreshStatus() {
@@ -45,9 +80,7 @@ async function refreshStatus() {
     $("daemon-uptime").textContent = fmtUptime(s.uptime_ms);
 
     const summary = s.summary || {};
-    const attached = (s.projects || []).length;
-    $("project-name").textContent =
-      attached > 0 ? (s.projects[0].root_path || "project root") : "no roots attached";
+    // header title is owned by refreshProjects (real per-project roots)
 
     const healthy = summary.healthy === true;
     setChip(
@@ -122,25 +155,166 @@ function renderLeases(leases) {
   }
 }
 
-/* ---------- snapshots ---------- */
+/* ---------- projects (WO6-UI: real ctl parity) ---------- */
+
+function renderProjects(projects) {
+  PROJECTS = projects || [];
+  fillProjectSelects();
+  const body = $("project-body");
+  body.innerHTML = "";
+  if (!PROJECTS.length) {
+    body.innerHTML =
+      '<tr><td colspan="7" class="empty">No attached projects — attach a root above or via `cairn attach`.</td></tr>';
+    return;
+  }
+  for (const p of PROJECTS) {
+    const tr = document.createElement("tr");
+    const stateTag =
+      p.state === "error" ? "bad" : p.state === "syncing" ? "info" : "ok";
+    const err = p.last_error
+      ? `<span class="tag bad">error</span> ${p.last_error}`
+      : "—";
+    tr.innerHTML =
+      `<td class="mono">${p.project_id}</td>` +
+      `<td>${p.root_path ?? ""}</td>` +
+      `<td><span class="tag ${stateTag}">${p.state ?? "?"}</span></td>` +
+      `<td>${p.files_synced ?? 0}</td>` +
+      `<td>${p.pending_outbox ?? 0}</td>` +
+      `<td>${err}</td>` +
+      `<td><button type="button" class="btn btn-ghost" data-detach="${p.project_id}">detach</button></td>`;
+    tr.querySelector("[data-detach]").addEventListener("click", async (ev) => {
+      if (!confirm(`Detach ${ev.currentTarget.dataset.detach}? Local files stay.`)) return;
+      await postJSON("/api/v1/detach", { project_id: ev.currentTarget.dataset.detach });
+      refreshAll();
+    });
+    body.appendChild(tr);
+  }
+}
+
+async function refreshProjects() {
+  try {
+    const r = await getJSON("/api/v1/projects");
+    renderProjects(r.projects);
+    const attached = PROJECTS.length;
+    $("project-name").textContent =
+      attached === 0
+        ? "no roots attached"
+        : attached === 1
+          ? PROJECTS[0].root_path || PROJECTS[0].project_id
+          : `${attached} roots attached`;
+  } catch { /* covered by status chip */ }
+}
+
+/* ---------- snapshots (list + create + restore) ---------- */
 
 function renderSnapshots(snapshots) {
   const body = $("snapshot-body");
   body.innerHTML = "";
   if (!snapshots || snapshots.length === 0) {
     body.innerHTML =
-      '<tr><td colspan="4" class="empty">Snapshots list is served by the storage server after the first fold.</td></tr>';
+      '<tr><td colspan="5" class="empty">No snapshots yet — create one after the first sync.</td></tr>';
     return;
   }
   for (const s of snapshots.slice(0, 10)) {
     const tr = document.createElement("tr");
     tr.innerHTML =
-      `<td>${(s.commit_hash || "").slice(0, 12)}</td>` +
+      `<td class="mono">${(s.commit_hash || "").slice(0, 12)}</td>` +
       `<td>${s.label || ""}</td>` +
       `<td>${s.snapshot_seq ?? "—"}</td>` +
-      `<td>${s.author || ""}</td>`;
+      `<td>${s.author || ""}</td>` +
+      `<td><button type="button" class="btn btn-ghost" data-restore="${s.commit_hash}">restore</button></td>`;
+    tr.querySelector("[data-restore]").addEventListener("click", async (ev) => {
+      const project = selectedProject("snapshot-project");
+      if (!project) return alert("attach a project first");
+      if (!confirm("Restore this snapshot into the workspace?")) return;
+      const r = await postJSON("/api/v1/snapshots/restore", {
+        project_id: project,
+        commit_hash: ev.currentTarget.dataset.restore,
+      });
+      if (r.ok) alert(`Restored ${r.restored_files} files (${fmtBytes(r.bytes)})`);
+      else alert(`Restore failed: ${r.error}`);
+      refreshAll();
+    });
     body.appendChild(tr);
   }
+}
+
+async function refreshSnapshots() {
+  const project = selectedProject("snapshot-project");
+  if (!project) return;
+  try {
+    const r = await getJSON(`/api/v1/snapshots?project=${encodeURIComponent(project)}`);
+    renderSnapshots(r.ok ? r.snapshots : []);
+  } catch { /* server may be down; empty stays honest */ }
+}
+
+/* ---------- pins ---------- */
+
+function renderPins(pins) {
+  const body = $("pin-body");
+  body.innerHTML = "";
+  if (!pins || pins.length === 0) {
+    body.innerHTML = '<tr><td colspan="4" class="empty">No pins on this machine.</td></tr>';
+    return;
+  }
+  for (const p of pins) {
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      `<td class="mono">${p.path}</td>` +
+      `<td>${fmtBytes(p.size)}</td>` +
+      `<td><span class="tag ok">${p.state || "pinned"}</span></td>` +
+      `<td><button type="button" class="btn btn-ghost" data-unpin="${p.path}">unpin</button></td>`;
+    tr.querySelector("[data-unpin]").addEventListener("click", async (ev) => {
+      const project = selectedProject("pin-project");
+      if (!project) return;
+      await postJSON("/api/v1/pins/unpin", { project_id: project, path: ev.currentTarget.dataset.unpin });
+      refreshPins();
+    });
+    body.appendChild(tr);
+  }
+}
+
+async function refreshPins() {
+  const project = selectedProject("pin-project");
+  if (!project) return;
+  try {
+    const r = await getJSON(`/api/v1/pins?project=${encodeURIComponent(project)}`);
+    renderPins(r.ok ? r.pins : []);
+  } catch { /* covered */ }
+}
+
+/* ---------- recall jobs (progress) ---------- */
+
+const RECALL_JOBS = new Map();
+
+function renderRecallJobs() {
+  const box = $("recall-jobs");
+  if (RECALL_JOBS.size === 0) {
+    box.innerHTML = '<p class="note">No recall jobs yet.</p>';
+    return;
+  }
+  box.innerHTML = "";
+  for (const [id, j] of RECALL_JOBS.entries()) {
+    const div = document.createElement("div");
+    div.className = "recall-job";
+    const tag = j.state === "failed" ? "bad" : j.state === "completed" ? "ok" : "info";
+    div.innerHTML =
+      `<div class="recall-head"><span class="mono">${id.slice(0, 8)}</span>` +
+      `<span class="tag ${tag}">${j.state}</span></div>` +
+      `<div class="meter"><div class="meter-fill" style="width:${Math.max(4, Math.round((j.progress || 0) * 100))}%"></div></div>`;
+    box.appendChild(div);
+  }
+}
+
+async function pollRecallJobs() {
+  for (const [id, j] of RECALL_JOBS.entries()) {
+    if (j.state === "completed" || j.state === "failed") continue;
+    try {
+      const r = await getJSON(`/api/v1/recall/${encodeURIComponent(id)}`);
+      if (r.ok) { RECALL_JOBS.set(id, r); }
+    } catch { /* keep last state */ }
+  }
+  renderRecallJobs();
 }
 
 /* ---------- flags ---------- */
@@ -196,16 +370,65 @@ async function refreshOnce() {
 
 async function refreshAll() {
   await refreshStatus();
+  await refreshProjects();
   try {
     const feed = await getJSON("/api/v1/feed");
     renderActivity(feed.activity);
     renderLeases(feed.leases);
   } catch { /* covered by status chip */ }
+  await refreshSnapshots();
+  await refreshPins();
+  await pollRecallJobs();
   try {
     const f = await getJSON("/api/v1/flags");
     renderFlags(f.flags);
   } catch { /* covered */ }
 }
+
+/* ---------- action buttons ---------- */
+
+$("btn-attach").addEventListener("click", async () => {
+  const root = $("attach-root").value.trim();
+  const project = $("attach-project").value.trim();
+  if (!root) return alert("root path required");
+  const r = await postJSON("/api/v1/attach", { root_path: root, project_id: project });
+  if (!r.ok) alert(`attach failed: ${r.error}`);
+  else { $("attach-root").value = ""; $("attach-project").value = ""; }
+  refreshAll();
+});
+
+$("btn-snapshot").addEventListener("click", async () => {
+  const project = selectedProject("snapshot-project");
+  if (!project) return alert("attach a project first");
+  const r = await postJSON("/api/v1/snapshots", {
+    project_id: project,
+    label: $("snapshot-label").value.trim(),
+  });
+  if (r.ok) { $("snapshot-label").value = ""; refreshSnapshots(); }
+  else alert(`snapshot failed: ${r.error}`);
+});
+
+$("btn-snapshots-refresh").addEventListener("click", refreshSnapshots);
+
+$("btn-pin").addEventListener("click", async () => {
+  const project = selectedProject("pin-project");
+  const path = $("pin-path").value.trim();
+  if (!project || !path) return alert("project and path required");
+  const r = await postJSON("/api/v1/pins", { project_id: project, path });
+  if (r.ok) { $("pin-path").value = ""; refreshPins(); }
+  else alert(`pin failed: ${r.error}`);
+});
+
+$("btn-recall").addEventListener("click", async () => {
+  const project = selectedProject("recall-project");
+  if (!project) return alert("attach a project first");
+  const r = await postJSON("/api/v1/recall", {
+    project_id: project,
+    path: $("recall-path").value.trim(),
+  });
+  if (r.ok) { RECALL_JOBS.set(r.job_id, { state: "running", progress: 0 }); renderRecallJobs(); }
+  else alert(`recall failed: ${r.error}`);
+});
 
 /* staggered card entry (taste-skill: cascade, never all at once) */
 document.querySelectorAll(".card").forEach((el, i) => {

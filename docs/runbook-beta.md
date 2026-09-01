@@ -31,6 +31,13 @@ Prerequisites read: SPEC.md, docs/ctl-api.md, docs/runbooks/*.
 - [ ] Kill-switch drill: flip `packing_enabled`/`tiering_enabled` off/on mid-traffic — no
       restart, no errors
 - [ ] DR walkthrough: `docs/runbooks/dr.md` table-top
+- [ ] Security sweep green: `just security` (RustSec, secrets, unsafe policy,
+      path-containment, TLS fail-closed, I3, token-log, ctl scopes) — WO6-9
+- [ ] NLE human-gate matrix executed on a studio Windows box:
+      `docs/design/nle-test-matrix.md` (Premiere H1–H3, Resolve H4–H5,
+      Blender H6–H8, conflict H9, offline H10)
+- [ ] Bucket posture verified private (no anonymous List/Get) — see
+      `docs/design/public-bucket-exposure-notes.md`; operator checklist in DR runbook
 
 ## Golden corpus ingest (§15.3)
 Real NLE save sequences are LFS-gated. Per studio: collect 10+ auto-save sequences

@@ -17,6 +17,10 @@ pub mod manifest;
 pub mod normalize;
 pub mod pack;
 pub mod pathutil;
+// Kani BMC harnesses (WO6-invariants) — compiled only by `cargo kani`, invisible to
+// normal builds (cfg(kani) is set by the Kani driver).
+#[cfg(kani)]
+pub mod proofs;
 
 pub use error::{CairnError, ErrorKind, RetryClass};
 

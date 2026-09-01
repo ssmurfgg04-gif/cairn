@@ -219,6 +219,20 @@ impl CairnFs {
             .map(|(h, dt)| (h.head, dt))
     }
 
+    /// Store-serve read entry point (WO6-5 burst bench, probes): FUSE-parity — same
+    /// cache semantics and the SAME FsMetrics recording as the FUSE callback (punch #8:
+    /// every read entry point lands in one metric). `offset==0` records first-byte.
+    pub fn serve_read(&self, path: &str, offset: u64, size: usize) -> Result<Vec<u8>, CairnError> {
+        let f = self
+            .store
+            .get_file(&self.project_id, path)
+            .ok_or_else(|| CairnError::new(ErrorKind::NotFound, path.to_string()))?;
+        let Some(manifest_hex) = f.manifest_hash else {
+            return Ok(Vec::new());
+        };
+        self.read_range(&manifest_hex, offset, size)
+    }
+
     /// Mount at `mountpoint` (blocking; requires /dev/fuse + the `fuse` feature, which needs
     /// libfuse3 headers at build time — enabled on FUSE-capable CI runners).
     #[cfg(feature = "fuse")]

@@ -161,7 +161,7 @@ impl LocalFsStore {
             // bucket-rejects-corrupt: x-amz-checksum-sha256 required and verified
             if headers.get("x-amz-checksum-sha256").is_none() {
                 return plain(StatusCode::BAD_REQUEST, "x-amz-checksum-sha256 required");
-            };
+            }
             let digest = Sha256::digest(&body);
             // The header is base64 on the S3 wire (RFC 4648, quirk S1); the dev
             // local-Fs backend additionally accepts hex so older gate scripts
@@ -170,8 +170,11 @@ impl LocalFsStore {
                 .get("x-amz-checksum-sha256")
                 .and_then(|v| v.to_str().ok());
             let matches = match provided {
+                // base64 on the S3 wire (quirk S1): decode with the BASE64 decoder —
+                // hex_decode here was the a064178 residual: the daemon sends b64,
+                // hex-decoding it returned None for most checksums → every PUT 400'd
                 Some(b64) if b64.len() == 44 && b64.ends_with('=') => {
-                    cairn_core::hash::hex_decode(b64)
+                    cairn_core::hash::b64_decode(b64)
                         .map(|raw| raw == digest.as_slice())
                         .unwrap_or(false)
                 }
@@ -688,12 +691,9 @@ impl S3ObjectStore {
             // virtual-host: the bucket is IN the endpoint host already
             ("/".to_string(), format!("{}/", self.presigner.endpoint))
         };
-        let (auth, amz_date) = self.presigner.authorization_header_path(
-            "PUT",
-            &canonical_path,
-            &payload_hash,
-            now,
-        );
+        let (auth, amz_date) =
+            self.presigner
+                .authorization_header_path("PUT", &canonical_path, &payload_hash, now);
         let resp = self
             .http
             .put(&url)

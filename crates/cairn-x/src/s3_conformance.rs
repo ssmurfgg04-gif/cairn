@@ -193,9 +193,8 @@ pub async fn run(cfg: &ConformanceCfg) -> anyhow::Result<Vec<CheckResult>> {
     // The bucket then verifies the value against the payload, so corrupt
     // uploads are rejected at the bucket WITHOUT checksum-bound presigning.
     let ck_hex = SigV4Presigner::sha256_hex(&payload);
-    let ck_b64 = cairn_core::hash::b64_encode(
-        &cairn_core::hash::hex_decode(&ck_hex).expect("valid hex"),
-    );
+    let ck_b64 =
+        cairn_core::hash::b64_encode(&cairn_core::hash::hex_decode(&ck_hex).expect("valid hex"));
     let url = presigner.presign_put_host_only(&obj_key, 3600, now);
     let resp = http
         .put(&url)
@@ -219,7 +218,10 @@ pub async fn run(cfg: &ConformanceCfg) -> anyhow::Result<Vec<CheckResult>> {
     out.push(CheckResult {
         name: "host_only_put_rejects_wrong_checksum",
         ok: resp.status().as_u16() == 400 || resp.status().as_u16() == 403,
-        detail: format!("host-only PUT + wrong base64 -> {} (want 400/403)", resp.status()),
+        detail: format!(
+            "host-only PUT + wrong base64 -> {} (want 400/403)",
+            resp.status()
+        ),
     });
 
     // -- (5) expired URL -> 403 --
