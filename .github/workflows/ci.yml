@@ -124,7 +124,7 @@ jobs:
       - run: |
           cargo build --release -p cairn-x
           ./target/release/cairn-x corpus-gen --sequences 2 --saves 8 --base-mb 128
-      - run: cargo llvm-cov --workspace --lcov --output-path lcov.info --fail-under-lines 85 -p cairn-core -p cairn-sync
+      - run: cargo llvm-cov --lcov --output-path lcov.info --fail-under-lines 85 -p cairn-core -p cairn-sync
 
   fuzz-nightly:
     if: github.event_name == 'schedule'

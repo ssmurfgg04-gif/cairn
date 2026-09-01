@@ -216,8 +216,12 @@ pub fn connect(
             Type: CF_CALLBACK_TYPE_FETCH_DATA,
             Callback: Some(on_fetch),
         },
+        // CF_CALLBACK_REGISTRATION_END = { CF_CALLBACK_TYPE_INVALID, NULL } — INVALID is
+        // 0xFFFFFFFF (windows-rs exports it as CF_CALLBACK_TYPE_NONE = -1). A 0 type here
+        // is NOT the sentinel: CfConnectSyncRoot rejects the table with E_INVALIDARG
+        // (proven on the real windows-latest VM).
         CF_CALLBACK_REGISTRATION {
-            Type: CF_CALLBACK_TYPE(0), // CF_CALLBACK_END
+            Type: CF_CALLBACK_TYPE_NONE,
             Callback: None,
         },
     ]);
