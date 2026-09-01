@@ -77,10 +77,9 @@ fn filetime_now() -> i64 {
 pub fn register_sync_root(root: &str, provider_name: &str) -> Result<(), i32> {
     use windows::Win32::Storage::CloudFilters::{
         CfRegisterSyncRoot, CF_HYDRATION_POLICY, CF_HYDRATION_POLICY_FULL,
-        CF_HYDRATION_POLICY_MODIFIER,
-        CF_INSYNC_POLICY_PRESERVE_INSYNC_FOR_SYNC_ENGINE, CF_POPULATION_POLICY,
-        CF_POPULATION_POLICY_MODIFIER, CF_POPULATION_POLICY_PARTIAL, CF_REGISTER_FLAG_UPDATE,
-        CF_SYNC_POLICIES, CF_SYNC_REGISTRATION,
+        CF_HYDRATION_POLICY_MODIFIER, CF_INSYNC_POLICY_PRESERVE_INSYNC_FOR_SYNC_ENGINE,
+        CF_POPULATION_POLICY, CF_POPULATION_POLICY_MODIFIER, CF_POPULATION_POLICY_PARTIAL,
+        CF_REGISTER_FLAG_UPDATE, CF_SYNC_POLICIES, CF_SYNC_REGISTRATION,
     };
     let root_w = wide(&cairn_core::pathutil::win_long_path(root));
     let name_w = wide(provider_name);
@@ -136,8 +135,8 @@ pub fn create_placeholder(
     size: u64,
 ) -> Result<(), i32> {
     use windows::Win32::Storage::CloudFilters::{
-        CfCreatePlaceholders, CF_CREATE_FLAGS, CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC,
-        CF_PLACEHOLDER_CREATE_FLAGS, CF_PLACEHOLDER_CREATE_INFO,
+        CfCreatePlaceholders, CF_CREATE_FLAGS, CF_PLACEHOLDER_CREATE_FLAGS,
+        CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC, CF_PLACEHOLDER_CREATE_INFO,
     };
     use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_NORMAL, FILE_BASIC_INFO};
     let parent = std::path::Path::new(root).join(
@@ -196,10 +195,9 @@ pub fn connect(
     source: std::sync::Arc<dyn PlaceholderSource>,
 ) -> Result<Connection, i32> {
     use windows::Win32::Storage::CloudFilters::{
-        CfConnectSyncRoot, CF_CALLBACK_REGISTRATION, CF_CALLBACK_TYPE,
-        CF_CALLBACK_TYPE_FETCH_DATA, CF_CONNECT_FLAG_BLOCK_SELF_IMPLICIT_HYDRATION,
+        CfConnectSyncRoot, CF_CALLBACK_REGISTRATION, CF_CALLBACK_TYPE, CF_CALLBACK_TYPE_FETCH_DATA,
+        CF_CONNECT_FLAGS, CF_CONNECT_FLAG_BLOCK_SELF_IMPLICIT_HYDRATION,
         CF_CONNECT_FLAG_REQUIRE_FULL_FILE_PATH, CF_CONNECT_FLAG_REQUIRE_PROCESS_INFO,
-        CF_CONNECT_FLAGS,
     };
     let root_w = wide(&cairn_core::pathutil::win_long_path(root));
     // SAFETY: the context pointer must stay alive for the connection's lifetime — the
@@ -297,8 +295,13 @@ unsafe fn fetch_data(
 
     // --- (1) self-hydration deadlock guard (nextcloud: "will lead to a deadlock") ---
     let self_pid = windows::Win32::System::Threading::GetCurrentProcessId();
-    let req_pid =
-        unsafe { if info.ProcessInfo.is_null() { 0 } else { (*info.ProcessInfo).ProcessId } };
+    let req_pid = unsafe {
+        if info.ProcessInfo.is_null() {
+            0
+        } else {
+            (*info.ProcessInfo).ProcessId
+        }
+    };
     if req_pid == self_pid {
         complete_transfer(info, std::ptr::null(), 0, 0, STATUS_UNSUCCESSFUL);
         return;
@@ -312,10 +315,9 @@ unsafe fn fetch_data(
             .trim_end_matches('\0')
             .to_string()
     };
-    let offset = u64::try_from(unsafe { params.Anonymous.FetchData.RequiredFileOffset })
-        .unwrap_or(0);
-    let length = u32::try_from(unsafe { params.Anonymous.FetchData.RequiredLength })
-        .unwrap_or(0);
+    let offset =
+        u64::try_from(unsafe { params.Anonymous.FetchData.RequiredFileOffset }).unwrap_or(0);
+    let length = u32::try_from(unsafe { params.Anonymous.FetchData.RequiredLength }).unwrap_or(0);
 
     // --- (2) hash-verified bytes from the daemon's CAS-backed source ---
     let bytes = match source.fetch(&hash, offset, length) {
