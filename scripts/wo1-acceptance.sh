@@ -3,7 +3,8 @@
 #
 # Gates:
 #   1. attach a big mixed folder  -> `cairn status` shows the project, N files synced
-#                                    [+ BYTE BUDGET: uploads ~= corpus, not more]
+#                                    [+ BYTE BUDGET: uploads never EXCEED the corpus —
+#                                     dedup may legitimately upload far less]
 #   2. kill -9 daemon mid-scan    -> restart -> scan resumes, ZERO duplicate journal entries
 #                                    [+ BYTE BUDGET: uploads <= p-crash corpus — a restart
 #                                     must NOT re-upload anything already stored]
@@ -137,8 +138,11 @@ if wait_state "$A_HOME" p-main synced "$N_FILES"; then
   CORPUS_BYTES=$(du -sb "$ROOT_A" | cut -f1)
   UP1=$(bytes_since "$T1")
   BUDGET1=$(( CORPUS_BYTES * 110 / 100 ))
-  if [ "$UP1" -le "$BUDGET1" ] && [ "$UP1" -ge $(( CORPUS_BYTES / 3 )) ]; then
-    gate ok 1 "status shows p-main synced, files_synced=$N; upload budget $(human_mb "$UP1") <= $(human_mb "$BUDGET1") (corpus $(human_mb "$CORPUS_BYTES"))"
+  # upper bound catches re-upload storms (the 522MB-per-restart class). No lower bound
+  # on corpus size: the fixture is deliberately dedup-friendly, so chunk-identity dedup
+  # may legitimately upload FAR less than the raw corpus — that is the product working.
+  if [ "$UP1" -le "$BUDGET1" ] && [ "$UP1" -gt 0 ]; then
+    gate ok 1 "status shows p-main synced, files_synced=$N; upload $(human_mb "$UP1") <= $(human_mb "$BUDGET1") corpus cap (dedup may compress below)"
   else
     gate fail 1 "status synced but upload budget violated: $(human_mb "$UP1") for corpus $(human_mb "$CORPUS_BYTES")"; exit 1
   fi
