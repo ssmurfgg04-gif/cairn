@@ -49,9 +49,37 @@ pub struct DaemonSource {
 
 impl DaemonSource {
     fn rel_path(&self, full: &str) -> String {
-        let p = Path::new(full);
-        let rel = p.strip_prefix(&self.root).unwrap_or(p);
-        rel.to_string_lossy().replace('\\', "/")
+        // Filter NormalizedPath quirks (first Windows run, 2026-09-01): the path may
+        // carry an NT namespace prefix (\\?\, \??\, \\.\) and the volume prefix can
+        // differ in CASE from the registered root (8.3 short names expand to long
+        // names). Both break a plain strip_prefix and would silently swallow the
+        // close/delete notification. Match the root prefix CASE-INSENSITIVELY but
+        // slice the ORIGINAL string — row keys keep the registered casing (SQLite
+        // TEXT compares case-sensitively).
+        let stripped = full
+            .strip_prefix("\\\\?\\")
+            .or_else(|| full.strip_prefix("\\??\\"))
+            .or_else(|| full.strip_prefix("\\\\.\\"))
+            .unwrap_or(full);
+        let root_str = self.root.to_string_lossy().replace('/', "\\");
+        let root_trim = root_str.trim_end_matches(['\\', '/']);
+        let matched_root = if stripped.len() == stripped.to_lowercase().len()
+            && stripped
+                .get(..root_trim.len())
+                .is_some_and(|head| head.eq_ignore_ascii_case(root_trim))
+        {
+            // root prefix matches (case-insensitive) — cut it off in original casing
+            &stripped[root_trim.len()..]
+        } else {
+            Path::new(stripped)
+                .strip_prefix(&self.root)
+                .unwrap_or(Path::new(stripped))
+                .to_str()
+                .unwrap_or(stripped)
+        };
+        matched_root
+            .trim_start_matches(['\\', '/'])
+            .replace('\\', "/")
     }
 
     fn is_project_file(&self, full: &str) -> bool {
@@ -264,7 +292,14 @@ impl WriteBackSource for DaemonSource {
         };
         let meta = match std::fs::metadata(full_path) {
             Ok(m) => m,
-            Err(_) => return,
+            // fail-safe: a stat we cannot perform is NOT evidence the file matches
+            // the journaled stat — mark dirty and let the scan/sweep classify
+            // (this also covers the deleted-between-close-and-stat case).
+            Err(_) => {
+                let _ = self.store.set_file_state(&self.project_id, &rel, "dirty");
+                tracing::warn!(path = %rel, "write-back: stat failed at close; marked dirty");
+                return;
+            }
         };
         let mtime = meta
             .modified()
