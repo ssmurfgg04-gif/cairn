@@ -7,6 +7,8 @@ description = "Cairn cairn-fs-win"
 
 [dependencies]
 cairn-core = { path = "../cairn-core" }
+blake3 = { workspace = true }
+tempfile = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
@@ -15,12 +17,20 @@ windows = { version = "0.58", features = [
     "Win32_Storage_FileSystem",
     "Win32_System_Com",
     "Win32_System_SystemServices",
+    "Win32_System_Registry",
+    "Win32_System_CorrelationVector",
+    "Win32_System_Threading",
 ] }
 windows-core = "0.58"
 
 
 [features]
 cfapi = []
+
+[[bin]]
+name = "cfapi-hydration-probe"
+path = "src/bin/hydration_probe.rs"
+required-features = []
 
 [lints]
 workspace = true

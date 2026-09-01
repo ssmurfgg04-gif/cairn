@@ -372,7 +372,9 @@ dependencies = [
 name = "cairn-fs-win"
 version = "4.0.0"
 dependencies = [
+ "blake3",
  "cairn-core",
+ "tempfile",
  "windows",
  "windows-core",
 ]

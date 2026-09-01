@@ -105,7 +105,7 @@ pub fn decompress_inner(buf: &[u8], t: Transform) -> Result<Vec<u8>, CairnError>
 
 /// Rebuild the wrapper for serving/editors: payload → container bytes.
 /// The Zip arm REJECTS loudly (scoped out — see module docs).
-pub fn recompress(payload: &[u8], t: Transform, name: &str) -> Result<Vec<u8>, CairnError> {
+pub fn recompress(payload: &[u8], t: Transform, _name: &str) -> Result<Vec<u8>, CairnError> {
     match t {
         Transform::None => Ok(payload.to_vec()),
         Transform::Gzip => {
