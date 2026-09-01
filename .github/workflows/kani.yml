@@ -37,4 +37,9 @@ jobs:
           cargo install --locked kani-verifier
           cargo kani setup
       - name: Proof ${{ matrix.harness }}
-        run: cargo kani --harness ${{ matrix.harness }} -p cairn-core
+        # per-shard unwind: the commit harness compares whole ~95-byte buffers
+        # (memcmp model needs >96); bloom's probe loop is concrete-bounded at 16.
+        run: >
+          cargo kani --harness ${{ matrix.harness }} -p cairn-core
+          ${{ matrix.harness == 'proof_commit_roundtrip_frozen_format' && '--default-unwind 104' || '' }}
+          ${{ matrix.harness == 'proof_bloom_probe_math_in_bounds' && '--default-unwind 32' || '' }}
