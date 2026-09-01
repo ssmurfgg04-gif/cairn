@@ -66,14 +66,16 @@ jobs:
           cargo test -p cairn-sim --release -- --nocapture
       - name: Shard summary
         if: always()
-        run: echo "shard ${{ matrix.shard }}: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
+        run: |
+          echo "shard ${{ matrix.shard }}: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
 
   sim-sharded-summary:
     needs: sim-sharded
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
-      - run: echo "All 20 shards completed: 1,000/1,000 I2 schedules green"
+      - run: |
+          echo "All 20 shards completed: 1,000/1,000 I2 schedules green"
 
   # WO1 AttachRoot acceptance: REAL end-to-end (server + 2 daemons + kill -9 + journal
   # audit + convergence + delta-only metering + doctor) at the full 500 MiB scale.
