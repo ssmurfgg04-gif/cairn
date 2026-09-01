@@ -40,6 +40,22 @@ pub fn build_commit(
     label: &str,
     snapshot_seq: u64,
 ) -> (Hash, Vec<u8>) {
+    let buf = commit_bytes(tree, parent, author, label, snapshot_seq);
+    (Hash::of(&buf), buf)
+}
+
+/// The COMMIT byte format, hash-free (SPEC §6 frozen format): magic | ver | tree |
+/// parent | (u16 len, author) | (u16 len, label) | u64 seq. Split from [`build_commit`]
+/// so the format is a pure function Kani can exhaust — content-addressing (the BLAKE3
+/// hash of these bytes) is layered on top by [`build_commit`] and unit-tested there.
+#[must_use]
+pub fn commit_bytes(
+    tree: &Hash,
+    parent: Option<&Hash>,
+    author: &str,
+    label: &str,
+    snapshot_seq: u64,
+) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.extend_from_slice(COMMIT_MAGIC);
     buf.push(OBJECT_FORMAT_VERSION);
@@ -52,7 +68,7 @@ pub fn build_commit(
     buf.extend_from_slice(&(label_b.len() as u16).to_le_bytes());
     buf.extend_from_slice(label_b);
     buf.extend_from_slice(&snapshot_seq.to_le_bytes());
-    (Hash::of(&buf), buf)
+    buf
 }
 
 /// Parse COMMIT bytes (restore path, ctl listing).
