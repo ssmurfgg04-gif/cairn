@@ -259,6 +259,30 @@ impl Store {
         Ok(())
     }
 
+    /// Like [`Store::mark_synced`], but ALSO refreshes the row's stat fields (size +
+    /// mtime) so the journaled row matches the on-disk file byte-for-byte after a push.
+    /// INVARIANT (punch #5 reconciliation): after a successful push, row.stat ==
+    /// file.stat — otherwise every stat-based reconciliation (rescan, reconcile sweep)
+    /// sees phantom drift on the just-pushed file and re-pushes forever. Callers pass
+    /// the stat of the bytes they actually pushed.
+    pub fn mark_synced_with_stat(
+        &self,
+        project_id: &str,
+        path: &str,
+        manifest_hash: &str,
+        size: u64,
+        mtime: i64,
+    ) -> Result<(), CairnError> {
+        let conn = self.conn.lock().expect("store poisoned");
+        conn.execute(
+            "UPDATE files SET manifest_hash=?3, local_state='synced', size=?4, mtime=?5 \
+             WHERE project_id=?1 AND path=?2",
+            rusqlite::params![project_id, path, manifest_hash, size, mtime],
+        )
+        .map_err(db_err)?;
+        Ok(())
+    }
+
     // ---- meta / cursors / devices ----
 
     /// Read a meta key.

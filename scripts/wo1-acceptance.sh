@@ -3,10 +3,24 @@
 #
 # Gates:
 #   1. attach a big mixed folder  -> `cairn status` shows the project, N files synced
+#                                    [+ BYTE BUDGET: uploads ~= corpus, not more]
 #   2. kill -9 daemon mid-scan    -> restart -> scan resumes, ZERO duplicate journal entries
+#                                    [+ BYTE BUDGET: uploads <= p-crash corpus — a restart
+#                                     must NOT re-upload anything already stored]
 #   3. second device attaches     -> pulls -> converges byte-identical
+#                                    [+ BYTE BUDGET: uploads == 0 (B pulls; nobody re-pushes)]
 #   4. edit one file on device B  -> device A sees it <5s; ONLY changed chunks uploaded
+#                                    [+ BYTE BUDGET: uploads <= 34MiB (delta-only)
+#                                     — the resource assertion that catches
+#                                     correctness-preserving-but-fatal regressions]
 #   5. `cairn doctor` green afterward
+#   6. silent-divergence e2e (punch #5): in-place size+mtime-preserving edit that the
+#      watcher ECHO-SUPPRESSES is caught by the periodic reconcile sweep and re-pushed;
+#      device B converges. [+ BYTE BUDGET: delta-only re-push]
+#
+# Doctrine (review round 3): EVERY gate carries a resource-budget assertion — the
+# delta-metering check caught a correctness-preserving-but-fatal bug, so byte budgets
+# are systematic now, not ad-hoc.
 #
 # Env knobs:
 #   SIZE_MB   mixed-folder target size in MiB (default 500; CI may lower)
@@ -18,6 +32,8 @@ BIN="$PWD/target/release/cairn"
 SIZE_MB="${SIZE_MB:-500}"
 WORK="${WORK:-$PWD/.wo1-acceptance}"
 TIMEOUT="${TIMEOUT:-300}"
+# sweep fast-forward so gate 6 exercises the reconcile sweep in seconds, not minutes
+SWEEP_ENV=(CAIRN_SWEEP_SECS=2 CAIRN_SWEEP_SAMPLE_FILES=4096 CAIRN_SWEEP_SAMPLE_BYTES=1073741824)
 SRV_HOME="$WORK/server"; A_HOME="$WORK/devA"; B_HOME="$WORK/devB"
 ROOT_A="$WORK/rootA"; ROOT_B="$WORK/rootB"; ROOT_C="$WORK/rootC"
 SRV="127.0.0.1:7443"; OBJ="127.0.0.1:7444"
@@ -31,6 +47,18 @@ trap cleanup EXIT
 
 wait_port(){ for _ in $(seq 1 50); do python3 -c "import socket;s=socket.socket();s.settimeout(0.4);exit(0 if s.connect_ex(('127.0.0.1',$1))==0 else 1)" && return 0; sleep 0.2; done; return 1; }
 status_json(){ CAIRN_HOME="$1" "$BIN" status --json 2>/dev/null; }
+# resource budgets (punch #7): server-side stored chunk bytes touched since <epoch_ms>
+bytes_since(){ python3 - "$DB" "$1" <<'PY'
+import sqlite3,sys
+try:
+    db=sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True)
+    print(db.execute("SELECT COALESCE(SUM(size),0) FROM chunks WHERE last_touched>=?", (int(sys.argv[2]),)).fetchone()[0])
+except Exception:
+    print(0)
+PY
+}
+now_ms(){ python3 -c "import time;print(int(time.time()*1000))"; }
+human_mb(){ python3 -c "print(f'{$1/1048576:.1f}MiB')"; }
 field(){ python3 -c "
 import json,sys
 try: d=json.load(sys.stdin)
@@ -87,12 +115,12 @@ print(c)")
 say "corpus ready: $N_FILES files"
 
 # ---------- boot ----------
-say "starting server + device A daemon"
-env RUST_LOG=info "$BIN" server --data-dir "$SRV_HOME" --grpc-addr "$SRV" --objects-addr "$OBJ" --dev-insecure >"$WORK/server.log" 2>&1 &
+say "starting server + device A daemon (sweep fast-forward: ${SWEEP_ENV[*]})"
+env RUST_LOG=info "${SWEEP_ENV[@]}" "$BIN" server --data-dir "$SRV_HOME" --grpc-addr "$SRV" --objects-addr "$OBJ" --dev-insecure >"$WORK/server.log" 2>&1 &
 S_PID=$!
 wait_port 7443 || { gate fail boot "server did not listen on 7443"; exit 1; }
 wait_port 7444 || { gate fail boot "objects endpoint did not listen on 7444"; exit 1; }
-CAIRN_HOME="$A_HOME" env RUST_LOG=info "$BIN" daemon --ctl-addr 127.0.0.1:17777 --ui-addr 127.0.0.1:17778 >"$WORK/daemonA.log" 2>&1 &
+CAIRN_HOME="$A_HOME" env RUST_LOG=info "${SWEEP_ENV[@]}" "$BIN" daemon --ctl-addr 127.0.0.1:17777 --ui-addr 127.0.0.1:17778 >"$WORK/daemonA.log" 2>&1 &
 A_PID=$!
 wait_port 17777 || { gate fail boot "daemon ctl did not listen"; exit 1; }
 
@@ -101,16 +129,25 @@ CAIRN_HOME="$A_HOME" "$BIN" login --server "$SRV" --code "$CODE" --name device-A
 [ -n "$CODE" ] || { gate fail boot "dev-enroll-code returned nothing"; exit 1; }
 
 # ---------- GATE 1 ----------
+T1=$(now_ms)
 say "GATE 1: attach rootA ($SIZE_MB MiB, $N_FILES files)"
 CAIRN_HOME="$A_HOME" "$BIN" attach "$ROOT_A" --project p-main || { gate fail 1 "attach rejected"; exit 1; }
 if wait_state "$A_HOME" p-main synced "$N_FILES"; then
   N=$(status_json "$A_HOME" | field p-main files_synced)
-  gate ok 1 "status shows p-main synced, files_synced=$N"
+  CORPUS_BYTES=$(du -sb "$ROOT_A" | cut -f1)
+  UP1=$(bytes_since "$T1")
+  BUDGET1=$(( CORPUS_BYTES * 110 / 100 ))
+  if [ "$UP1" -le "$BUDGET1" ] && [ "$UP1" -ge $(( CORPUS_BYTES / 3 )) ]; then
+    gate ok 1 "status shows p-main synced, files_synced=$N; upload budget $(human_mb "$UP1") <= $(human_mb "$BUDGET1") (corpus $(human_mb "$CORPUS_BYTES"))"
+  else
+    gate fail 1 "status synced but upload budget violated: $(human_mb "$UP1") for corpus $(human_mb "$CORPUS_BYTES")"; exit 1
+  fi
 else
   gate fail 1 "status never reached synced/$N_FILES (see $WORK/daemonA.log)"; exit 1
 fi
 
 # ---------- GATE 2 ----------
+T2=$(now_ms)
 say "GATE 2: kill -9 daemon mid-scan (p-crash), restart, audit journal"
 python3 - "$ROOT_C" <<'PY'
 import sys, os, random
@@ -125,7 +162,7 @@ CAIRN_HOME="$A_HOME" "$BIN" attach "$ROOT_C" --project p-crash >>"$WORK/daemonA.
 sleep 0.4
 kill -9 "$A_PID"; wait "$A_PID" 2>/dev/null || true; A_PID=""
 say "daemon killed mid-scan (kill -9); restarting"
-CAIRN_HOME="$A_HOME" env RUST_LOG=info "$BIN" daemon --ctl-addr 127.0.0.1:17777 --ui-addr 127.0.0.1:17778 >>"$WORK/daemonA.log" 2>&1 &
+CAIRN_HOME="$A_HOME" env RUST_LOG=info "${SWEEP_ENV[@]}" "$BIN" daemon --ctl-addr 127.0.0.1:17777 --ui-addr 127.0.0.1:17778 >>"$WORK/daemonA.log" 2>&1 &
 A_PID=$!
 wait_port 17777 || { gate fail 2 "daemon restart failed"; exit 1; }
 if wait_state "$A_HOME" p-crash synced 48; then
@@ -138,30 +175,42 @@ print(f"{ups} {dups}")
 PY
 )
   UPS=${AUDIT% *}; DUP=${AUDIT#* }
-  if [ "$DUP" = "0" ] && [ "$UPS" = "48" ]; then gate ok 2 "crash-resume clean: $UPS upserts, $DUP duplicate paths"
-  else gate fail 2 "journal audit: upserts=$UPS dup_paths=$DUP (want 48/0)"; fi
+  # byte budget: the p-crash corpus is 48 x 6MiB = 288MiB — nothing else may upload.
+  # (This is the assertion that would have caught the 522MB-per-restart regression: a
+  # restart that re-uploads already-stored content blows this budget immediately.)
+  PCRASH_BYTES=$(( 48 * 6 * 1048576 ))
+  UP2=$(bytes_since "$T2")
+  BUDGET2=$(( PCRASH_BYTES * 110 / 100 ))
+  if [ "$DUP" = "0" ] && [ "$UPS" = "48" ] && [ "$UP2" -le "$BUDGET2" ]; then gate ok 2 "crash-resume clean: $UPS upserts, $DUP duplicate paths; upload $(human_mb "$UP2") <= $(human_mb "$BUDGET2")"
+  else gate fail 2 "journal audit: upserts=$UPS dup_paths=$DUP upload=$(human_mb "$UP2") budget=$(human_mb "$BUDGET2") (want 48/0/within)"; fi
 else
   gate fail 2 "p-crash never synced after restart (see $WORK/daemonA.log)"
 fi
 
 # ---------- GATE 3 ----------
+T3=$(now_ms)
 say "GATE 3: device B attaches empty folder for p-main, pulls, converge"
 CODE_B=$(CAIRN_HOME="$B_HOME" "$BIN" dev-enroll-code --server "$SRV")
 CAIRN_HOME="$B_HOME" "$BIN" login --server "$SRV" --code "$CODE_B" --name device-B >>"$WORK/daemonB.log" 2>&1
-CAIRN_HOME="$B_HOME" env RUST_LOG=info "$BIN" daemon --ctl-addr 127.0.0.1:17779 --ui-addr 127.0.0.1:17780 >"$WORK/daemonB.log" 2>&1 &
+CAIRN_HOME="$B_HOME" env RUST_LOG=info "${SWEEP_ENV[@]}" "$BIN" daemon --ctl-addr 127.0.0.1:17779 --ui-addr 127.0.0.1:17780 >"$WORK/daemonB.log" 2>&1 &
 B_PID=$!
 wait_port 17779 || { gate fail 3 "device B daemon did not start"; exit 1; }
 CAIRN_HOME="$B_HOME" "$BIN" attach "$ROOT_B" --project p-main --ctl http://127.0.0.1:17779 || { gate fail 3 "attach B rejected"; exit 1; }
 if wait_state "$B_HOME" p-main synced "$N_FILES"; then
   HA=$(cd "$ROOT_A" && find . -type f -exec sha256sum {} \; | sort | sha256sum | cut -d' ' -f1)
   HB=$(cd "$ROOT_B" && find . -type f -exec sha256sum {} \; | sort | sha256sum | cut -d' ' -f1)
-  if [ "$HA" = "$HB" ]; then gate ok 3 "second device converged byte-identical ($HA)"
-  else gate fail 3 "tree hashes differ: A=$HA B=$HB"; fi
+  # byte budget: B attaches an EMPTY folder — it uploads nothing; and A must not
+  # re-push anything either (echo suppression + content identity). Uploads must be 0.
+  UP3=$(bytes_since "$T3")
+  if [ "$HA" = "$HB" ] && [ "$UP3" = "0" ]; then gate ok 3 "second device converged byte-identical ($HA); uploads during convergence: 0 bytes"
+  elif [ "$HA" != "$HB" ]; then gate fail 3 "tree hashes differ: A=$HA B=$HB"
+  else gate fail 3 "converged but uploads=$(human_mb "$UP3") during a pure-pull phase (echo/re-push regression)"; fi
 else
   gate fail 3 "device B never reached synced/$N_FILES (see $WORK/daemonB.log)"
 fi
 
 # ---------- GATE 4 ----------
+T4=$(now_ms)
 say "GATE 4: edit one file on B; measure A visibility + upload delta"
 TARGET="$ROOT_B/media/clip_000.mov"
 TOTAL=$("$BIN" chunk-count "$TARGET")
@@ -194,6 +243,16 @@ if [ "$NEW_CHUNKS" -ge 1 ] && [ "$NEW_CHUNKS" -lt "$TOTAL" ]; then
 else
   gate fail 4b "metering: new_chunks=$NEW_CHUNKS total=$TOTAL (want 1 <= new < total)"
 fi
+# byte budget: the edit appends 256KiB -> one new chunk (<=16MiB class). A full-file
+# re-upload (~554MiB) would still pass the chunk COUNT above if the CDC boundaries
+# all moved — the byte budget is the resource-level backstop.
+UP4=$(bytes_since "$T4")
+BUDGET4=$(( 34 * 1048576 ))
+if [ "$UP4" -le "$BUDGET4" ] && [ "$UP4" -ge 1 ]; then
+  gate ok 4c "byte budget: uploaded $(human_mb "$UP4") <= 34MiB for a 256KiB append (delta-only)"
+else
+  gate fail 4c "byte budget violated: uploaded $(human_mb "$UP4") (want <= 34MiB, >0)"
+fi
 
 # ---------- GATE 5 ----------
 say "GATE 5: doctor"
@@ -201,6 +260,40 @@ if CAIRN_HOME="$A_HOME" "$BIN" doctor >"$WORK/doctor.out" 2>&1; then
   gate ok 5 "doctor healthy (device A, after all gates)"
 else
   gate fail 5 "doctor reported problems (see $WORK/doctor.out)"
+fi
+
+# ---------- GATE 6 (punch #5 e2e): sweep catches watcher-suppressed divergence ----------
+T6=$(now_ms)
+say "GATE 6: size+mtime-preserving edit (echo-suppressed) must be caught by the sweep"
+# Flip ONE byte of clip_000 on A in place, restore mtime to the nanosecond: the
+# watcher classifies it as an echo (size AND mtime match the journaled row) — under
+# the pre-punch-#5 code this edit would diverge SILENTLY. The reconcile sweep (2s
+# cadence in this harness) must rehash it, redirty, and re-push; B must converge.
+python3 - "$ROOT_A/media/clip_000.mov" <<'PY'
+import sys, os
+p = sys.argv[1]
+st = os.stat(p)
+with open(p, "r+b") as f:
+    b = f.read(1)
+    f.seek(0)
+    f.write(bytes([b[0] ^ 0xFF]))
+os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns))  # restore exact mtime -> echo-suppressed
+PY
+NEW_A=$(sha256sum "$ROOT_A/media/clip_000.mov" | cut -d' ' -f1)
+NEW_B="pending"
+for _ in $(seq 1 "$TIMEOUT"); do
+  sleep 1
+  if [ -f "$ROOT_B/media/clip_000.mov" ]; then
+    NEW_B=$(sha256sum "$ROOT_B/media/clip_000.mov" | cut -d' ' -f1)
+    if [ "$NEW_B" = "$NEW_A" ]; then break; fi
+  fi
+done
+UP6=$(bytes_since "$T6")
+BUDGET6=$(( 34 * 1048576 ))
+if [ "$NEW_B" = "$NEW_A" ] && [ "$UP6" -le "$BUDGET6" ] && [ "$UP6" -ge 1 ]; then
+  gate ok 6 "sweep caught echo-suppressed divergence; B converged; re-push $(human_mb "$UP6") <= 34MiB (delta-only)"
+else
+  gate fail 6 "silent divergence NOT repaired (B=$NEW_B A=$NEW_A) or budget violated (upload $(human_mb "$UP6"))"
 fi
 
 say "RESULT: $PASS passed, $FAIL failed — logs in $WORK"
