@@ -19,7 +19,13 @@ pub use fs_impl::CairnFs;
 
 /// Build a filesystem handle for a project (mount via [`CairnFs::mount`]).
 pub fn for_project(store: Store, cas: Cas, project_id: &str) -> Result<Arc<CairnFs>, CairnError> {
-    let headers = cairn_store::HeaderCache::new(store.conn_handle());
+    // WO6-5 reader-pool fix: FUSE reads fan in concurrently — dedicated readers
+    // keep header serves off the store's single write connection
+    let headers = cairn_store::HeaderCache::with_read_pool(
+        store.conn_handle(),
+        &store.root().join("db.sqlite"),
+        4,
+    );
     Ok(Arc::new(CairnFs::new(store, cas, headers, project_id)))
 }
 

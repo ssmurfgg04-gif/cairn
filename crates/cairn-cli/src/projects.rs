@@ -507,7 +507,9 @@ async fn run_loop(
     let conn = store.conn_handle();
     let cas = Cas::open(&store.root().join("blobs"), conn.clone())?;
     let outbox = Outbox::new(conn.clone());
-    let headers = HeaderCache::new(conn.clone());
+    // WO6-5 reader-pool fix (burst CI evidence 2026-09-02): dedicated query-only
+    // readers so 32-concurrent-open bursts don't serialize behind store writes
+    let headers = HeaderCache::with_read_pool(conn.clone(), &store.root().join("db.sqlite"), 4);
     let engine = Engine {
         tenant_id: identity.tenant_id.clone(),
         project_id: pid.clone(),
