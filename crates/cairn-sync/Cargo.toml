@@ -28,5 +28,7 @@ workspace = true
 [dev-dependencies]
 tempfile = { workspace = true }
 proptest = { workspace = true }
+# sweep tests must restore mtimes after in-place edits (size+mtime-preserving divergence)
+filetime = "0.2"
 
 

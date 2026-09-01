@@ -474,6 +474,7 @@ dependencies = [
  "cairn-core",
  "cairn-proto",
  "cairn-store",
+ "filetime",
  "hex",
  "notify",
  "proptest",
