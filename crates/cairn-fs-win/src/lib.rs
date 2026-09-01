@@ -12,7 +12,9 @@
 //! - reserved names (CON, NUL, COM1..) are sanitized before placeholder creation;
 //! - WinFsp passthrough fallback stays behind the `placeholder_driver` kill switch.
 
-#![forbid(unsafe_code)]
+// deny (not forbid): the Windows-only `cfapi` module MUST contain `unsafe` — CfAPI is a
+// raw C FFI — and opts back in explicitly with a documented safety rationale per block.
+#![deny(unsafe_code)]
 
 /// Pin state mapping (SPEC §10/§11): ctl pin ↔ CfAPI pin states.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,14 +75,4 @@ mod tests {
         assert!(!is_syncable("._junk.mov"));
         assert!(is_syncable("A001.braw"));
     }
-}
-
-// ---- Windows-target CfAPI integration (compiles on the windows CI leg) ----
-#[cfg(all(windows, feature = "cfapi"))]
-pub mod cfapi {
-    //! Real Cloud Filter API bindings (windows-rs, Win32::Storage::CloudFilters).
-    //! Registration of the sync root, placeholder creation via CfCreatePlaceholders,
-    //! hydration callbacks (CfGetPlaceholderData), and pin/unpin via CfSetPinState.
-    //! The engine drives it from cairn-sync; the WinFsp fallback stays behind the
-    //! `placeholder_driver` flag (SPEC §10/§16).
 }

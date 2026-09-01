@@ -57,14 +57,32 @@ That keeps the crash discipline (I2) and eviction policy in one place.
 - No service installer / per-user vs per-machine registration matrix (manual step,
   documented in the WO2 acceptance runbook line).
 
-## Verification plan (cannot be done from Linux)
+## Verification plan (updated: CfAPI CAN run on CI Windows VMs)
 
-1. Cross-compile gate: `cargo check -p cairn-fs-win --target x86_64-pc-windows-msvc`
-   locally + `windows-smoke` CI job on `windows-latest` (compile + unit tests that do
-   not touch CfAPI itself — CfAPI cannot run in CI).
-2. Human gate on a real Windows box (acceptance list in the review):
-   Explorer badge, Notepad byte-identical open, instrumented < 50 ms first-2-MB.
-3. WinFsp fallback stays behind `placeholder_driver` kill switch as spec'd.
+The first draft claimed "CfAPI cannot run in CI" — wrong: `windows-latest` GitHub
+runners are real Windows VMs with the Cloud Filter driver (cldflt), and the runner
+user can register sync roots. The review's "solutions for that still on github" is
+exactly this.
+
+1. **Automated round-trip (real Windows VM, CI job `windows-cfapi-roundtrip`)**:
+   `tests/cfapi_roundtrip.rs` registers a sync root, creates an 8 MiB placeholder,
+   connects the FETCH_DATA callback, then a CHILD process (`cfapi-hydration-probe`)
+   opens the placeholder — BLAKE3-verified byte-identity + first-2 MiB latency
+   measured THROUGH the filter callback against the < 50 ms I1 gate. A separate
+   process is required by design: self-implicit hydration is blocked (deadlock guard).
+2. **Patterns ported from nextcloud/desktop `vfs/cfapi`** (AGPL-3.0, THIRD_PARTY.md):
+   exact policies, connect flags, self-PID deadlock guard, block-aligned TRANSFER_DATA
+   (4096) with CompletionStatus failure signaling, provider progress, MARK_IN_SYNC,
+   real timestamps. Porting surfaced an ABI bug in our first draft: `ParamSize` must be
+   `offsetof(CF_OPERATION_PARAMETERS, Anonymous) + sizeof(member)` (union at offset 8
+   on x64) — the `+4` shortcut would fail every CfExecute with E_INVALIDARG.
+   Exact-API usage validated against real `windows-rs 0.58` (`x86_64-pc-windows-msvc`
+   scratch-crate compile).
+3. **Remaining HUMAN gates on a studio Windows box** (cannot be automated):
+   Explorer cloud-state badge (shell integration registry keys land with the installer
+   step — `register_shell_integration` is deliberately not in the skeleton), Notepad
+   open + save-back flow, multi-file NLE open matrix.
+4. WinFsp fallback stays behind `placeholder_driver` kill switch as spec'd.
 
 ## Skeleton surface (what got implemented)
 

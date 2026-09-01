@@ -1,5 +1,30 @@
 //! CfAPI walking skeleton (WO2) — real CloudFilters bindings, design in docs/cfapi-design.md.
 //!
+//! ## Provenance (THIRD_PARTY.md): patterns ported from a battle-tested implementation
+//! The call sequences here follow `nextcloud/desktop`'s production `vfs/cfapi` plugin
+//! (cfapiwrapper.cpp, AGPL-3.0) — the most complete open-source CfAPI client — rather
+//! than being invented:
+//! - registration policies: `CF_HYDRATION_POLICY_FULL` + `CF_POPULATION_POLICY_PARTIAL`
+//!   + `CF_INSYNC_POLICY_PRESERVE_INSYNC_FOR_SYNC_ENGINE`, `CF_REGISTER_FLAG_UPDATE`;
+//! - connect flags: `REQUIRE_PROCESS_INFO | REQUIRE_FULL_FILE_PATH |
+//!   BLOCK_SELF_IMPLICIT_HYDRATION` — with the explicit self-PID deadlock guard in the
+//!   callback ("implicit hydration triggered by the client itself will lead to a
+//!   deadlock");
+//! - FETCH_DATA completion via `CF_OPERATION_TYPE_TRANSFER_DATA` with an explicit
+//!   `CompletionStatus` (success AND failure travel the same path; failures surface in
+//!   Explorer instead of hanging the copy dialog);
+//! - **4096-byte block alignment**: CfAPI requires transferred blocks to be a multiple
+//!   of the block size; only the LAST block of a hydration may be smaller. We serve in
+//!   aligned chunks with the trailing partial block sent last (Nextcloud's
+//!   align-and-send pattern);
+//! - `CfReportProviderProgress` per block so Explorer's copy dialog animates;
+//! - placeholder creation with `CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC` + all four
+//!   file timestamps (zero timestamps render as 1601-01-01 in Explorer).
+//! One deviation from the skeleton's first draft, caught while porting: `ParamSize`
+//! must be `offsetof(CF_OPERATION_PARAMETERS, Anonymous) + sizeof(member)`
+//! (`CF_SIZE_OF_OP_PARAM`) — the union sits at offset 8 on x64, so the previous
+//! `+4` was an ABI bug that would have failed every CfExecute with E_INVALIDARG.
+//!
 //! Scope is deliberately ONE placeholder round-tripping through the filter driver:
 //! register a sync root, create a placeholder carrying the manifest hash as file identity,
 //! connect with a FETCH_DATA callback that serves hash-verified bytes from a
@@ -12,6 +37,14 @@
 
 use std::ffi::c_void;
 use windows_core::PCWSTR;
+
+/// CfAPI block-size contract (nextcloud/desktop cfapiwrapper.cpp): transferred blocks
+/// must be block-aligned; only the final block may be smaller.
+const CFAPI_BLOCK_SIZE: usize = 4096;
+
+/// NTSTATUS for a failed hydration — Explorer shows the error state, the copy dialog
+/// aborts cleanly (never serve unverified bytes: I2).
+const STATUS_UNSUCCESSFUL: i32 = 0xC000_0001u32 as i32;
 
 /// Bytes the filter driver asks us to hydrate. Implementors MUST return exactly
 /// `len` bytes from `offset` (hash-verified — see Cas::get) or an error.
@@ -28,13 +61,25 @@ fn wide(s: &str) -> Vec<u16> {
         .collect()
 }
 
+/// SystemTime → NT FILETIME (100ns units since 1601-01-01).
+fn filetime_now() -> i64 {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = i64::try_from(now.as_secs()).unwrap_or(i64::MAX);
+    secs.saturating_add(11_644_473_600)
+        .saturating_mul(10_000_000)
+        + i64::from(now.subsec_nanos() / 100)
+}
+
 /// Register `root` as a CloudFiles sync root for this provider (per-user registration;
 /// the service/installer decision is deliberately out of the skeleton's scope).
 pub fn register_sync_root(root: &str, provider_name: &str) -> Result<(), i32> {
     use windows::Win32::Storage::CloudFilters::{
         CfRegisterSyncRoot, CF_HYDRATION_POLICY, CF_HYDRATION_POLICY_FULL,
-        CF_HYDRATION_POLICY_MODIFIER, CF_INSYNC_POLICY, CF_POPULATION_POLICY,
-        CF_POPULATION_POLICY_MODIFIER, CF_POPULATION_POLICY_PARTIAL, CF_REGISTER_FLAGS,
+        CF_HYDRATION_POLICY_MODIFIER,
+        CF_INSYNC_POLICY_PRESERVE_INSYNC_FOR_SYNC_ENGINE, CF_POPULATION_POLICY,
+        CF_POPULATION_POLICY_MODIFIER, CF_POPULATION_POLICY_PARTIAL, CF_REGISTER_FLAG_UPDATE,
         CF_SYNC_POLICIES, CF_SYNC_REGISTRATION,
     };
     let root_w = wide(&cairn_core::pathutil::win_long_path(root));
@@ -55,7 +100,7 @@ pub fn register_sync_root(root: &str, provider_name: &str) -> Result<(), i32> {
         // production provisions per-tenant)
         ProviderId: windows_core::GUID::from_u128(0xc1a1_0001_0000_0000_0000_0000_0000_0001),
     };
-    // hydration FULL on open; population NONE (scan-driven, skeleton scope)
+    // Nextcloud's exact policy set (cfapiwrapper.cpp registerSyncRoot)
     let policies = CF_SYNC_POLICIES {
         StructSize: std::mem::size_of::<CF_SYNC_POLICIES>() as u32,
         Hydration: CF_HYDRATION_POLICY {
@@ -66,7 +111,7 @@ pub fn register_sync_root(root: &str, provider_name: &str) -> Result<(), i32> {
             Primary: CF_POPULATION_POLICY_PARTIAL,
             Modifier: CF_POPULATION_POLICY_MODIFIER(0),
         },
-        InSync: CF_INSYNC_POLICY(0),
+        InSync: CF_INSYNC_POLICY_PRESERVE_INSYNC_FOR_SYNC_ENGINE,
         HardLink: Default::default(),
         PlaceholderManagement: Default::default(),
     };
@@ -76,7 +121,7 @@ pub fn register_sync_root(root: &str, provider_name: &str) -> Result<(), i32> {
             PCWSTR(root_w.as_ptr()),
             &registration,
             &policies,
-            CF_REGISTER_FLAGS(0),
+            CF_REGISTER_FLAG_UPDATE,
         )
         .map_err(|e| e.code().0)
     }
@@ -91,9 +136,10 @@ pub fn create_placeholder(
     size: u64,
 ) -> Result<(), i32> {
     use windows::Win32::Storage::CloudFilters::{
-        CfCreatePlaceholders, CF_CREATE_FLAGS, CF_PLACEHOLDER_CREATE_FLAGS,
-        CF_PLACEHOLDER_CREATE_INFO,
+        CfCreatePlaceholders, CF_CREATE_FLAGS, CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC,
+        CF_PLACEHOLDER_CREATE_FLAGS, CF_PLACEHOLDER_CREATE_INFO,
     };
+    use windows::Win32::Storage::FileSystem::{FILE_ATTRIBUTE_NORMAL, FILE_BASIC_INFO};
     let parent = std::path::Path::new(root).join(
         std::path::Path::new(path)
             .parent()
@@ -115,14 +161,23 @@ pub fn create_placeholder(
         FsMetadata: Default::default(),
         FileIdentity: identity_w.as_ptr().cast::<c_void>(),
         FileIdentityLength: (identity_w.len() as u32) * 2,
-        Flags: CF_PLACEHOLDER_CREATE_FLAGS(0),
+        // MARK_IN_SYNC (nextcloud/desktop): otherwise the filter nags the provider with
+        // sync-state callbacks and Explorer shows the wrong state
+        Flags: CF_PLACEHOLDER_CREATE_FLAGS(CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC.0),
         Result: Default::default(),
         CreateUsn: 0,
     };
-    // file size + attributes live in FsMetadata; zero timestamps are valid
+    // file size + attributes + REAL timestamps (zero timestamps render as 1601-01-01)
+    let ft = filetime_now();
     info.FsMetadata.FileSize = size as i64;
-    info.FsMetadata.BasicInfo.FileAttributes = 0x80; // FILE_ATTRIBUTE_NORMAL
-                                                     // SAFETY: one info entry; returned-count pointer unused for a single create.
+    info.FsMetadata.BasicInfo = FILE_BASIC_INFO {
+        CreationTime: ft,
+        LastAccessTime: ft,
+        LastWriteTime: ft,
+        ChangeTime: ft,
+        FileAttributes: FILE_ATTRIBUTE_NORMAL.0 as u32,
+    };
+    // SAFETY: one info entry; returned-count pointer unused for a single create.
     unsafe {
         CfCreatePlaceholders(
             PCWSTR(base_w.as_ptr()),
@@ -141,7 +196,10 @@ pub fn connect(
     source: std::sync::Arc<dyn PlaceholderSource>,
 ) -> Result<Connection, i32> {
     use windows::Win32::Storage::CloudFilters::{
-        CfConnectSyncRoot, CF_CALLBACK_REGISTRATION, CF_CALLBACK_TYPE, CF_CALLBACK_TYPE_FETCH_DATA,
+        CfConnectSyncRoot, CF_CALLBACK_REGISTRATION, CF_CALLBACK_TYPE,
+        CF_CALLBACK_TYPE_FETCH_DATA, CF_CONNECT_FLAG_BLOCK_SELF_IMPLICIT_HYDRATION,
+        CF_CONNECT_FLAG_REQUIRE_FULL_FILE_PATH, CF_CONNECT_FLAG_REQUIRE_PROCESS_INFO,
+        CF_CONNECT_FLAGS,
     };
     let root_w = wide(&cairn_core::pathutil::win_long_path(root));
     // SAFETY: the context pointer must stay alive for the connection's lifetime — the
@@ -164,13 +222,19 @@ pub fn connect(
             Callback: None,
         },
     ]);
+    // Nextcloud's exact connect flags; REQUIRE_PROCESS_INFO powers the self-PID guard.
+    let flags = CF_CONNECT_FLAGS(
+        CF_CONNECT_FLAG_REQUIRE_PROCESS_INFO.0
+            | CF_CONNECT_FLAG_REQUIRE_FULL_FILE_PATH.0
+            | CF_CONNECT_FLAG_BLOCK_SELF_IMPLICIT_HYDRATION.0,
+    );
     // SAFETY: table + context outlive the connection.
     let key = unsafe {
         CfConnectSyncRoot(
             PCWSTR(root_w.as_ptr()),
             table.as_ptr(),
             Some(ctx.cast::<c_void>()),
-            Default::default(),
+            flags,
         )
         .map_err(|e| e.code().0)?
     };
@@ -211,16 +275,18 @@ impl Drop for Connection {
     }
 }
 
-/// FETCH_DATA: read the file identity (manifest hash) + requested range, fetch verified
-/// bytes, complete with RETRIEVE_DATA. On source failure we complete with zero bytes —
-/// the filter surfaces the hydration failure to Explorer (never serve unverified bytes).
+/// FETCH_DATA (nextcloud/desktop cfApiFetchDataCallback pattern):
+/// 1. self-PID deadlock guard,
+/// 2. fetch hash-verified bytes from the source,
+/// 3. complete with TRANSFER_DATA in block-aligned chunks (last partial),
+/// 4. report provider progress per chunk,
+/// 5. on ANY source failure: complete with STATUS_UNSUCCESSFUL — never serve
+///    unverified bytes (I2).
 unsafe fn fetch_data(
     info: *const windows::Win32::Storage::CloudFilters::CF_CALLBACK_INFO,
     params: *const windows::Win32::Storage::CloudFilters::CF_CALLBACK_PARAMETERS,
 ) {
-    use windows::Win32::Storage::CloudFilters::{
-        CfExecute, CF_OPERATION_INFO, CF_OPERATION_PARAMETERS, CF_OPERATION_TYPE_RETRIEVE_DATA,
-    };
+    use windows::Win32::Storage::CloudFilters::CfReportProviderProgress;
     // SAFETY: filter driver guarantees validity + lifetime of both pointers.
     let (info, params) = unsafe { (&*info, &*params) };
     let source: &std::sync::Arc<dyn PlaceholderSource> = unsafe {
@@ -228,6 +294,16 @@ unsafe fn fetch_data(
             .CallbackContext
             .cast::<std::sync::Arc<dyn PlaceholderSource>>()
     };
+
+    // --- (1) self-hydration deadlock guard (nextcloud: "will lead to a deadlock") ---
+    let self_pid = windows::Win32::System::Threading::GetCurrentProcessId();
+    let req_pid =
+        unsafe { if info.ProcessInfo.is_null() { 0 } else { (*info.ProcessInfo).ProcessId } };
+    if req_pid == self_pid {
+        complete_transfer(info, std::ptr::null(), 0, 0, STATUS_UNSUCCESSFUL);
+        return;
+    }
+
     // file identity is the wide string we wrote at placeholder creation
     let hash = unsafe {
         let len = (info.FileIdentityLength / 2) as usize;
@@ -236,26 +312,73 @@ unsafe fn fetch_data(
             .trim_end_matches('\0')
             .to_string()
     };
-    let offset =
-        u64::try_from(unsafe { params.Anonymous.FetchData.RequiredFileOffset }).unwrap_or(0);
-    let length = u32::try_from(unsafe { params.Anonymous.FetchData.RequiredLength }).unwrap_or(0);
-    let bytes = source.fetch(&hash, offset, length).unwrap_or_default();
-    let mut op_params = CF_OPERATION_PARAMETERS::default();
-    op_params.Anonymous.RetrieveData =
-        windows::Win32::Storage::CloudFilters::CF_OPERATION_PARAMETERS_0_5 {
-            Flags: Default::default(),
-            Buffer: bytes.as_ptr().cast::<c_void>().cast_mut(),
-            Offset: offset as i64,
-            Length: bytes.len() as i64,
-            ReturnedLength: bytes.len() as i64,
+    let offset = u64::try_from(unsafe { params.Anonymous.FetchData.RequiredFileOffset })
+        .unwrap_or(0);
+    let length = u32::try_from(unsafe { params.Anonymous.FetchData.RequiredLength })
+        .unwrap_or(0);
+
+    // --- (2) hash-verified bytes from the daemon's CAS-backed source ---
+    let bytes = match source.fetch(&hash, offset, length) {
+        Ok(b) if b.len() == length as usize => b,
+        // short/failed reads are hydration FAILURES, not truncations (I2)
+        Ok(_) | Err(_) => {
+            complete_transfer(info, std::ptr::null(), 0, 0, STATUS_UNSUCCESSFUL);
+            return;
+        }
+    };
+
+    // --- (3) block-aligned chunked transfer (Nextcloud alignAndSendData) ---
+    let mut sent: usize = 0;
+    while sent < bytes.len() {
+        let take = if bytes.len() - sent <= CFAPI_BLOCK_SIZE {
+            bytes.len() - sent // only the LAST block may be unaligned
+        } else {
+            ((bytes.len() - sent) / CFAPI_BLOCK_SIZE) * CFAPI_BLOCK_SIZE
         };
-    op_params.ParamSize = std::mem::size_of::<
-        windows::Win32::Storage::CloudFilters::CF_OPERATION_PARAMETERS_0_5,
-    >() as u32
-        + 4; // ParamSize field itself (CF contract: offset-to-member + member size)
+        let ptr = bytes[sent..sent + take].as_ptr().cast::<c_void>();
+        complete_transfer(info, ptr, (offset as usize + sent) as i64, take as i64, 0);
+        // --- (4) progress for Explorer's copy dialog ---
+        unsafe {
+            let _ = CfReportProviderProgress(
+                info.ConnectionKey,
+                info.TransferKey,
+                info.FileSize,
+                (offset as i64) + (sent + take) as i64,
+            );
+        }
+        sent += take;
+    }
+}
+
+/// Complete (a chunk of) a FETCH_DATA hydration via CfExecute(TRANSFER_DATA).
+/// `status != 0` marks the whole hydration failed (CompletionStatus propagates).
+unsafe fn complete_transfer(
+    info: &windows::Win32::Storage::CloudFilters::CF_CALLBACK_INFO,
+    buffer: *const c_void,
+    offset: i64,
+    length: i64,
+    status: i32,
+) {
+    use windows::Win32::Storage::CloudFilters::{
+        CfExecute, CF_OPERATION_INFO, CF_OPERATION_PARAMETERS, CF_OPERATION_PARAMETERS_0_6,
+        CF_OPERATION_TYPE_TRANSFER_DATA,
+    };
+    let mut op_params = CF_OPERATION_PARAMETERS::default();
+    op_params.Anonymous.TransferData = CF_OPERATION_PARAMETERS_0_6 {
+        Flags: Default::default(),
+        CompletionStatus: windows::Win32::Foundation::NTSTATUS(status),
+        Buffer: buffer.cast_mut(),
+        Offset: offset,
+        Length: length,
+    };
+    // CF_SIZE_OF_OP_PARAM(TransferData): offsetof(union) + sizeof(member). The union
+    // sits at offset 8 on x64 (ParamSize: u32 + padding) — `+4` here fails every call
+    // with E_INVALIDARG (found by porting nextcloud/desktop's macro usage).
+    op_params.ParamSize = (std::mem::offset_of!(CF_OPERATION_PARAMETERS, Anonymous)
+        + std::mem::size_of::<CF_OPERATION_PARAMETERS_0_6>()) as u32;
     let op = CF_OPERATION_INFO {
         StructSize: std::mem::size_of::<CF_OPERATION_INFO>() as u32,
-        Type: CF_OPERATION_TYPE_RETRIEVE_DATA,
+        Type: CF_OPERATION_TYPE_TRANSFER_DATA,
         ConnectionKey: info.ConnectionKey,
         TransferKey: info.TransferKey,
         CorrelationVector: std::ptr::null(),
