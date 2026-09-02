@@ -213,6 +213,18 @@ impl Store {
         Ok(())
     }
 
+    /// Remove a file row (FUSE unlink / local tombstone — cross-device delete
+    /// propagation rides the engine journal). Stored chunks stay until GC.
+    pub fn delete_file(&self, project_id: &str, path: &str) -> Result<(), CairnError> {
+        let conn = self.conn.lock().expect("store poisoned");
+        conn.execute(
+            "DELETE FROM files WHERE project_id=?1 AND path=?2",
+            rusqlite::params![project_id, path],
+        )
+        .map_err(db_err)?;
+        Ok(())
+    }
+
     /// Fetch a file row.
     #[must_use]
     pub fn get_file(&self, project_id: &str, path: &str) -> Option<FileRow> {

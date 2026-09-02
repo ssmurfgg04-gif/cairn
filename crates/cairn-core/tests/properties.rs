@@ -161,12 +161,19 @@ fn golden_corpus_harness() {
         eprintln!("golden corpus absent — harness idle (beta ingest pending)");
         return;
     }
+    // the committed skeleton (README/manifest.json/.gitignore, no sequence dirs) is
+    // also idle — the harness only gates when REAL sequences are present
+    let seq_dirs: Vec<std::path::PathBuf> = std::fs::read_dir(&corpus)
+        .expect("corpus dir readable")
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.is_dir())
+        .collect();
+    if seq_dirs.is_empty() {
+        eprintln!("golden corpus skeleton present, no sequences — harness idle");
+        return;
+    }
     let mut seqs = 0;
-    for dir in std::fs::read_dir(&corpus).expect("corpus dir readable") {
-        let dir = dir.expect("entry").path();
-        if !dir.is_dir() {
-            continue;
-        }
+    for dir in seq_dirs {
         let mut saves: Vec<std::path::PathBuf> = std::fs::read_dir(&dir)
             .expect("readable")
             .filter_map(|e| e.ok().map(|e| e.path()))
