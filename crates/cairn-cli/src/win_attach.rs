@@ -274,12 +274,15 @@ impl WriteBackSource for DaemonSource {
         // seconds — no human unblocking (the old 60s TTL + no reaper was the "manual
         // pen" problem). Expired leases still fail the append with STALE_LEASE, which
         // surfaces as a conflict (never silent overwrite).
+        // Phase 2: the lease is taken at the DOMAIN scope when the file falls under a
+        // declared `.cairn-domains` root (synced project file — every device resolves
+        // the identical scope, so FUSE mounts and CfAPI attaches agree on the pen).
         let store = self.store.clone();
         let plane = Arc::clone(&self.plane);
         let tenant = self.tenant_id.clone();
         let project = self.project_id.clone();
         let device = self.device_id.clone();
-        let rel2 = rel.clone();
+        let rel2 = cairn_sync::domains::resolve_from_dir(&self.root, &rel);
         self.rt.spawn(async move {
             match plane
                 .acquire_lease(

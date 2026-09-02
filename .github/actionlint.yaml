@@ -1,0 +1,5 @@
+# actionlint config: custom self-hosted runner labels used by cairn workflows.
+# (fuse-mount-live.yml targets the /dev/fuse machine — docs/runbook-fuse-runner.md)
+self-hosted-runner:
+  labels:
+    - "fuse"

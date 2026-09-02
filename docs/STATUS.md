@@ -244,3 +244,13 @@ background spawns, comment literally said "jobs attach at M6–M7" while nothing
   tier-to-cold/metering + second-holder exclusion; no-cold-backend degradation;
   kill-switch-per-run) — workspace 41/41 server-lib + all suites green; clippy
   `-D warnings` clean; fmt clean.
+
+## Round 8 — 2026-09-02 (fuzz hardening, FUSE live-mount runner, Phase 2 shipped)
+
+| Item | Status | Detail |
+|---|---|---|
+| fuzz-nightly PATH race hardened | ✅ | the 2026-09-02 nightly red was `install-action@cargo-fuzz` producing no binary (`error: no such command: fuzz`, green on re-run — infra, not code). ci.yml now VERIFIES after install and falls back to a deterministic `cargo install cargo-fuzz --locked`: fast prebuilt path on healthy runs, slow path only on the race |
+| FUSE live-mount last mile | ✅ workflow armed | `tests/live_mount.rs` (#[ignore]): real kernel FUSE roundtrip — 1.5MB multi-chunk write-back, byte-identical read-back, virtual dirs, readdir, **Phase-2 domain EBUSY through the kernel**, CAS blob assertion, post-unmount store persistence. `fuse-mount-live.yml` runs it + a `cairn-fuse` daemon smoke on a self-hosted `self-hosted,linux,fuse` runner; armed by the `CAIRN_FUSE_LIVE` repo variable; `always()` stale-mount cleanup. Setup: **docs/runbook-fuse-runner.md** (host prep, labels, security, troubleshooting) |
+| ADR-0014 Phase 2 (domain decomposition) | ✅ SHIPPED | `cairn_sync::domains` + `.cairn-domains` synced project file: a write-open under a declared root leases the DOMAIN scope (one pen per subproject state boundary); other domains + unscoped files proceed per-file. Zero wire/server change (clients resolve identically from synced state); lenient parse; re-read per decision (config propagates without remount); wired on BOTH surfaces (FUSE `lease_scope` + Windows `win_attach`). 6 domains unit tests + 2 fs_impl integration tests (same-domain EBUSY / cross-domain + unscoped proceed / live config propagation) |
+
+Matrix note: with Phase 2 live, the remaining manual intervention for concurrent work is ONLY genuine same-domain contention (two editors, one subproject state boundary) — admin override by design, everything else self-heals.

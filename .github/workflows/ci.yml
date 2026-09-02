@@ -67,6 +67,10 @@ jobs:
   # links and reports its version. Callbacks need /dev/fuse at runtime only; mount
   # tests are #[ignore] and run on FUSE-capable machines.
   fuse-linux:
+    # Compile + unit gate only. The RUNTIME last mile (real /dev/fuse mount test +
+    # cairn-fuse daemon smoke) runs on the self-hosted `fuse` runner via
+    # fuse-mount-live.yml (armed by the CAIRN_FUSE_LIVE repo variable — see
+    # docs/runbook-fuse-runner.md).
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -267,6 +271,17 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
       - uses: taiki-e/install-action@cargo-fuzz
+      # install-action has a rare PATH race: the binary is absent when the next step
+      # runs (seen on the 2026-09-02 nightly: "error: no such command: `fuzz`", green
+      # on re-run). Verify and fall back to a deterministic cargo install — the fast
+      # prebuilt path on every healthy run, the slow path only on the race.
+      - name: Verify cargo-fuzz (fallback install on the known PATH race)
+        run: |
+          if ! cargo fuzz --version; then
+            echo "::warning::install-action produced no cargo-fuzz binary — falling back to cargo install"
+            cargo install cargo-fuzz --locked
+            cargo fuzz --version
+          fi
       - run: cargo fuzz run manifest_parse -- -max_total_time=600
       - run: cargo fuzz run pack_index_parse -- -max_total_time=600
       - run: cargo fuzz run journal_op_parse -- -max_total_time=600

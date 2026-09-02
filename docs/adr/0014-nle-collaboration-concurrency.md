@@ -1,7 +1,7 @@
 # ADR-0014: NLE collaboration concurrency — offload, partition, heartbeat, merge
 
 Date: 2026-09-02
-Status: Accepted (Phases 1 and 3 implemented; Phase 2 is workflow guidance; Phase 4 is v2)
+Status: Accepted (Phases 1, 2 and 3 implemented; Phase 4 is v2)
 Supersedes: none
 Related: SPEC §8 (leases & fencing), docs/design/write-back.md, ADR-0004
 
@@ -50,15 +50,26 @@ Detected today:
 We deliberately do NOT parse project-file schemas to detect collaboration modes.
 Schema drift between NLE point releases is exactly the fragility Phase 4 rejects.
 
-### Phase 2 — Domain decomposition (workflow guidance, no code)
+### Phase 2 — Domain decomposition (SHIPPED: config-enforced per-subproject scoping)
 
 The highest-yield structural fix costs zero bytes of merge logic: scaffold projects
 into sub-project scopes (`Reel_01.prproj`, `Audio_Conform.prproj`,
-`VFX_Imports.prproj`) and let the existing PER-PATH lease model enforce
-single-writer per SUB-project. Two editors on two reels never collide because their
-state boundaries do not overlap — the lock surface shrinks by the decomposition, not
-by smarter locking. Cairn's leases are already per-path; decomposition is a project
-scaffolding convention documented here and in the runbook, not a code path.
+`VFX_Imports.prproj`) and let leases enforce single-writer per SUB-project. Two
+editors on two reels never collide because their state boundaries do not overlap —
+the lock surface shrinks by the decomposition, not by smarter locking.
+
+**Now enforced by config, not team discipline:** a project MAY ship a
+`.cairn-domains` file in its synced project root (one subproject root per line — an
+ordinary synced file, so config propagates to every device through the sync engine
+with NO wire or server change; every client resolves the identical scope
+deterministically). A write-open under a declared root takes its lease at the
+DOMAIN scope (`cairn_sync::domains`): a second file in the same domain hits the
+live foreign pen (EBUSY), while other domains and unscoped files proceed
+per-file (Phase 3 semantics unchanged). Parsing is lenient (bad lines skipped,
+missing file = per-file) and the file is re-read per decision — config changes
+take effect on the next open, no remount. Wired on BOTH mount surfaces (Linux
+FUSE `fs_impl::lease_scope`, Windows `win_attach`), so a CfAPI attach and a FUSE
+mount agree on who holds which pen.
 
 ### Phase 3 — High-availability ephemeral leases (SHIPPED) — kills the manual pen
 
@@ -109,7 +120,7 @@ entry (never in-place) so the conflict-copy machinery remains the backstop.
 | --- | --- | --- | --- | --- |
 | Pessimistic lease (SPEC §8 floor) | Low | Zero | Low (1 writer/path) | **Keep as floor** (now ephemeral, Phase 3) |
 | Native passthrough (Phase 1) | Low | Zero | High (vendor-native) | **Implemented** |
-| Domain decomposition (Phase 2) | None (workflow) | Zero | High (N writers, disjoint scopes) | **Documented default workflow** |
+| Domain decomposition (Phase 2) | None (config file) | Zero | High (N writers, disjoint scopes) | **Implemented** (`.cairn-domains`) |
 | Open-format merge — OTIO/FCPXML (Phase 4) | High | Low | Full (document-level) | v2 |
 | Proprietary XML merge (`.prproj`) | Extreme | **Critical** | Full | **Rejected** |
 

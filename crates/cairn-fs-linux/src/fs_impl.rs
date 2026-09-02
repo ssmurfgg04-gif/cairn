@@ -387,6 +387,15 @@ impl CairnFs {
         cairn_sync::native_collab::detect_pure(rel_path, layout.marker_mode.as_deref())
     }
 
+    /// ADR-0014 Phase 2: the lease scope for a path — the longest declared
+    /// `.cairn-domains` root containing it (one pen per subproject state boundary),
+    /// or the path itself. The domains file is an ORDINARY synced project file, so
+    /// this is re-read per decision: config propagates through the sync engine with
+    /// no wire/server change, and a missing/half-baked file degrades to per-file.
+    fn lease_scope(&self, rel_path: &str) -> String {
+        cairn_sync::domains::resolve_from_dir(self.store.root(), rel_path)
+    }
+
     // === Write-back path (leases + spool + commit) ==================================
 
     /// Reap lease rows owned by dead processes (ADR-0014 Phase 3): a crashed editor's
@@ -435,13 +444,14 @@ impl CairnFs {
         if let Some(first) = writes.fh_for_path(path) {
             let temp_path = writes.by_fh[&first].temp_path.clone();
             if !native.is_passthrough() {
+                let scope = self.lease_scope(path);
                 let token = self
                     .store
-                    .get_lease(path)
-                    .map_or_else(|| lease_token(path, pid, self.now_ms()), |(t, _)| t);
+                    .get_lease(&scope)
+                    .map_or_else(|| lease_token(&scope, pid, self.now_ms()), |(t, _)| t);
                 self.store
                     .put_lease_pid(
-                        path,
+                        &scope,
                         token,
                         self.now_ms() + LEASE_TTL_MS,
                         Some(i64::from(pid)),
@@ -472,28 +482,33 @@ impl CairnFs {
         }
 
         // First handle on this path: lease acquire (Phase 3) unless passthrough.
+        // Phase 2: the row lives at the DOMAIN scope when the file falls under a
+        // declared `.cairn-domains` root — a second file in the same domain conflicts
+        // (one state boundary, one pen); other domains and unscoped files proceed.
         if !native.is_passthrough() {
             self.reap_dead_leases();
+            let scope = self.lease_scope(path);
             if let Some(row) = self
                 .store
                 .list_leases_pid()
                 .into_iter()
-                .find(|r| r.path == path)
+                .find(|r| r.path == scope)
             {
                 let foreign_alive = matches!(row.pid, Some(p) if p > 0 && p != i64::from(pid) && cairn_store::db::process_alive(p));
                 if row.expires_at > self.now_ms() && foreign_alive {
                     tracing::warn!(
                         %path,
+                        scope = %scope,
                         owner_pid = row.pid.unwrap_or_default(),
                         "lease held by a live editor — EBUSY (admin override: cairn ctl lease drop)"
                     );
                     return Err(libc::EBUSY);
                 }
             }
-            let token = lease_token(path, pid, self.now_ms());
+            let token = lease_token(&scope, pid, self.now_ms());
             self.store
                 .put_lease_pid(
-                    path,
+                    &scope,
                     token,
                     self.now_ms() + LEASE_TTL_MS,
                     Some(i64::from(pid)),
@@ -619,7 +634,7 @@ impl CairnFs {
         let res = self.commit_spool(&w);
         if res.is_err() {
             // keep the spool for diagnosis; drop the lease so the file is not stuck
-            let _ = self.store.drop_lease(&w.path);
+            let _ = self.store.drop_lease(&self.lease_scope(&w.path));
             tracing::error!(path = %w.path, "write-back commit FAILED — spool kept");
         }
         res
@@ -716,11 +731,13 @@ impl CairnFs {
         let _ = std::fs::remove_file(&w.temp_path);
         // layout may have changed (marker/prodsys files created through the mount)
         self.refresh_native_layout();
-        // release the pid-bound lease: the editor closed the file (Phase 3)
+        // release the pid-bound lease: the editor closed the file (Phase 3;
+        // Phase 2 scope — the row lives at the domain root when scoped)
+        let scope = self.lease_scope(&w.path);
         if self.native_for(&w.path).is_passthrough() {
-            let _ = self.store.drop_lease(&w.path); // no lease was taken; harmless
+            let _ = self.store.drop_lease(&scope); // no lease was taken; harmless
         } else {
-            self.store.drop_lease(&w.path).map_err(|_| libc::EIO)?;
+            self.store.drop_lease(&scope).map_err(|_| libc::EIO)?;
         }
         tracing::info!(path = %w.path, size, chunks = spans.len(), "write-back committed");
         Ok(())
@@ -823,14 +840,15 @@ impl CairnFs {
             if self.native_for(&path).is_passthrough() {
                 continue;
             }
+            let scope = self.lease_scope(&path);
             let token = self
                 .store
-                .get_lease(&path)
-                .map_or_else(|| lease_token(&path, pid, self.now_ms()), |(t, _)| t);
+                .get_lease(&scope)
+                .map_or_else(|| lease_token(&scope, pid, self.now_ms()), |(t, _)| t);
             if self
                 .store
                 .put_lease_pid(
-                    &path,
+                    &scope,
                     token,
                     self.now_ms() + LEASE_TTL_MS,
                     Some(i64::from(pid)),
@@ -839,7 +857,7 @@ impl CairnFs {
                 )
                 .is_err()
             {
-                tracing::warn!(%path, "lease heartbeat renew failed");
+                tracing::warn!(%path, scope = %scope, "lease heartbeat renew failed");
             }
         }
     }
@@ -852,7 +870,7 @@ impl CairnFs {
             writes.by_fh.values().map(|w| w.path.clone()).collect()
         };
         for p in paths {
-            let _ = self.store.drop_lease(&p);
+            let _ = self.store.drop_lease(&self.lease_scope(&p));
         }
     }
 
@@ -1764,6 +1782,100 @@ mod tests {
         // fresh token (stale fenced writers lose)
         let (token, _exp) = fs.store.get_lease("scene.prproj").unwrap();
         assert_ne!(token, 7);
+        fs.release_fh(fh).unwrap();
+    }
+
+    /// ADR-0014 Phase 2 (domain decomposition): with `.cairn-domains` present, the
+    /// lease row lives at the DOMAIN root — a second file in the same domain hits
+    /// the live foreign pen (EBUSY), while other domains and unscoped files proceed
+    /// independently. This is the >90% collision reduction, enforced by config.
+    #[test]
+    fn domain_scope_shares_lease_within_domain_and_isolates_across() {
+        let (d, fs) = empty_setup();
+        // config is an ordinary synced project file at the store root
+        std::fs::write(
+            d.path().join("store/.cairn-domains"),
+            "sequences/A001\nsequences/B002\n",
+        )
+        .unwrap();
+
+        let foreign = live_foreign_pid();
+        let now = fs.now_ms();
+        // editor A's pen on domain A001 (planted the way a real acquire leaves it)
+        fs.store
+            .put_lease_pid(
+                "sequences/A001",
+                42,
+                now + 60_000,
+                Some(i64::from(foreign)),
+                Some("p1"),
+                Some("dev-a"),
+            )
+            .unwrap();
+
+        // second editor, ANOTHER file in the SAME domain → conflicts on the domain pen
+        // (create-mode open so the path reaches arbitration — FUSE ENOENTs otherwise)
+        let me = std::process::id();
+        assert_eq!(
+            fs.open_write_opts("sequences/A001/scene02.prproj", me, true, false),
+            Err(libc::EBUSY),
+            "same domain = one state boundary = one pen"
+        );
+
+        // DIFFERENT domain → independent pen (decomposition at work)
+        let fh = fs
+            .open_write_opts("sequences/B002/scene01.prproj", me, true, false)
+            .expect("disjoint domain must proceed");
+        // row lives at the DOMAIN scope while open (release-on-close drops it after)
+        assert!(fs.store.get_lease("sequences/B002").is_some());
+        assert!(fs
+            .store
+            .get_lease("sequences/B002/scene01.prproj")
+            .is_none());
+        fs.release_fh(fh).unwrap();
+
+        // unscoped file → per-file lease (Phase 3 behavior unchanged)
+        let fh = fs
+            .open_write_opts("audio/vo/take3.wav", me, true, false)
+            .expect("unscoped per-file");
+        assert!(fs.store.get_lease("audio/vo/take3.wav").is_some());
+        fs.release_fh(fh).unwrap();
+        std::process::Command::new("kill")
+            .arg(foreign.to_string())
+            .output()
+            .ok();
+    }
+
+    /// Phase 2 config propagates WITHOUT remount: the domains file is re-read per
+    /// decision (it is a synced file — a teammate's push takes effect on the next
+    /// write-open). Also covers longest-root-wins scoping through the mount.
+    #[test]
+    fn domain_config_applies_live_without_remount() {
+        let (d, fs) = empty_setup();
+        let me = std::process::id();
+
+        // no config yet: per-file lease (held while open, released on close — Phase 3)
+        let fh = fs
+            .open_write_opts("sequences/A001/scene.prproj", me, true, false)
+            .unwrap();
+        assert!(fs.store.get_lease("sequences/A001/scene.prproj").is_some());
+        fs.release_fh(fh).unwrap();
+        assert!(fs.store.get_lease("sequences/A001/scene.prproj").is_none());
+
+        // teammate syncs the domains file — next open scopes to the domain
+        std::fs::write(
+            d.path().join("store/.cairn-domains"),
+            "sequences/A001/sub\n",
+        )
+        .unwrap();
+        let fh = fs
+            .open_write_opts("sequences/A001/sub/shot.prproj", me, true, false)
+            .expect("own re-acquire inside now-scoped domain");
+        assert!(fs.store.get_lease("sequences/A001/sub").is_some());
+        assert!(fs
+            .store
+            .get_lease("sequences/A001/sub/shot.prproj")
+            .is_none());
         fs.release_fh(fh).unwrap();
     }
 
