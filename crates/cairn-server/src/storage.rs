@@ -2,7 +2,8 @@
 //! API server never proxies blob bytes. Backends behind one trait:
 //!
 //! - `LocalFsStore` (dev/test): emulates bucket semantics — presigned PUT requires
-//!   `x-amz-checksum-sha256` and REJECTS mismatches; GET is immutable + Range-capable with
+//!   `x-amz-checksum-sha256` when PRESENT (the daemon contract is header-less since
+//!   the R2 wire rule — see s3-compatibility.md); GET is immutable + Range-capable with
 //!   1h-TTL signed URLs. Served over loopback HTTP by the dev server.
 //! - `SigV4Presigner`: standard AWS SigV4 presigned PUT/GET against any S3-compatible endpoint
 //!   (AWS S3, Cloudflare R2; B2 via its S3-compatible API). Production deployments plug this
@@ -164,10 +165,13 @@ impl LocalFsStore {
             if !store.verify_presign("PUT", &key, exp_millis, sig) {
                 return plain(StatusCode::FORBIDDEN, "invalid or expired signature");
             }
-            // bucket-rejects-corrupt: x-amz-checksum-sha256 required and verified
-            if headers.get("x-amz-checksum-sha256").is_none() {
-                return plain(StatusCode::BAD_REQUEST, "x-amz-checksum-sha256 required");
-            }
+            // bucket-rejects-corrupt: if the client sends x-amz-checksum-sha256 it
+            // MUST match the body (header verified either way). Requiring the header
+            // was the pre-2026-09-02 contract; the R2 wire rule (every x-amz-* header
+            // must be SIGNED, and the server cannot bind a SHA-256 it does not know)
+            // moved the daemon to header-less presigned PUTs — integrity stays with
+            // CompleteUpload BLAKE3 sample-verify. Checksum-bound sessions restore
+            // bucket-side enforcement when clients ship per-chunk SHA-256s.
             let digest = Sha256::digest(&body);
             // The header is base64 on the S3 wire (RFC 4648, quirk S1); the dev
             // local-Fs backend additionally accepts hex so older gate scripts
@@ -185,7 +189,9 @@ impl LocalFsStore {
                         .unwrap_or(false)
                 }
                 Some(hex_ck) => hex_ck == cairn_core::hash::hex_encode(&digest),
-                None => false,
+                // no checksum header = the new daemon contract (R2 wire rule);
+                // verified reads + CompleteUpload BLAKE3 carry integrity
+                None => true,
             };
             if !matches {
                 return plain(
@@ -1037,15 +1043,18 @@ mod tests {
         let url = p.presign_put("t1/c/ab/hash", 3600, 1_700_000_000_000, "deadbeef");
         assert!(url.starts_with("https://bucket.s3.amazonaws.com/t1/c/ab/hash?"));
         assert!(url.contains("X-Amz-Algorithm=AWS4-HMAC-SHA256"));
-        assert!(url.contains(
-            "X-Amz-SignedHeaders=host%3Bx-amz-checksum-sha256%3Bx-amz-content-sha256"
-        ));
+        assert!(
+            url.contains("X-Amz-SignedHeaders=host%3Bx-amz-checksum-sha256%3Bx-amz-content-sha256")
+        );
         // The checksum is signed as a HEADER (base64 on the wire), never as a
         // query parameter: every query param must be inside the canonical query
         // string, and an unsigned extra param makes strict validators (R2)
         // reject with SignatureDoesNotMatch. Hex values in the header are
         // InvalidArgument on S3/MinIO (quirk S1).
-        assert!(!url.contains("x-amz-checksum-sha256="), "checksum must not be a query param");
+        assert!(
+            !url.contains("x-amz-checksum-sha256="),
+            "checksum must not be a query param"
+        );
         assert!(url.contains("X-Amz-Signature="));
     }
 
