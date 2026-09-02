@@ -42,6 +42,40 @@ impl NativeCollab {
 /// Marker file that declares a vendor-native collab mode for the whole workspace.
 pub const MARKER_FILE: &str = ".cairn-native-collab";
 
+/// Pure detection for contexts with NO workspace root on disk — FUSE mounts serve a
+/// virtual tree, so there is nothing to `read_dir` and the marker travels as a synced
+/// project file (read from the store, not the filesystem). Covers:
+/// 1. the `.prodsys` path-component rule (Premiere Productions), and
+/// 2. the operator-declared marker mode (`.cairn-native-collab` content).
+///
+/// The sibling-directory probe in [`detect`] (a `.prodsys` directory BESIDE the file's
+/// tree, found by walking real directories) is resolved mount-side from the synced path
+/// set instead — see `cairn-fs-linux::fs_impl` (`NativeLayout`), which reproduces the
+/// same semantics against the virtual tree. No proprietary schema is parsed here either.
+#[must_use]
+pub fn detect_pure(rel_path: &str, marker_mode: Option<&str>) -> NativeCollab {
+    // 1. Premiere Productions: any `.prodsys` directory component in the path itself.
+    if rel_path.split(['/', '\\']).any(|c| c.ends_with(".prodsys")) {
+        return NativeCollab::PremiereProductions;
+    }
+    // 2. Operator-declared mode (marker content supplied by the caller).
+    if let Some(mode) = marker_mode {
+        match mode.trim().to_ascii_lowercase().as_str() {
+            "resolve-collab" | "production" | "custom" => {
+                return NativeCollab::OperatorDeclared;
+            }
+            "" | "cairn" | "off" => {}
+            other => {
+                tracing::warn!(
+                    mode = %other,
+                    "unknown .cairn-native-collab mode — treating as Cairn-leased"
+                );
+            }
+        }
+    }
+    NativeCollab::Cairn
+}
+
 /// Detect the arbitration owner for `rel_path` inside workspace `root`.
 /// Pure path logic + one marker read — no project-file parsing, ever (ADR-0014:
 /// proprietary schema sniffing is the rejected Phase-4-shaped mistake).
@@ -142,5 +176,33 @@ mod tests {
         assert_eq!(detect(root.path(), "render.exr"), NativeCollab::Cairn);
         // "prodsys" WITHOUT the dot-prefix is just a directory name — not a marker
         assert!(!is_passthrough(root.path(), "prodsys/notes.txt"));
+    }
+
+    /// Pure detection (FUSE path): no root on disk — marker content comes from the
+    /// synced project file; `.prodsys` component rule identical to `detect`.
+    #[test]
+    fn detect_pure_matches_detect_semantics() {
+        assert_eq!(
+            detect_pure("Show.prodsys/Show_01.prproj", None),
+            NativeCollab::PremiereProductions
+        );
+        assert_eq!(
+            detect_pure("Sequences/scene.prproj", Some("resolve-collab\n")),
+            NativeCollab::OperatorDeclared
+        );
+        assert_eq!(
+            detect_pure("Sequences/scene.prproj", Some("off")),
+            NativeCollab::Cairn
+        );
+        assert_eq!(detect_pure("render.exr", None), NativeCollab::Cairn);
+        // "prodsys" without the dot-prefix stays Cairn-leased (same as detect)
+        assert_eq!(detect_pure("prodsys/notes.txt", None), NativeCollab::Cairn);
+        // agreement with the filesystem-based detector on marker handling
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join(MARKER_FILE), b"production").unwrap();
+        assert_eq!(
+            detect(root.path(), "a.rpp"),
+            detect_pure("a.rpp", Some("production"))
+        );
     }
 }

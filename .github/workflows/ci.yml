@@ -62,6 +62,22 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo clippy --workspace --all-targets -- -D warnings
 
+  # Linux FUSE gate (SPEC §10): the mount compiles + unit tests WITH the fuse feature
+  # (pure-Rust fuser — no libfuse headers needed), and the cairn-fuse daemon binary
+  # links and reports its version. Callbacks need /dev/fuse at runtime only; mount
+  # tests are #[ignore] and run on FUSE-capable machines.
+  fuse-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { components: clippy }
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test -p cairn-fs-linux --features fuse
+      - run: cargo clippy -p cairn-fs-linux --all-targets --features fuse -- -D warnings
+      - run: cargo build -p cairn-fs-linux --features fuse --bin cairn-fuse
+      - run: ./target/debug/cairn-fuse --version
+
   test:
     runs-on: ubuntu-latest
     steps:

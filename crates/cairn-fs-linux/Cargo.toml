@@ -17,6 +17,11 @@ tokio = { workspace = true }
 [features]
 fuse = ["dep:fuser"]
 
+[[bin]]
+name = "cairn-fuse"
+path = "src/bin/cairn-fuse.rs"
+required-features = ["fuse"]
+
 [lints]
 workspace = true
 
