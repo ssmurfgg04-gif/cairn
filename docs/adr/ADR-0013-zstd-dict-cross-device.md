@@ -105,3 +105,16 @@ This is a beta blocker for the multi-device promise: studio 2 opens a project th
 - Implementation rides post-beta hardening (it is the last multi-device gap in the
   compression story); this ADR freezes the design so the CAS key layout (`t{t}/d/{h}`)
   and the manifest `dict_hash` contract are stable before any GC runbook depends on it.
+
+## Addendum 2026-09-02 — WO6-8 benchmark verdict: not justified on current evidence
+
+`scripts/zstd_dict_bench.py` (deterministic) measured plain zstd -3 vs a
+per-project trained dictionary on project-payload-shaped corpora with a
+disjoint train/test split: total saving **−0.5%** (dictionary hurts large
+compressible XML by −17.7%; small-file wins are +18.5% XML / +5% blend-like —
+the only regime where chunk-reuse cannot help). The design above stays frozen
+as the documented path, but implementation is now gated on studio telemetry
+showing tiny-config-file-dominated uploads, not on the compression hypothesis:
+the default assumption (chunk-reuse already saves enough) is confirmed with
+numbers. Re-run the benchmark when real corpora land (corpus-capture script is
+with the studios' human gate).
