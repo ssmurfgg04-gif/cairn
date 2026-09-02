@@ -1,0 +1,68 @@
+# SHIP v1.0 Task 2 gate: the one-command installer must work on a real
+# Windows runner and exit 0.
+#
+# Two triggers:
+#   - release: published -> the true end-to-end path: release.yml builds +
+#     publishes cairn-windows-<tag>.exe, then THIS workflow installs from the
+#     real published asset and asserts `cairn init` succeeds.
+#   - workflow_dispatch -> manual re-check against the latest published
+#     release (skipped — visibly — when no release exists yet).
+name: install-windows
+on:
+  release:
+    types: [published]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # A dispatch run before the first release exists would otherwise fail on
+      # the API lookup for a reason that is not an installer bug. Releases
+      # always proceed (the release event implies the asset should exist).
+      - id: gate
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $r = gh release view --repo "${{ github.repository }}" --json tagName -q .tagName 2>$null
+          if ($LASTEXITCODE -ne 0 -or -not $r) {
+            Write-Host "::notice::no published release yet — installer gate skipped (run it after release.yml publishes)"
+            "skip=true"  >> $env:GITHUB_OUTPUT
+          } else {
+            Write-Host "testing against latest release $r"
+            "skip=false" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Run the installer (Windows PowerShell 5.1 — the compat-harder shell)
+        if: github.event_name == 'release' || steps.gate.outputs.skip == 'false'
+        shell: powershell
+        run: ./install.ps1
+
+      - name: Assert the installed state
+        if: github.event_name == 'release' || steps.gate.outputs.skip == 'false'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          # 1. user PATH got the install dir (registry, not just this session)
+          $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+          if (($userPath -split ';') -notcontains "$env:LOCALAPPDATA\Programs\cairn") {
+            throw "install.ps1 did not add the install dir to the user PATH"
+          }
+          # 2. a fresh shell resolves cairn from the user PATH
+          $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + $userPath
+          $c = Get-Command cairn -ErrorAction SilentlyContinue
+          if (-not $c) { throw "cairn.exe not resolvable after install" }
+          Write-Host "resolved: $($c.Source)"
+          # 3. the binary honors the exit-code contract
+          & cairn --version
+          if ($LASTEXITCODE -ne 0) { throw "cairn --version exited $LASTEXITCODE" }
+          & cairn init --json
+          if ($LASTEXITCODE -ne 0) { throw "cairn init exited $LASTEXITCODE" }
+          Write-Host "install gate GREEN"

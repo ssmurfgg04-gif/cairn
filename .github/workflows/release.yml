@@ -1,0 +1,78 @@
+# SHIP v1.0 Task 1: self-contained Windows release binary.
+#
+# Tag push (v*) -> builds cairn with a STATICALLY linked CRT (no MSVC runtime /
+# VC redist dependency — download-and-run), smoke-tests the exit-code contract,
+# and publishes `cairn-windows-<tag>.exe` (+ .sha256) to GitHub Releases.
+#
+# Asset naming is the install.ps1 contract (Task 2): the installer resolves the
+# latest release via the GitHub API and downloads the `cairn-windows-*.exe`
+# asset, verifying it against the sibling `.sha256` file.
+#
+# Everything else about this build is already CI-proven: ci.yml's
+# windows-cfapi-roundtrip runs the CfAPI roundtrip on windows-latest and
+# windows-macos-compile cargo-checks cairn-cli (daemon + win_attach glue) on
+# the same runner. One binary bundles CLI + daemon + storage server + the
+# CfAPI write-back driver glue (crates/cairn-fs-win) — it links in-process.
+name: release
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build (static CRT, self-contained)
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: cargo build --release -p cairn-cli --bin cairn
+
+      - name: Smoke test (exit-code contract)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          & target\release\cairn.exe --version
+          if ($LASTEXITCODE -ne 0) { throw "cairn --version exited $LASTEXITCODE" }
+          & target\release\cairn.exe init --json
+          if ($LASTEXITCODE -ne 0) { throw "cairn init exited $LASTEXITCODE" }
+          & target\release\cairn.exe status --json
+          if ($LASTEXITCODE -ne 0) { throw "cairn status exited $LASTEXITCODE" }
+
+      - name: Package (exe + sha256)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ver = "${{ github.ref_name }}"
+          Copy-Item target\release\cairn.exe "cairn-windows-$ver.exe"
+          $h = (Get-FileHash "cairn-windows-$ver.exe" -Algorithm SHA256).Hash.ToLower()
+          # "<hash>  <name>" — the exact format `sha256sum -c` and install.ps1 both parse
+          "$h  cairn-windows-$ver.exe" | Out-File "cairn-windows-$ver.exe.sha256" -NoNewline -Encoding ascii
+          Write-Host "packaged cairn-windows-$ver.exe ($((Get-Item "cairn-windows-$ver.exe").Length / 1MB -as [int])) MiB, sha256 $h"
+
+      - name: Publish to GitHub Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ver = "${{ github.ref_name }}"
+          $existing = gh release view "$ver" --json id -q .id 2>$null
+          if ($existing) {
+            # re-run of the job against an existing release: refresh the assets
+            gh release upload "$ver" "cairn-windows-$ver.exe" "cairn-windows-$ver.exe.sha256" --clobber
+          } else {
+            gh release create "$ver" "cairn-windows-$ver.exe" "cairn-windows-$ver.exe.sha256" `
+              --title "cairn $ver" --generate-notes
+          }
+          Write-Host "release $ver published"
