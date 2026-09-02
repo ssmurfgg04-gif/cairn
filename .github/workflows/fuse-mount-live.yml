@@ -56,13 +56,15 @@ jobs:
           ./target/debug/cairn-fuse --store "$SMOKE/store" --project p1 --mount "$SMOKE/mnt" \
             > "$SMOKE/daemon.log" 2>&1 &
           DAEMON_PID=$!
-          for i in $(seq 1 50); do
+          i=0
+          while [ "$i" -lt 50 ]; do
+            i=$((i + 1))
             [ "$(stat -c %d "$SMOKE/mnt" 2>/dev/null)" != "$(stat -c %d "$SMOKE" 2>/dev/null)" ] && break
             sleep 0.2
           done
           echo "hello from cairn-fuse $(date +%s)" > "$SMOKE/mnt/hello.txt"
           grep -q "hello from cairn-fuse" "$SMOKE/mnt/hello.txt"
-          ls "$SMOKE/mnt" | grep -q hello.txt
+          test -f "$SMOKE/mnt/hello.txt"
           fusermount3 -u "$SMOKE/mnt" || fusermount -u "$SMOKE/mnt" || umount -l "$SMOKE/mnt"
           wait "$DAEMON_PID"
           test -d "$SMOKE/store" && echo "daemon smoke OK"
