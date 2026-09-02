@@ -81,6 +81,12 @@ pub async fn materialize(
 
 /// Fold now (SPEC §7.2): triggers: >5,000 entries OR 24h OR on demand OR project close.
 /// Returns the new commit hash. On REF_CAS the caller retries (writes are never lost).
+///
+/// The returned second value is the commit's `snapshot_seq`: a JOURNAL WATERMARK
+/// (`MAX(journal.seq)` folded into this commit), NOT a snapshot counter. Folding a
+/// project with an empty journal legitimately yields 0 ("covers journal seq 0");
+/// after N synced ops it is MAX(seq) ≥ 1. Compaction math uses `projects.fold_seq`,
+/// never the commit bytes, so the watermark must not be renumbered (§7.1 + §7.2).
 pub async fn fold(
     state: &crate::ServerState,
     tenant_id: &str,
@@ -124,7 +130,7 @@ pub async fn fold(
     .fetch_one(&state.db)
     .await
     .map_err(|e| CairnError::new(ErrorKind::Unavailable, format!("seq read: {e}")))?;
-    let snapshot_seq = max_seq.max(0) as u64;
+    let snapshot_seq = max_seq.max(0) as u64; // journal watermark (§7.2), not a counter — see fold() docs
 
     let (commit_hash, commit_bytes) =
         build_commit(&tree_hash, parent.as_ref(), author, label, snapshot_seq);
@@ -362,5 +368,54 @@ mod tests {
         let r = crate::fold::fold(&state, "t1", "p1", "a", "l").await;
         // with no journal entries the fold still CASes from version 2 → succeeds
         assert!(r.is_ok());
+    }
+
+    /// SNAPSHOT_SEQ is a journal watermark, not a snapshot counter: the review-round
+    /// observation "snapshot_seq: 0 (should probably be >0)" was the documented EMPTY-
+    /// JOURNAL zero case, neither a folding bug nor a test assertion error. Pin both
+    /// sides of the semantics so it stays resolved (§7.2).
+    #[tokio::test]
+    async fn snapshot_seq_is_a_journal_watermark() {
+        let (_d, state) = setup().await;
+        sqlx::query("INSERT OR IGNORE INTO tenants(id, created_at) VALUES('t1',0)")
+            .execute(&state.db)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT OR IGNORE INTO projects(tenant_id, project_id, created_at) VALUES('t1','p1',0)",
+        )
+        .execute(&state.db)
+        .await
+        .unwrap();
+        // empty journal → watermark 0 ("this commit covers journal seq 0") — by design
+        let (_, seq0) = crate::fold::fold(&state, "t1", "p1", "editor", "initial")
+            .await
+            .unwrap();
+        assert_eq!(seq0, 0);
+
+        // real ingest → watermark = MAX(journal.seq) ≥ 1 (what review expected)
+        for name in ["a.mov", "b.mov"] {
+            let op = cairn_proto::pb::JournalOp {
+                op: Some(OpKind::FileUpsert(FileUpsertOp {
+                    path: name.into(),
+                    manifest_hash: Hash::of(name.as_bytes()).hex(),
+                    size: 100,
+                    base_seq: 0,
+                })),
+            };
+            journal::append(&state.db, &state.clock, "t1", "p1", "d1", "r1", op, 0)
+                .await
+                .unwrap();
+        }
+        let (_, seq_after) = crate::fold::fold(&state, "t1", "p1", "editor", "two files")
+            .await
+            .unwrap();
+        let max_seq: i64 =
+            sqlx::query_scalar("SELECT COALESCE(MAX(seq),0) FROM journal WHERE tenant_id='t1' AND project_id='p1'")
+                .fetch_one(&state.db)
+                .await
+                .unwrap();
+        assert_eq!(seq_after as i64, max_seq);
+        assert!(seq_after >= 1);
     }
 }
