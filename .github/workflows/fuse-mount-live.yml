@@ -1,23 +1,39 @@
 # Live FUSE mount verification — the runtime "last mile" (compile+unit gates live in ci.yml).
 #
-# This workflow runs ONLY on a self-hosted runner labeled `self-hosted,linux,fuse`
-# (a machine with /dev/fuse + fusermount3 — see docs/runbook-fuse-runner.md).
+# Two dispatch targets (Actions → fuse-mount-live → Run workflow → runner):
+#   * ubuntu (DEFAULT) — a GitHub-hosted ubuntu VM. These VMs HAVE /dev/fuse and
+#     get fuse3 installed by the preflight, so the non-ignored live_mount test
+#     runs against a real kernel FUSE boundary with ZERO runner registration.
+#     This is the no-hardware path; no arming variable needed for explicit dispatch.
+#   * self-hosted — the labeled [self-hosted,linux,fuse] box from
+#     docs/runbook-fuse-runner.md (dedicated hardware, survives image drift).
 #
-# It stays INERT until two things are true:
+# Push-triggered runs target the self-hosted box and stay INERT until two things
+# are true:
 #   1. a runner with the `fuse` label is registered, AND
 #   2. the repo VARIABLE CAIRN_FUSE_LIVE is set to "1"
 #      (Settings → Secrets and variables → Actions → Variables → New repository variable)
 # Without the variable gate, the job would sit queued forever on runnerless labels.
 #
-# SECURITY: self-hosted runners execute repo code on YOUR hardware. This workflow
-# triggers on main-pushes and manual dispatch only — never on fork PRs (GitHub
-# blocks fork PRs on self-hosted by default; do not override that). Keep the runner
-# on a dedicated, disposable VM (runbook §Security).
+# SECURITY: the self-hosted path executes repo code on YOUR hardware. This
+# workflow triggers on main-pushes and manual dispatch only — never on fork PRs
+# (GitHub blocks fork PRs on self-hosted by default; do not override that). Keep
+# that runner on a dedicated, disposable VM (runbook §Security). The ubuntu path
+# is ephemeral GitHub hardware and carries no such exposure.
 
 name: fuse-mount-live
 
 on:
   workflow_dispatch:
+    inputs:
+      runner:
+        description: "ubuntu = GitHub-hosted VM with /dev/fuse (no registration) | self-hosted = labeled fuse box (needs CAIRN_FUSE_LIVE=1)"
+        type: choice
+        default: ubuntu
+        options:
+          - ubuntu
+          - self-hosted
+        required: false
   push:
     branches: [main]
     paths:
@@ -32,15 +48,33 @@ concurrency:
 
 jobs:
   live-mount:
-    if: vars.CAIRN_FUSE_LIVE == '1'
-    runs-on: [self-hosted, linux, fuse]
-    timeout-minutes: 15
+    # Explicit dispatch on the ubuntu target needs no arming (human intent is the
+    # gate); the self-hosted target and push-triggered runs require CAIRN_FUSE_LIVE=1.
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.runner == 'ubuntu')
+      || vars.CAIRN_FUSE_LIVE == '1'
+    runs-on: >-
+      ${{ (github.event_name == 'push' || inputs.runner == 'self-hosted')
+          && fromJSON('["self-hosted","linux","fuse"]') || 'ubuntu-latest' }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+
+      # The ubuntu runner image ships a rustup toolchain; pinning stable here keeps
+      # both paths uniform and immune to image drift. Self-hosted runbook preinstalls rustup.
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
 
       - name: Preflight (this host must pass — see docs/runbook-fuse-runner.md)
         run: |
           test -e /dev/fuse || { echo "::error::/dev/fuse missing (modprobe fuse)"; exit 1; }
+          if ! command -v fusermount3 >/dev/null && ! command -v fusermount >/dev/null; then
+            # GitHub-hosted VMs have passwordless sudo; install fuse3 on demand.
+            # Self-hosted hosts preinstall it (runbook §1) — no sudo call there.
+            if command -v sudo >/dev/null; then
+              sudo apt-get update -q && sudo apt-get install -y -q fuse3
+            fi
+          fi
           command -v fusermount3 >/dev/null || command -v fusermount >/dev/null \
             || { echo "::error::fusermount3/fusermount missing (install fuse3)"; exit 1; }
           rustc --version && cargo --version
