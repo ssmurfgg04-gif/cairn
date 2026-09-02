@@ -1,4 +1,4 @@
-# Cairn — one-command Windows installer (SHIP v1.0 Task 2).
+# Cairn -- one-command Windows installer (SHIP v1.0 Task 2).
 #
 #   irm https://raw.githubusercontent.com/ssmurfgg04-gif/cairn/main/install.ps1 | iex
 #
@@ -60,10 +60,10 @@ if ($ArtifactUrl -ne "") {
         Where-Object { $_.name -match '^cairn-windows-.*\.exe$' } |
         Select-Object -First 1
     if (-not $asset) {
-        Fail "no cairn-windows-*.exe asset on release $($rel.tag_name) — was the release workflow run?"
+        Fail "no cairn-windows-*.exe asset on release $($rel.tag_name) -- was the release workflow run?"
     }
     $exeUrl = $asset.browser_download_url
-    Write-Host "Latest release: $($rel.tag_name) — asset $($asset.name)"
+    Write-Host "Latest release: $($rel.tag_name) -- asset $($asset.name)"
 }
 $shaUrl = "$exeUrl.sha256"
 
@@ -83,7 +83,7 @@ try {
 }
 $actual = (Get-FileHash $exePath -Algorithm SHA256).Hash.ToLower()
 if ($actual -ne $expected) {
-    Fail "SHA256 mismatch for cairn.exe — expected $expected, got $actual (refusing to install)"
+    Fail "SHA256 mismatch for cairn.exe -- expected $expected, got $actual (refusing to install)"
 }
 Write-Host "SHA256 verified: $actual"
 
@@ -115,6 +115,6 @@ if ($LASTEXITCODE -ne 0) {
 # ---- 6. Done ----------------------------------------------------------------------
 Write-Host ""
 Write-Host "Cairn installed."
-Write-Host "Run 'cairn attach <folder>' to start — the 5-minute guide walks you through it:"
+Write-Host "Run 'cairn attach <folder>' to start -- the 5-minute guide walks you through it:"
 Write-Host "  https://github.com/$Repo/blob/main/docs/BETA.md"
 exit 0
