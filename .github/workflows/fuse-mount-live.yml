@@ -56,7 +56,7 @@ jobs:
     runs-on: >-
       ${{ (github.event_name == 'push' || inputs.runner == 'self-hosted')
           && fromJSON('["self-hosted","linux","fuse"]') || 'ubuntu-latest' }}
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -64,6 +64,8 @@ jobs:
       # both paths uniform and immune to image drift. Self-hosted runbook preinstalls rustup.
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
 
       - name: Preflight (this host must pass — see docs/runbook-fuse-runner.md)
         run: |

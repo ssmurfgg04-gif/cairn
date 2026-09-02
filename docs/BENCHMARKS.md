@@ -119,3 +119,36 @@ it passes with 20× headroom. The fix for the lockstep number is a READER POOL
 (per-thread SQLite connections for the read-only header/serve path); recorded
 as post-beta hardening, not a gate violation. `burst_note=` in the machine-
 readable output carries this caveat so CI never buries it.
+
+## WO6-8: plain zstd vs per-project trained dictionary (2026-09-02)
+
+`scripts/zstd_dict_bench.py` (deterministic, seed-pinned). Question: do
+per-project trained zstd dictionaries buy enough bytes to justify ADR-0013's
+machinery, given chunk-level dedup already captures cross-file reuse? Method:
+four project-payload-shaped classes (blend-like binary, prproj-style XML,
+random-mantissa float64, random), per-file-distinct content under shared
+structure ("same project, different shots"), dictionary trained on a disjoint
+TRAIN half only (the per-project distribution scenario), file-level zstd -3.
+
+| class | raw | plain zstd -3 | zstd -3 + dict | dict saving |
+|---|---|---|---|---|
+| blend-like binary | 768 KiB | 1.30x | 1.30x | **+0.1%** |
+| prproj-style XML | 768 KiB | 12.20x | 10.36x | **−17.7% (hurts)** |
+| float64 (random mantissa) | 768 KiB | 1.05x | 1.05x | 0.0% |
+| random | 768 KiB | 1.00x | 1.00x | 0.0% |
+| **total** | **3072 KiB** | **1.43x** | **1.42x** | **−0.5%** |
+
+Small files (<16 KiB — where chunk-reuse genuinely cannot help): XML **+18.5%**,
+blend-like **+5.0%**, binary noise 0%.
+
+**Decision (closes WO6-8 with hard numbers): plain zstd stays; per-project
+dictionaries do NOT earn their machinery on project-file-shaped data.** The
+bytes come from within-file structure (XML self-similarity) and chunk-reuse
+(golden corpus 0.856/0.879), not from cross-file dictionaries; on large
+compressible text the dictionary is actively harmful. ADR-0013's CAS design
+remains the documented path IF studio telemetry later shows upload counts
+dominated by tiny config files — the benchmark is deterministic and re-runnable
+when real .blend/.prproj corpora arrive (corpus-capture to studios is still the
+human-gated step). Caveats recorded in the script header: synthetic corpora
+(real NLE payloads unavailable to CI), file-level granularity (cairn chunks at
+256 KiB, so per-chunk dict benefit is bounded by these file-level numbers).
