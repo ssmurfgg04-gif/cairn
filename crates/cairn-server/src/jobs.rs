@@ -11,6 +11,8 @@
 //!   progress + ETA
 //! - `metering_rollup` — daily bytes_stored recomputation
 //! - `canary` — headless round-trip probe (upload→verify→recall), pages on failure via metric
+//! - `scheduler` — the leader-leased loops that RUN all of the above (canary/bloom every
+//!   5/30 min, nightly pack→GC→tier→metering); attach via `scheduler::spawn` in `run`
 
 pub mod canary;
 pub mod flags;
@@ -18,6 +20,7 @@ pub mod gc;
 pub mod leader;
 pub mod metering;
 pub mod pack;
+pub mod scheduler;
 pub mod tier;
 
 use crate::ServerState;
