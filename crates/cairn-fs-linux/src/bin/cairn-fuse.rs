@@ -80,6 +80,7 @@ fn main() {
     let fs_for_mount = fs.clone();
     if let Err(e) = fs_for_mount.mount(std::path::Path::new(&mountpoint)) {
         eprintln!("cairn-fuse: mount failed: {e}");
+        fs.shutdown(); // stop the heartbeat loop before joining it (it terminates within one beat)
         heartbeat.join().ok();
         std::process::exit(1);
     }

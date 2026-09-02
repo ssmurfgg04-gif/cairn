@@ -63,7 +63,13 @@ pub fn spawn_heartbeat(fs: Arc<CairnFs>) -> std::thread::JoinHandle<()> {
     std::thread::Builder::new()
         .name("cairn-fuse-heartbeat".into())
         .spawn(move || loop {
+            if fs.is_stopped() {
+                return; // shutdown() after unmount — the daemon must terminate
+            }
             std::thread::sleep(std::time::Duration::from_secs(HEARTBEAT_SECS));
+            if fs.is_stopped() {
+                return;
+            }
             fs.heartbeat_once();
         })
         .expect("spawn heartbeat thread")
