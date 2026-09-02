@@ -76,3 +76,37 @@ jobs:
               --title "cairn $ver" --generate-notes
           }
           Write-Host "release $ver published"
+
+  # The installer gate lives INSIDE this workflow (not as a release:published
+  # listener): GitHub does not fire events for releases created with the
+  # built-in GITHUB_TOKEN, so a separate workflow would silently never run for
+  # tag-push releases. Same windows-latest runner, same true end-to-end path:
+  # install from the JUST-PUBLISHED release asset and assert exit 0.
+  installer-gate:
+    needs: windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the installer against the published release (Windows PowerShell 5.1)
+        shell: powershell
+        run: ./install.ps1
+      - name: Assert the installed state
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          # 1. user PATH got the install dir (registry, not just this session)
+          $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+          if (($userPath -split ';') -notcontains "$env:LOCALAPPDATA\Programs\cairn") {
+            throw "install.ps1 did not add the install dir to the user PATH"
+          }
+          # 2. a fresh shell resolves cairn from the user PATH
+          $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + $userPath
+          $c = Get-Command cairn -ErrorAction SilentlyContinue
+          if (-not $c) { throw "cairn.exe not resolvable after install" }
+          Write-Host "resolved: $($c.Source)"
+          # 3. the binary honors the exit-code contract
+          & cairn --version
+          if ($LASTEXITCODE -ne 0) { throw "cairn --version exited $LASTEXITCODE" }
+          & cairn init --json
+          if ($LASTEXITCODE -ne 0) { throw "cairn init exited $LASTEXITCODE" }
+          Write-Host "installer gate GREEN"
