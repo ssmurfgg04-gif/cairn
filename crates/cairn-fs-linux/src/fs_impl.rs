@@ -458,13 +458,19 @@ impl CairnFs {
                         Some(&self.project_id),
                         Some(&self.device_id),
                     )
-                    .map_err(|_| libc::EIO)?;
+                    .map_err(|e| {
+                        eprintln!("cairn-fs-linux: re-open put_lease_pid({scope}) failed: {e}");
+                        libc::EIO
+                    })?;
             }
             let fh = writes.alloc();
             let temp = std::fs::OpenOptions::new()
                 .append(true)
                 .open(&temp_path)
-                .map_err(|_| libc::EIO)?;
+                .map_err(|e| {
+                    eprintln!("cairn-fs-linux: re-open spool {temp_path:?} failed: {e}");
+                    libc::EIO
+                })?;
             writes.by_fh.insert(
                 fh,
                 OpenWrite {
@@ -515,7 +521,10 @@ impl CairnFs {
                     Some(&self.project_id),
                     Some(&self.device_id),
                 )
-                .map_err(|_| libc::EIO)?;
+                .map_err(|e| {
+                    eprintln!("cairn-fs-linux: put_lease_pid({scope}) failed: {e}");
+                    libc::EIO
+                })?;
         }
 
         // Spool temp (create staging dir once).
@@ -532,7 +541,10 @@ impl CairnFs {
             .write(true)
             .truncate(true)
             .open(&temp_path)
-            .map_err(|_| libc::EIO)?;
+            .map_err(|e| {
+                eprintln!("cairn-fs-linux: spool open {temp_path:?} failed: {e}");
+                libc::EIO
+            })?;
         let fh = writes.alloc();
         writes.by_fh.insert(
             fh,
@@ -574,7 +586,10 @@ impl CairnFs {
         if !w.seeded && !w.no_seed && offset > 0 {
             self.seed_range_locked(w, 0, offset)?;
         }
-        w.temp.write_all_at(data, offset).map_err(|_| libc::EIO)?;
+        w.temp.write_all_at(data, offset).map_err(|e| {
+            eprintln!("cairn-fs-linux: spool write fh {fh} @ {offset} failed: {e}");
+            libc::EIO
+        })?;
         if let Some(sz) = existing_size {
             let end = offset + data.len() as u64;
             if end < sz {
@@ -601,8 +616,14 @@ impl CairnFs {
             let want = (end - copied).min(buf.len() as u64) as usize;
             let chunk = self
                 .read_ranged_verified(&mh, copied, want)
-                .map_err(|_| libc::EIO)?;
-            w.temp.write_all_at(&chunk, copied).map_err(|_| libc::EIO)?;
+                .map_err(|e| {
+                    eprintln!("cairn-fs-linux: ranged read {mh} @ {copied} failed: {e:?}");
+                    libc::EIO
+                })?;
+            w.temp.write_all_at(&chunk, copied).map_err(|e| {
+                eprintln!("cairn-fs-linux: seed write {copied} failed: {e}");
+                libc::EIO
+            })?;
             copied += chunk.len() as u64;
         }
         Ok(())
@@ -1197,13 +1218,17 @@ impl Filesystem for SharedFs {
         let fh = match self.open_write_opts(&child, req.pid(), true, flags & libc::O_TRUNC != 0) {
             Ok(fh) => fh,
             Err(e) => {
+                eprintln!("cairn-fs-linux: create({child:?}) rejected with errno {e}");
                 reply.error(e);
                 return;
             }
         };
-        self.inodes.lock().expect("inode table").alloc(&child);
-        // a fresh create has no bytes yet; the attr is refreshed on lookup/getattr
-        reply.created(&self.ttl, &attr(fh, 0, false, 0), 0, 0, 0);
+        let ino = self.inodes.lock().expect("inode table").alloc(&child);
+        // a fresh create has no bytes yet; the attr is refreshed on lookup/getattr.
+        // Kernel contract: attr.ino is the dentry inode (must be the table-allocated
+        // ino — NOT the fh, which would collide with root ino 1 on the first create),
+        // and the 4th reply argument is the file handle every later read/write carries.
+        reply.created(&self.ttl, &attr(ino, 0, false, 0), 0, fh, 0);
     }
 
     /// Open for write through the spool (O_WRONLY/O_RDWR): lease acquire happens here.

@@ -113,6 +113,9 @@ A v2 OTIO merge design must at minimum: pin the OTIO schema version per merge,
 resolve edit-order conflicts deterministically (same rule both sides: earliest
 server seq wins ties after token fencing), and land merged results as a NEW journal
 entry (never in-place) so the conflict-copy machinery remains the backstop.
+The full design now exists: **ADR-0015** (`0015-otio-fcpxml-three-way-merge.md`) —
+classifier table C0–C10, identity ladder, FCPXML lossiness ledger, and the v1
+capture substrate (sidecar manifest, uuid stamps, base-pointer field, telemetry).
 
 ## Concurrency strategy matrix
 
