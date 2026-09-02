@@ -76,8 +76,16 @@ if (-not (Test-Path $exePath)) { Fail "download failed: $exeUrl" }
 
 $expected = $null
 try {
-    $shaText = (Invoke-WebRequest -Uri $shaUrl -UserAgent "cairn-installer" -UseBasicParsing).Content
-    $expected = ($shaText -split '\s+')[0].ToLower()
+    # PS 5.1 returns [byte[]] for application/octet-stream (all release assets);
+    # PS 7 returns a string. Decode bytes explicitly so -split parses the manifest,
+    # not the byte-array's decimal dump.
+    $resp = Invoke-WebRequest -Uri $shaUrl -UserAgent "cairn-installer" -UseBasicParsing
+    $shaText = if ($resp.Content -is [byte[]]) {
+        [Text.Encoding]::ASCII.GetString($resp.Content)
+    } else {
+        $resp.Content
+    }
+    $expected = ($shaText.Trim() -split '\s+')[0].ToLower()
 } catch {
     Fail "cannot fetch the SHA256 manifest ($shaUrl): $($_.Exception.Message)"
 }
