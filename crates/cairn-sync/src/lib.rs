@@ -5,6 +5,7 @@
 
 pub mod aimd;
 pub mod apply;
+pub mod domains;
 pub mod engine;
 pub mod hydrate;
 pub mod native_collab;

@@ -1,0 +1,76 @@
+# Live FUSE mount verification — the runtime "last mile" (compile+unit gates live in ci.yml).
+#
+# This workflow runs ONLY on a self-hosted runner labeled `self-hosted,linux,fuse`
+# (a machine with /dev/fuse + fusermount3 — see docs/runbook-fuse-runner.md).
+#
+# It stays INERT until two things are true:
+#   1. a runner with the `fuse` label is registered, AND
+#   2. the repo VARIABLE CAIRN_FUSE_LIVE is set to "1"
+#      (Settings → Secrets and variables → Actions → Variables → New repository variable)
+# Without the variable gate, the job would sit queued forever on runnerless labels.
+#
+# SECURITY: self-hosted runners execute repo code on YOUR hardware. This workflow
+# triggers on main-pushes and manual dispatch only — never on fork PRs (GitHub
+# blocks fork PRs on self-hosted by default; do not override that). Keep the runner
+# on a dedicated, disposable VM (runbook §Security).
+
+name: fuse-mount-live
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "crates/cairn-fs-linux/**"
+      - "crates/cairn-store/**"
+      - "crates/cairn-core/src/chunker.rs"
+      - ".github/workflows/fuse-mount-live.yml"
+
+concurrency:
+  group: fuse-mount-live
+  cancel-in-progress: false
+
+jobs:
+  live-mount:
+    if: vars.CAIRN_FUSE_LIVE == '1'
+    runs-on: [self-hosted, linux, fuse]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Preflight (this host must pass — see docs/runbook-fuse-runner.md)
+        run: |
+          test -e /dev/fuse || { echo "::error::/dev/fuse missing (modprobe fuse)"; exit 1; }
+          command -v fusermount3 >/dev/null || command -v fusermount >/dev/null \
+            || { echo "::error::fusermount3/fusermount missing (install fuse3)"; exit 1; }
+          rustc --version && cargo --version
+
+      - name: Live mount round-trip (kernel FUSE write-back, reads, readdir, Phase-2 domain EBUSY)
+        run: cargo test -p cairn-fs-linux --features fuse --test live_mount -- --ignored --nocapture
+
+      - name: cairn-fuse daemon smoke (the real CLI entry, not the test harness)
+        run: |
+          cargo build -p cairn-fs-linux --features fuse --bin cairn-fuse
+          SMOKE=/tmp/cairn-fuse-smoke
+          rm -rf "$SMOKE" && mkdir -p "$SMOKE/store" "$SMOKE/mnt"
+          ./target/debug/cairn-fuse --store "$SMOKE/store" --project p1 --mount "$SMOKE/mnt" \
+            > "$SMOKE/daemon.log" 2>&1 &
+          DAEMON_PID=$!
+          for i in $(seq 1 50); do
+            [ "$(stat -c %d "$SMOKE/mnt" 2>/dev/null)" != "$(stat -c %d "$SMOKE" 2>/dev/null)" ] && break
+            sleep 0.2
+          done
+          echo "hello from cairn-fuse $(date +%s)" > "$SMOKE/mnt/hello.txt"
+          grep -q "hello from cairn-fuse" "$SMOKE/mnt/hello.txt"
+          ls "$SMOKE/mnt" | grep -q hello.txt
+          fusermount3 -u "$SMOKE/mnt" || fusermount -u "$SMOKE/mnt" || umount -l "$SMOKE/mnt"
+          wait "$DAEMON_PID"
+          test -d "$SMOKE/store" && echo "daemon smoke OK"
+
+      - name: Cleanup stale mounts (always — a dead run must not poison the runner)
+        if: always()
+        run: |
+          fusermount3 -u -z /tmp/cairn-fuse-smoke/mnt 2>/dev/null || true
+          fusermount -u -z /tmp/cairn-fuse-smoke/mnt 2>/dev/null || true
+          umount -l /tmp/cairn-fuse-smoke/mnt 2>/dev/null || true
+          rm -rf /tmp/cairn-fuse-smoke
