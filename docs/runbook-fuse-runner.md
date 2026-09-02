@@ -6,6 +6,23 @@ The `fuse-mount-live.yml` workflow runs the ignored `live_mount` test plus a
 the runtime last mile. One machine, ~15 minutes of setup, and every FUSE commit is
 verified through the real kernel boundary.
 
+## 0. No hardware? Dispatch on GitHub-hosted /dev/fuse VMs (zero registration)
+
+GitHub-hosted `ubuntu-latest` VMs **have `/dev/fuse`** and passwordless sudo, so
+the workflow's preflight installs `fuse3` on demand and the live test runs on
+real kernel FUSE without registering anything:
+
+**Actions → fuse-mount-live → Run workflow → runner: `ubuntu`** (the default).
+
+- No `CAIRN_FUSE_LIVE` variable needed for an explicit `ubuntu` dispatch — human
+  intent is the gate. The self-hosted target and push-triggered runs still
+  require the arming variable (§3).
+- The VM is ephemeral, so there is no cross-run state to poison; the `always()`
+  cleanup still runs.
+- Trade-off vs a dedicated box: cache-cold toolchain builds (~2–4 min longer)
+  and you depend on GitHub's image instead of your own. For most teams §0 is
+  enough; keep a §1–§3 box only if you want the test on pinned hardware.
+
 ## 1. Host prep (one-time)
 
 Any Linux box/VM with a writable `/dev/fuse` works (bare metal, VM, container with
@@ -54,7 +71,8 @@ must be in place. To disarm (e.g. runner maintenance): set the variable to `0`.
 ## 4. Verify
 
 1. **Actions → fuse-mount-live → Run workflow** (manual dispatch first — don't wait
-   for the next FUSE-touching push).
+   for the next FUSE-touching push). Pick `runner: ubuntu` for the no-hardware
+   path (§0) or `runner: self-hosted` to exercise the registered box (§2–§3).
 2. Expected log highlights:
    - `Preflight` passes (`/dev/fuse`, `fusermount3`, rust versions)
    - `live_mount_roundtrip_through_kernel ... ok` — byte-identical 1.5MB multi-chunk
@@ -82,7 +100,7 @@ must be in place. To disarm (e.g. runner maintenance): set the variable to `0`.
 
 | Symptom | Cause → fix |
 |---|---|
-| Job queued forever | Labels mismatch (needs all of `self-hosted,linux,fuse`) or `CAIRN_FUSE_LIVE` unset |
+| Job queued forever | `runner: self-hosted` with labels mismatch (needs all of `self-hosted,linux,fuse`) or `CAIRN_FUSE_LIVE` unset. (`runner: ubuntu` cannot queue — GitHub-hosted VMs are always available.) |
 | `Preflight` fails on `/dev/fuse` | `sudo modprobe fuse`; in containers, pass `--device /dev/fuse --cap-add SYS_ADMIN` (or use `--privileged`) |
 | `Permission denied` opening `/dev/fuse` | Runner user not in the `fuse` group (re-login) or udev rule restricts the device |
 | Mount appears then ops hang | Nested-container environments without `user_namespace` — run on VM/bare metal, or add `MountOption::AutoUnmount`-style options via the bin |
