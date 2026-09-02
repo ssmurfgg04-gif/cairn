@@ -11,6 +11,8 @@ pub const FLAGS: &[(&str, &str)] = &[
     ("delta_fold_enabled", "true"),
     ("compression_enabled", "true"),
     ("placeholder_driver", "native"), // native | winfsp (Windows fallback flag)
+    ("gc_shadow", "true"),            // scheduler GC: report-only until flipped to "false"
+    ("canary_enabled", "true"),       // scheduler canary probe kill switch
 ];
 
 /// Read one flag (default when unset).

@@ -203,3 +203,44 @@ bugs were REAL and one class of them was silent data destruction:
   = v2; proprietary `.prproj` XML merge REJECTED (silent-corruption risk).
 - Client store schema v3 (`pid`, `project_id`, `device_id` on `leases_local`);
   server wire UNCHANGED.
+
+## Scheduler wiring — 2026-09-02 (M6–M7 jobs attach: the last wiring gap closed)
+
+External review verdict was precise: "the jobs are built; they just need a scheduler
+loop — add scheduler spawns to `run.rs` and implement `try_acquire_leader`." The audit
+found `try_acquire_leader` ALREADY implemented + tested (`jobs.rs:47`, single-holder
+CAS with expiry — the review snapshot was stale), but `run.rs` was wiring-free: zero
+background spawns, comment literally said "jobs attach at M6–M7" while nothing attached.
+
+**Shipped — `jobs/scheduler.rs`:**
+- Three leader-leased loops, each with its OWN `jobs_leader` row (different servers can
+  hold different jobs): canary probe every 5 min (SPEC §16), bloom refresh every 30 min,
+  nightly pack→GC→tier→metering every 24 h (order matters: pack consolidates, GC sees
+  the post-pack world, tier moves leftovers, metering recomputes last).
+- **Stable holder identity**: `data_dir/node-id` (uuid, created on first boot) +
+  listen addr — a RESTARTED server re-acquires its own lease immediately; a pid-based
+  holder would have locked a restarted server out of nightly work for the full TTL.
+  Dead leaders expire (canary TTL 2× cadence; nightly TTL 25h — must outlive the 24h
+  renewal gap) and peers take over.
+- Kill switches read PER RUN (§16): `canary_enabled` + `packing_enabled` (pack_pass
+  does NOT self-gate — the scheduler does), `tiering_enabled` (self-gated inside
+  tier_pass), and NEW `gc_shadow` (default **true** = report-only GC; ops flips to
+  "false" for sweeping without a restart). GC reachability violations log at error.
+- **Cold-backend honesty**: tier_pass tombstones hot copies after a verified cold
+  write — it must never run against a make-believe target. `CAIRN_COLD_DIR` env wins;
+  dev local-fs defaults to `data/cold`; S3 deployments without the env SKIP tiering
+  with a warn (never fake-cold an R2 deployment into a local dir).
+- Every executed run recorded as a `sched/<kind>` row in the `jobs` table (state
+  ok/failed + summary detail) — ops-visible, dashboard-listable.
+
+**Live verification (not just unit tests):**
+- `cairn-cli server` booted against the REAL Cloudflare R2 bucket (`CAIRN_S3_*` env):
+  all three loops fired on first tick; `sched/canary` = ok "roundtrip ok (8388608B)";
+  `sched/nightly` = ok; `sched/bloom` = ok; leases held by the node-id holder.
+- The canary's 8MB chunk is PHYSICALLY in `cairn-prod` (`tcanary/c/4f/…`, 8388608B)
+  — confirmed by an independent stdlib-SigV4 ListObjectsV2: the server auto-detected
+  the S3 backend (empty dev `objects/`, no `cold/` dir) and the data plane is R2.
+- Unit suite: 3 new scheduler tests (end-to-end ticks incl. per-tenant pack/GC-shadow/
+  tier-to-cold/metering + second-holder exclusion; no-cold-backend degradation;
+  kill-switch-per-run) — workspace 41/41 server-lib + all suites green; clippy
+  `-D warnings` clean; fmt clean.

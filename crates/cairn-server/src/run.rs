@@ -104,7 +104,8 @@ fn rand_key() -> [u8; 32] {
     cairn_core::hash::Hash::of(&seed).0
 }
 
-/// Run the server (blocks). Kill-switch flags, jobs and canary attach at M6–M7.
+/// Run the server (blocks). Kill-switch flags are read per run (§16); the background
+/// job scheduler attaches here (jobs::scheduler): leader-leased canary/bloom/nightly loops.
 pub async fn run(cfg: ServerConfig) -> Result<(), CairnError> {
     let clock: Arc<dyn SystemClock> = Arc::new(cairn_core::clock::WallClock);
     let state = build_state(&cfg, clock).await?;
@@ -115,6 +116,27 @@ pub async fn run(cfg: ServerConfig) -> Result<(), CairnError> {
         dev_insecure = cfg.dev_insecure,
         "cairn server starting"
     );
+
+    // Background job scheduler (M6–M7 wiring): leader-leased loops — canary probe every
+    // 5 min, bloom refresh every 30 min, nightly pack→GC→tier→metering. Kill switches are
+    // read per run; GC is report-only until ops flips `gc_shadow`. Tiering requires a real
+    // cold backend: CAIRN_COLD_DIR wins, dev local-fs defaults to data/cold, S3 deployments
+    // without CAIRN_COLD_DIR skip tiering (tier_pass tombstones hot copies — never fake-cold).
+    let cold_from_env = std::env::var("CAIRN_COLD_DIR")
+        .ok()
+        .filter(|d| !d.is_empty());
+    let cold: Option<Arc<dyn crate::jobs::tier::ColdStore>> = if let Some(dir) = cold_from_env {
+        Some(Arc::new(crate::jobs::tier::DevColdStore::new(
+            std::path::Path::new(&dir),
+        )))
+    } else if state.store.name() == "local-fs" {
+        Some(Arc::new(crate::jobs::tier::DevColdStore::new(
+            &cfg.data_dir.join("cold"),
+        )))
+    } else {
+        None
+    };
+    crate::jobs::scheduler::spawn(Arc::clone(&state), &cfg.data_dir, &cfg.grpc_addr, cold);
 
     // object-store HTTP endpoint (dev backend; production = real bucket presigning)
     let objects_router = {
