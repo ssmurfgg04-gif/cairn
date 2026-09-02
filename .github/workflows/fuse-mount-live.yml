@@ -40,6 +40,7 @@ on:
       - "crates/cairn-fs-linux/**"
       - "crates/cairn-store/**"
       - "crates/cairn-core/src/chunker.rs"
+      - "scripts/test_cairn.py"
       - ".github/workflows/fuse-mount-live.yml"
 
 concurrency:
@@ -112,3 +113,121 @@ jobs:
           fusermount -u -z /tmp/cairn-fuse-smoke/mnt 2>/dev/null || true
           umount -l /tmp/cairn-fuse-smoke/mnt 2>/dev/null || true
           rm -rf /tmp/cairn-fuse-smoke
+
+  blender-headless:
+    # "The Blender Test — without a human" (scripts/test_cairn.py): a real 3.1MB
+    # .blend (BMW27) driven open -> scrub -> save -> reopen THROUGH a live
+    # cairn-fuse mount, by headless Blender (bpy wheel = Blender as a Python
+    # module, no GUI stack). Catches the 90% of editor-integration bugs before
+    # any human beta hour: write-back ingest, chunked read-back, seek patterns,
+    # Blender re-save round-trip. Runs on GitHub-hosted VMs (they have
+    # /dev/fuse); a self-hosted dispatch skips it (no Blender requirement on
+    # the dedicated fuse box).
+    if: >-
+      github.event_name == 'push'
+      || (github.event_name == 'workflow_dispatch' && inputs.runner == 'ubuntu')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Preflight
+        run: |
+          test -e /dev/fuse || { echo "::error::/dev/fuse missing"; exit 1; }
+          if ! command -v fusermount3 >/dev/null && ! command -v fusermount >/dev/null; then
+            sudo apt-get update -q && sudo apt-get install -y -q fuse3
+          fi
+          command -v fusermount3 >/dev/null || command -v fusermount >/dev/null \
+            || { echo "::error::fusermount3/fusermount missing"; exit 1; }
+
+      - name: Build cairn-fuse
+        run: cargo build -p cairn-fs-linux --features fuse --bin cairn-fuse
+
+      - name: Install headless Blender (bpy wheel = Blender as a Python module)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: bpy import smoke
+        run: |
+          sudo apt-get install -y -q libx11-6 libxi6 libxxf86vm1 libxfixes3 libxrender1 libgl1 libxkbcommon0
+          pip install --quiet bpy==5.2.1
+          python -c "import bpy; print('bpy', bpy.app.version_string)"
+
+      - name: Mount Cairn (fresh store, project p1)
+        run: |
+          TEST=/tmp/cairn-blender
+          rm -rf "$TEST" && mkdir -p "$TEST/store" "$TEST/mnt"
+          ./target/debug/cairn-fuse --store "$TEST/store" --project p1 --mount "$TEST/mnt" \
+            > "$TEST/daemon.log" 2>&1 &
+          echo "$!" > "$TEST/daemon.pid"
+          i=0
+          while [ "$i" -lt 50 ]; do
+            i=$((i + 1))
+            [ "$(stat -c %d "$TEST/mnt" 2>/dev/null)" != "$(stat -c %d "$TEST" 2>/dev/null)" ] && break
+            sleep 0.2
+          done
+          if [ "$(stat -c %d "$TEST/mnt" 2>/dev/null)" = "$(stat -c %d "$TEST" 2>/dev/null)" ]; then
+            echo "::error::mount did not come up"
+            cat "$TEST/daemon.log"
+            exit 1
+          fi
+          cat "$TEST/daemon.log"
+
+      - name: Seed BMW27.blend THROUGH the mount (write-back ingest) + byte identity
+        run: |
+          TEST=/tmp/cairn-blender
+          mkdir -p "$TEST/mnt/project"
+          cp crates/cairn-core/tests/data/BMW27.blend "$TEST/mnt/project/scene.blend"
+          test -f "$TEST/mnt/project/scene.blend"
+          SRC_SHA=$(sha256sum crates/cairn-core/tests/data/BMW27.blend | cut -d ' ' -f1)
+          MNT_SHA=$(sha256sum "$TEST/mnt/project/scene.blend" | cut -d ' ' -f1)
+          echo "seed sha256 src=$SRC_SHA mount=$MNT_SHA"
+          if [ "$SRC_SHA" != "$MNT_SHA" ]; then
+            echo "::error::seeded blend differs through the mount (write-back/read-back mismatch)"
+            exit 1
+          fi
+          STORE_FILES=$(find "$TEST/store" -type f | wc -l)
+          echo "store files after ingest: $STORE_FILES"
+          if [ "$STORE_FILES" -le 3 ]; then
+            echo "::error::write-back ingest did not reach the store"
+            exit 1
+          fi
+
+      - name: The Blender Test (headless open -> scrub -> save -> reopen through the mount)
+        run: |
+          TEST=/tmp/cairn-blender
+          python scripts/test_cairn.py --blend "$TEST/mnt/project/scene.blend" --frames 1-120 --rounds 2
+
+      - name: Unmount + store persistence
+        run: |
+          TEST=/tmp/cairn-blender
+          DAEMON_PID=$(cat "$TEST/daemon.pid")
+          fusermount3 -u "$TEST/mnt" || fusermount -u "$TEST/mnt" || umount -l "$TEST/mnt"
+          i=0
+          while [ "$i" -lt 50 ]; do
+            i=$((i + 1))
+            kill -0 "$DAEMON_PID" 2>/dev/null || break
+            sleep 0.2
+          done
+          if kill -0 "$DAEMON_PID" 2>/dev/null; then kill "$DAEMON_PID" 2>/dev/null || true; fi
+          STORE_FILES=$(find "$TEST/store" -type f | wc -l)
+          echo "store files persisted after unmount: $STORE_FILES"
+          test "$STORE_FILES" -gt 3
+
+      - name: Cleanup stale mounts (always — a dead run must not poison the runner)
+        if: always()
+        run: |
+          TEST=/tmp/cairn-blender
+          if [ -f "$TEST/daemon.pid" ]; then
+            kill "$(cat "$TEST/daemon.pid")" 2>/dev/null || true
+          fi
+          fusermount3 -u -z "$TEST/mnt" 2>/dev/null || true
+          fusermount -u -z "$TEST/mnt" 2>/dev/null || true
+          umount -l "$TEST/mnt" 2>/dev/null || true
+          rm -rf "$TEST"
