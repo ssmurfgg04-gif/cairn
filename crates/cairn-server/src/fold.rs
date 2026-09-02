@@ -410,11 +410,12 @@ mod tests {
         let (_, seq_after) = crate::fold::fold(&state, "t1", "p1", "editor", "two files")
             .await
             .unwrap();
-        let max_seq: i64 =
-            sqlx::query_scalar("SELECT COALESCE(MAX(seq),0) FROM journal WHERE tenant_id='t1' AND project_id='p1'")
-                .fetch_one(&state.db)
-                .await
-                .unwrap();
+        let max_seq: i64 = sqlx::query_scalar(
+            "SELECT COALESCE(MAX(seq),0) FROM journal WHERE tenant_id='t1' AND project_id='p1'",
+        )
+        .fetch_one(&state.db)
+        .await
+        .unwrap();
         assert_eq!(seq_after as i64, max_seq);
         assert!(seq_after >= 1);
     }

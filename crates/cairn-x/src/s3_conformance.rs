@@ -132,10 +132,18 @@ pub async fn run(cfg: &ConformanceCfg) -> anyhow::Result<Vec<CheckResult>> {
         detail,
     });
 
-    // -- (1) presigned PUT, host-only SignedHeaders, UNSIGNED-PAYLOAD --
+    // -- (1) presigned PUT, host-only SignedHeaders incl. x-amz-content-sha256 --
+    // R2 wire rule (2026-09-02): every x-amz-* header must be IN SignedHeaders, and
+    // the presigner binds x-amz-content-sha256:UNSIGNED-PAYLOAD — so the client sends
+    // exactly that header. Without it MinIO 400s (missing signed header) too.
     let payload: Vec<u8> = (0..64_000u32).map(|i| (i % 251) as u8).collect();
     let url = presigner.presign_put_host_only(&obj_key, 3600, now);
-    let resp = http.put(&url).body(payload.clone()).send().await?;
+    let resp = http
+        .put(&url)
+        .header("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
+        .body(payload.clone())
+        .send()
+        .await?;
     let ok = resp.status().is_success();
     let detail = format!(
         "PUT {} bytes -> {} {}",
@@ -198,6 +206,7 @@ pub async fn run(cfg: &ConformanceCfg) -> anyhow::Result<Vec<CheckResult>> {
     let url = presigner.presign_put_host_only(&obj_key, 3600, now);
     let resp = http
         .put(&url)
+        .header("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
         .header("x-amz-checksum-sha256", &ck_b64)
         .body(payload.clone())
         .send()
@@ -211,6 +220,7 @@ pub async fn run(cfg: &ConformanceCfg) -> anyhow::Result<Vec<CheckResult>> {
     let bad_b64 = cairn_core::hash::b64_encode(&[0u8; 32]);
     let resp = http
         .put(&url)
+        .header("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
         .header("x-amz-checksum-sha256", bad_b64)
         .body(payload.clone())
         .send()
