@@ -172,6 +172,10 @@ pub struct CairnFs {
     native: Mutex<NativeLayout>,
     /// Hydration metrics through the real read path (I1 exists on Linux, punch #8).
     pub metrics: FsMetrics,
+    /// Shutdown flag: the heartbeat loop exits (within one beat) once this is set,
+    /// so the daemon actually TERMINATES after unmount — the live-mount run caught
+    /// `heartbeat.join()` blocking forever without it (process survived `fusermount -u`).
+    stopped: std::sync::atomic::AtomicBool,
 }
 
 /// One file open for write: spooled to a temp file inside the store's staging dir,
@@ -325,6 +329,7 @@ impl CairnFs {
             device_id: device_id.to_string(),
             native: Mutex::new(NativeLayout::default()),
             metrics: FsMetrics::default(),
+            stopped: std::sync::atomic::AtomicBool::new(false),
         };
         fs.refresh_native_layout();
         fs
@@ -905,6 +910,8 @@ impl CairnFs {
     /// Unmount shutdown: release leases owned by open spools (editor pids die with the
     /// mount process; rows would also self-heal via the pid reaper, but clean is free).
     pub fn shutdown(&self) {
+        self.stopped
+            .store(true, std::sync::atomic::Ordering::Release);
         let paths: Vec<String> = {
             let writes = self.writes.lock().expect("write table");
             writes.by_fh.values().map(|w| w.path.clone()).collect()
@@ -912,6 +919,11 @@ impl CairnFs {
         for p in paths {
             let _ = self.store.drop_lease(&self.lease_scope(&p));
         }
+    }
+
+    /// Heartbeat-loop stop check (set by [`Self::shutdown`]).
+    pub fn is_stopped(&self) -> bool {
+        self.stopped.load(std::sync::atomic::Ordering::Acquire)
     }
 
     // === Virtual directory resolution ===============================================
