@@ -204,6 +204,17 @@ jobs:
           TEST=/tmp/cairn-blender
           python scripts/test_cairn.py --blend "$TEST/mnt/project/scene.blend" --frames 1-120 --rounds 2
 
+      - name: Diagnostics on failure (daemon log + store listing + mount view)
+        if: failure()
+        run: |
+          TEST=/tmp/cairn-blender
+          echo "=== daemon.log ==="
+          cat "$TEST/daemon.log" 2>/dev/null || true
+          echo "=== store files ==="
+          find "$TEST/store" -type f 2>/dev/null | head -40 || true
+          echo "=== mount view ==="
+          find "$TEST/mnt" -maxdepth 3 2>/dev/null | head -40 || true
+
       - name: Unmount + store persistence
         run: |
           TEST=/tmp/cairn-blender
