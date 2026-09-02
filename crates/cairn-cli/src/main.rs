@@ -17,7 +17,8 @@ use clap::{Parser, Subcommand};
 #[derive(Parser)]
 #[command(
     name = "cairn",
-    about = "Cairn — content-addressed sync & storage for video teams"
+    about = "Cairn — content-addressed sync & storage for video teams",
+    version
 )]
 pub struct Cli {
     /// Data directory (default ~/.cairn)
@@ -50,6 +51,13 @@ pub enum Cmd {
     },
     /// Remove the stored device token (revokes nothing server-side)
     Logout,
+    /// First-run setup: create the local store (~/.cairn) and report state
+    /// (the device identity itself is issued server-side at `cairn login`)
+    Init {
+        /// Output JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Attach a folder as a project root (scan → chunk → upload → sync loop)
     Attach {
         /// Folder to attach (becomes the project root)
@@ -391,6 +399,32 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
         }
         Cmd::Logout => {
             daemon::logout(&home);
+            Ok(())
+        }
+        Cmd::Init { json } => {
+            let store =
+                cairn_store::Store::open(&home, std::sync::Arc::new(cairn_core::clock::WallClock))?;
+            let enrolled = projects::load_identity(&store).is_some();
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&serde_json::json!({
+                        "home": home.to_string_lossy(),
+                        "store": "ok",
+                        "enrolled": enrolled,
+                    }))?
+                );
+            } else {
+                println!("cairn home: {}", home.display());
+                if enrolled {
+                    println!("store ready — device enrolled on this machine");
+                } else {
+                    println!(
+                        "store ready — not enrolled yet (device id is issued at `cairn login`)"
+                    );
+                }
+                println!("next: `cairn daemon` then `cairn attach <folder>` (docs/BETA.md)");
+            }
             Ok(())
         }
         Cmd::Attach {
