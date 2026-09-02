@@ -321,19 +321,22 @@ impl Plane for GrpcPlane {
         bytes: &[u8],
         checksum_hex: &str,
     ) -> Result<(), CairnError> {
-        // x-amz-checksum-sha256 is BASE64 on the wire (RFC 4648 of the raw
-        // SHA-256). Hex values are rejected by S3/MinIO with 400
-        // "InvalidArgument: Invalid checksum provided" when the checksum is not
-        // bound into the presign signature (quirk S1) — the soak's S1 gate
-        // caught this on a REAL MinIO backend.
-        let checksum_b64 = cairn_core::hash::b64_encode(
-            &cairn_core::hash::hex_decode(checksum_hex)
-                .ok_or_else(|| CairnError::new(ErrorKind::Internal, "bad checksum hex"))?,
-        );
+        // R2 rule (5GB REAL-S3 soak, 2026-09-02): EVERY `x-amz-*` request header
+        // must be bound into the presign's SignedHeaders — an unsigned
+        // `x-amz-checksum-sha256` (or `x-amz-content-sha256`) fails with a
+        // misleading 403 SignatureDoesNotMatch. The server presigns host-only
+        // + `x-amz-content-sha256` (the daemon sends that one header, matching
+        // the signed set) and CANNOT bind a body SHA-256 it does not know, so
+        // the checksum header is NOT sent on the wire. Integrity stays
+        // enforced by CompleteUpload BLAKE3 sample-verify + verified ranged
+        // reads (SPEC §9.2); checksum-BOUND sessions (client ships per-chunk
+        // SHA-256s, `SigV4Presigner::presign_put`, R2-proven) are the follow-up.
+        // Quirk S1 (hex-in-header rejected by MinIO) is thereby moot on this path.
+        let _ = checksum_hex;
         let r = self
             .http
             .put(url)
-            .header("x-amz-checksum-sha256", checksum_b64)
+            .header("x-amz-content-sha256", "UNSIGNED-PAYLOAD")
             .body(bytes.to_vec())
             .send()
             .await;

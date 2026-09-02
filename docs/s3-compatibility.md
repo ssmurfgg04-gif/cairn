@@ -34,6 +34,35 @@ ACCEPTS wrong-region presigned GETs (200). Region enforcement is a server policy
 wire guarantee — production deployments must set the site region (MinIO) / use the correct
 region string (AWS). Recorded in the conformance tool's output detail.
 
+## Proven on the wire (Cloudflare R2 — cairn-prod bucket, 2026-09-02, 5GB REAL-S3 soak)
+
+| # | Check | Result | Evidence |
+|---|---|---|---|
+| R1 | Header-auth SigV4 LIST (stdlib python, canonicalized `%2F` query) | ✅ 200 | `scripts/r2_list_canary.py` |
+| R2 | Query-auth (presigned) GET, host-only, `UNSIGNED-PAYLOAD` | ✅ 200 | `scripts/r2_auth_matrix.py` C2 |
+| R3 | Query-auth (presigned) PUT, host-only SignedHeaders, `UNSIGNED-PAYLOAD` (header sent unsigned or absent) | ❌ **403 SignatureDoesNotMatch** | auth-matrix C1/C3 pair; both python-stdlib and cairn daemon |
+| R4 | Same presigned PUT **with `x-amz-content-sha256` IN SignedHeaders** (`host;x-amz-content-sha256`) + header on the wire | ✅ 200 | auth-matrix V5 (Rust's exact Z-suffixed `X-Amz-Date`, TTL 3600); then the full 5GB soak data plane |
+| R5 | Header-auth PUT with `x-amz-content-sha256` header | ✅ 200 | auth-matrix C4 |
+| R6 | Presigned GET, host-only, Z-suffixed `X-Amz-Date`, header absent or signed | ✅ 200 (both forms) | auth-matrix G1/G2 (8 MiB canary read-back) |
+
+**R2 quirk (fix shipped in `SigV4Presigner::presign_put_host_only` +
+`cairn-sync/plane_grpc.rs::put_presigned`)**: R2's presigned PUT requires EVERY
+`x-amz-*` request header to be part of `X-Amz-SignedHeaders` — an unsigned
+`x-amz-content-sha256` or `x-amz-checksum-sha256` fails with a *misleading*
+`SignatureDoesNotMatch` 403 even when the signature math is byte-correct (V8
+vs V9 isolates it: only the header's SIGNED status changes). The presigner now
+binds `x-amz-content-sha256: UNSIGNED-PAYLOAD` into SignedHeaders and the
+daemon sends exactly that header; the (previously unsigned) checksum header is
+dropped on this path — the server cannot bind a body SHA-256 it does not know,
+integrity stays with CompleteUpload BLAKE3 sample-verify + verified ranged
+reads (SPEC §9.2), and checksum-BOUND sessions (`SigV4Presigner::presign_put`,
+already R2-proven in V9/C5c) are the follow-up once clients ship per-chunk
+SHA-256s at session creation. Host-only PUT signing — the shape AWS S3 and
+MinIO accept — is what made MinIO CI conformance stay green while the
+real-bucket soak failed. Presigned GET needs none of this (proven both forms,
+R6). The signer's KDF and string-to-sign math needed no change (AWS
+known-answer vector still green).
+
 ## Proven signing-math correctness (no bucket involved)
 
 - AWS-published known-answer vector (IAM ListUsers header-auth example) — byte-exact

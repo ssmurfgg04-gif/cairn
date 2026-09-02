@@ -439,6 +439,9 @@ impl SigV4Presigner {
     }
 
     /// Presign PUT with `x-amz-checksum-sha256` in the signed headers (bucket-rejects-corrupt).
+    /// Checksum is signed as BASE64 (what the client puts on the wire — S3 checksum
+    /// headers are base64 of the raw digest), never as hex, and never as a query
+    /// parameter (every query param must appear in the canonical query string).
     pub fn presign_put(
         &self,
         key: &str,
@@ -446,6 +449,9 @@ impl SigV4Presigner {
         now_millis: i64,
         checksum_hex: &str,
     ) -> String {
+        let checksum_b64 = cairn_core::hash::b64_encode(
+            &cairn_core::hash::hex_decode(checksum_hex).unwrap_or_default(),
+        );
         let ttl = ttl_secs.min(3600);
         let amz_date = amz_date(now_millis);
         let date = &amz_date[..8];
@@ -453,12 +459,14 @@ impl SigV4Presigner {
         let scope = format!("{date}/{}/s3/aws4_request", self.region);
         let canonical_uri = self.canonical_uri(key);
         let canonical_query = format!(
-            "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={}&X-Amz-Date={}&X-Amz-Expires={ttl}&X-Amz-SignedHeaders=host%3Bx-amz-checksum-sha256",
+            "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={}&X-Amz-Date={}&X-Amz-Expires={ttl}&X-Amz-SignedHeaders=host%3Bx-amz-checksum-sha256%3Bx-amz-content-sha256",
             uri_encode(&format!("{}/{}", self.access_key, scope), true),
             amz_date,
         );
-        let canonical_headers = format!("host:{host}\nx-amz-checksum-sha256:{checksum_hex}\n");
-        let signed_headers = "host;x-amz-checksum-sha256";
+        let canonical_headers = format!(
+            "host:{host}\nx-amz-checksum-sha256:{checksum_b64}\nx-amz-content-sha256:UNSIGNED-PAYLOAD\n"
+        );
+        let signed_headers = "host;x-amz-checksum-sha256;x-amz-content-sha256";
         let canonical_request = [
             "PUT",
             canonical_uri.as_str(),
@@ -487,7 +495,7 @@ impl SigV4Presigner {
             string_to_sign.as_bytes(),
         ));
         format!(
-            "{}?{}&X-Amz-Signature={signature}&x-amz-checksum-sha256={checksum_hex}",
+            "{}?{}&X-Amz-Signature={signature}",
             self.object_url(key),
             canonical_query
         )
@@ -536,6 +544,14 @@ impl SigV4Presigner {
     /// Host-only presigned PUT (`UNSIGNED-PAYLOAD`): the standard S3 presign
     /// form. Checksum-bound presigning (`presign_put` above) is used when the
     /// session carries per-chunk SHA-256s.
+    ///
+    /// R2 quirk (5GB REAL-S3 soak, 2026-09-02, `scripts/r2_auth_matrix.py`):
+    /// Cloudflare R2 requires the request to carry `x-amz-content-sha256:
+    /// UNSIGNED-PAYLOAD` as a header AND for that header to be part of
+    /// SignedHeaders. Host-only signing without it fails with a misleading
+    /// `SignatureDoesNotMatch` 403 — on AWS S3 and MinIO the same URL is
+    /// accepted (which is why MinIO CI conformance stayed green). Presigned
+    /// GET needs none of this (proven 200 host-only, both providers).
     pub fn presign_put_host_only(&self, key: &str, ttl_secs: u64, now_millis: i64) -> String {
         let ttl = ttl_secs.min(3600);
         let amz_date = amz_date(now_millis);
@@ -543,7 +559,7 @@ impl SigV4Presigner {
         let host = host_of(&self.endpoint);
         let scope = format!("{date}/{}/s3/aws4_request", self.region);
         let canonical_query = format!(
-            "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={}&X-Amz-Date={}&X-Amz-Expires={ttl}&X-Amz-SignedHeaders=host",
+            "X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential={}&X-Amz-Date={}&X-Amz-Expires={ttl}&X-Amz-SignedHeaders=host%3Bx-amz-content-sha256",
             uri_encode(&format!("{}/{}", self.access_key, scope), true),
             amz_date,
         );
@@ -551,8 +567,8 @@ impl SigV4Presigner {
             "PUT",
             &self.canonical_uri(key),
             canonical_query.as_str(),
-            &format!("host:{host}\n"),
-            "host",
+            &format!("host:{host}\nx-amz-content-sha256:UNSIGNED-PAYLOAD\n"),
+            "host;x-amz-content-sha256",
             "UNSIGNED-PAYLOAD",
         ]
         .join("\n");
@@ -1021,8 +1037,16 @@ mod tests {
         let url = p.presign_put("t1/c/ab/hash", 3600, 1_700_000_000_000, "deadbeef");
         assert!(url.starts_with("https://bucket.s3.amazonaws.com/t1/c/ab/hash?"));
         assert!(url.contains("X-Amz-Algorithm=AWS4-HMAC-SHA256"));
-        assert!(url.contains("X-Amz-SignedHeaders=host%3Bx-amz-checksum-sha256"));
-        assert!(url.contains("x-amz-checksum-sha256=deadbeef"));
+        assert!(url.contains(
+            "X-Amz-SignedHeaders=host%3Bx-amz-checksum-sha256%3Bx-amz-content-sha256"
+        ));
+        // The checksum is signed as a HEADER (base64 on the wire), never as a
+        // query parameter: every query param must be inside the canonical query
+        // string, and an unsigned extra param makes strict validators (R2)
+        // reject with SignatureDoesNotMatch. Hex values in the header are
+        // InvalidArgument on S3/MinIO (quirk S1).
+        assert!(!url.contains("x-amz-checksum-sha256="), "checksum must not be a query param");
+        assert!(url.contains("X-Amz-Signature="));
     }
 
     /// AWS-published known-answer vector (AWS General Reference,
