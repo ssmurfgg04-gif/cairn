@@ -104,7 +104,10 @@ tree_hash(){ (cd "$1" && find . -type f -exec sha256sum {} \; | sort | sha256sum
 
 [ -x "$BIN" ] || { say "missing $BIN — run: cargo build --release -p cairn-cli -p cairn-x"; exit 2; }
 [ -x "$XBIN" ] || { say "missing $XBIN — run: cargo build --release -p cairn-x"; exit 2; }
-FREE_MB=$(df -Pk "$PWD" | tail -1 | awk '{print int($3/1024)}')
+# The soak writes corpus + device trees + spool under WORK — check THAT
+# filesystem, not the repo root (WORK may be a dedicated large volume).
+mkdir -p "$WORK"
+FREE_MB=$(df -Pk "$WORK" | tail -1 | awk '{print int($3/1024)}')
 NEED_MB=$(( SIZE_MB * 3 + 600 ))
 if [ "$FREE_MB" -lt "$NEED_MB" ]; then
   say "abort: ${FREE_MB}MB free < ${NEED_MB}MB needed (corpus + server objects + device B copy)"

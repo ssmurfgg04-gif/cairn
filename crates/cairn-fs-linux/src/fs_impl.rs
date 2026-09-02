@@ -393,6 +393,21 @@ impl CairnFs {
     /// this is re-read per decision: config propagates through the sync engine with
     /// no wire/server change, and a missing/half-baked file degrades to per-file.
     fn lease_scope(&self, rel_path: &str) -> String {
+        // The file lives in the SYNCED STATE: authored through any device's mount
+        // it lands in the store (a virtual FUSE mount has no on-disk project tree —
+        // the live-mount run caught the disk-only read missing it). Resolve from
+        // the store first, then fall back to a .cairn-domains placed at the store
+        // root (manual placement / the unit-test contract).
+        if let Some(f) = self.store.get_file(&self.project_id, ".cairn-domains") {
+            if let Some(mh) = f.manifest_hash {
+                let size = (f.size as usize).min(1 << 20);
+                if let Ok(bytes) = self.read_ranged_verified(&mh, 0, size) {
+                    if let Ok(text) = String::from_utf8(bytes) {
+                        return cairn_sync::domains::Domains::parse(&text).scope_for(rel_path);
+                    }
+                }
+            }
+        }
         cairn_sync::domains::resolve_from_dir(self.store.root(), rel_path)
     }
 
@@ -468,7 +483,10 @@ impl CairnFs {
                 .append(true)
                 .open(&temp_path)
                 .map_err(|e| {
-                    eprintln!("cairn-fs-linux: re-open spool {temp_path:?} failed: {e}");
+                    eprintln!(
+                        "cairn-fs-linux: re-open spool {} failed: {e}",
+                        temp_path.display()
+                    );
                     libc::EIO
                 })?;
             writes.by_fh.insert(
@@ -542,7 +560,10 @@ impl CairnFs {
             .truncate(true)
             .open(&temp_path)
             .map_err(|e| {
-                eprintln!("cairn-fs-linux: spool open {temp_path:?} failed: {e}");
+                eprintln!(
+                    "cairn-fs-linux: spool open {} failed: {e}",
+                    temp_path.display()
+                );
                 libc::EIO
             })?;
         let fh = writes.alloc();
@@ -614,12 +635,10 @@ impl CairnFs {
         let buf = vec![0u8; WRITE_WINDOW.min(end as usize).max(1)];
         while copied < end {
             let want = (end - copied).min(buf.len() as u64) as usize;
-            let chunk = self
-                .read_ranged_verified(&mh, copied, want)
-                .map_err(|e| {
-                    eprintln!("cairn-fs-linux: ranged read {mh} @ {copied} failed: {e:?}");
-                    libc::EIO
-                })?;
+            let chunk = self.read_ranged_verified(&mh, copied, want).map_err(|e| {
+                eprintln!("cairn-fs-linux: ranged read {mh} @ {copied} failed: {e:?}");
+                libc::EIO
+            })?;
             w.temp.write_all_at(&chunk, copied).map_err(|e| {
                 eprintln!("cairn-fs-linux: seed write {copied} failed: {e}");
                 libc::EIO
