@@ -246,6 +246,25 @@ impl InodeTable {
         self.by_ino.insert(ino, path.to_string());
         ino
     }
+
+    /// Re-key the kernel-held inode of a renamed path: the kernel keeps the INODE
+    /// across rename(2) and only re-labels the dentry, so our table must follow —
+    /// otherwise getattr on the moved file resolves the STALE source path (row
+    /// deleted) and stat() returns ENOENT right after a successful save. Evicts
+    /// the destination's stale ino (unhashed kernel-side; returns via forget).
+    fn remap(&mut self, from: &str, to: &str) {
+        if from == to {
+            return;
+        }
+        if let Some(ino) = self.by_path.remove(from) {
+            if let Some(old) = self.by_path.insert(to.to_string(), ino) {
+                if old != ino {
+                    self.by_ino.remove(&old);
+                }
+            }
+            self.by_ino.insert(ino, to.to_string());
+        }
+    }
 }
 
 #[cfg(feature = "fuse")]
@@ -826,7 +845,10 @@ impl CairnFs {
     }
 
     /// Rename = copy-through-commit to the new name + local unlink of the old.
-    /// O(size) but exact; both sides must be closed (EBUSY otherwise).
+    /// O(size) but exact; both sides must be closed (EBUSY otherwise). An existing
+    /// target is atomically REPLACED (POSIX rename(2) — every editor's atomic
+    /// save is write-temp-then-rename-over); the upsert supersedes the old row and
+    /// the replaced version's chunks become GC fodder.
     pub fn rename_entry(&self, from: &str, to: &str, pid: u32) -> Result<(), i32> {
         {
             let writes = self.writes.lock().expect("write table");
@@ -837,9 +859,10 @@ impl CairnFs {
         let Some(f) = self.store.get_file(&self.project_id, from) else {
             return Err(libc::ENOENT);
         };
-        if self.store.get_file(&self.project_id, to).is_some() {
-            return Err(libc::EEXIST);
-        }
+        // An existing target is REPLACED (POSIX rename(2)), never refused with
+        // EEXIST — the old guard broke every editor's atomic save; caught by the
+        // blender-headless CI gate run 1. The commit's put_file upsert supersedes
+        // the old row; the replaced version's chunks become GC fodder.
         let fh = self.open_write_opts(to, pid, true, false)?;
         {
             let mut writes = self.writes.lock().expect("write table");
@@ -1496,8 +1519,28 @@ impl Filesystem for SharedFs {
             format!("{np}/{}", newname.to_string_lossy())
         };
         match self.rename_entry(&from, &to, req.pid()) {
-            Ok(()) => reply.ok(),
+            Ok(()) => {
+                // the kernel kept the temp's inode for the renamed file — follow it
+                self.inodes.lock().expect("inode table").remap(&from, &to);
+                reply.ok();
+            }
             Err(e) => reply.error(e),
+        }
+    }
+
+    /// Kernel dropped its last reference (rename-replace, unlink, dentry eviction).
+    /// Drop our mapping so a dead inode can never resolve; a path re-keyed to a
+    /// NEWER ino (rename remap) is kept.
+    fn forget(&mut self, _req: &Request, ino: u64, _nlookup: u64) {
+        if ino == fuser::FUSE_ROOT_ID {
+            return;
+        }
+        if let Ok(mut inodes) = self.inodes.lock() {
+            if let Some(path) = inodes.by_ino.remove(&ino) {
+                if inodes.by_path.get(&path) == Some(&ino) {
+                    inodes.by_path.remove(&path);
+                }
+            }
         }
     }
 }
@@ -2086,5 +2129,92 @@ mod tests {
         assert_eq!(row.size, 1024 * 1024);
         let back = fs.serve_read("A001.mov", 0, 1024 * 1024).unwrap();
         assert_eq!(back, &content[..1024 * 1024]);
+    }
+
+    /// Blender's save dance (BLO_write_file, Save Versions=1): backup-rename the
+    /// old file to `<name>1`, write a `<name>@` temp, atomically rename the temp
+    /// OVER the target. Caught by the blender-headless CI gate (run 1): after
+    /// save_mainfile, stat("scene.blend") returned ENOENT through the mount.
+    #[test]
+    fn blender_save_dance_via_backup_and_temp() {
+        let content: Vec<u8> = (0..2 * 1024 * 1024).map(|i| (i % 249) as u8).collect();
+        let (_d1, fs, _mh) = setup_with_file(&content);
+        let pid = std::process::id();
+        // 1. backup: scene.blend -> scene.blend1 (target absent — worked in CI)
+        fs.rename_entry("A001.mov", "A001.mov1", pid).unwrap();
+        assert!(fs.store.get_file("p1", "A001.mov").is_none());
+        // 2. write the temp
+        let fh = fs.open_write_opts("A001.mov@", pid, true, true).unwrap();
+        fs.write_fh(fh, 0, &content).unwrap();
+        fs.release_fh(fh).unwrap();
+        // 3. atomic move over the (absent) target
+        fs.rename_entry("A001.mov@", "A001.mov", pid).unwrap();
+        let row = fs
+            .store
+            .get_file("p1", "A001.mov")
+            .expect("target exists after save");
+        assert_eq!(row.size, content.len() as u64);
+        assert!(
+            fs.store.get_file("p1", "A001.mov1").is_some(),
+            "backup kept"
+        );
+        assert!(
+            fs.store.get_file("p1", "A001.mov@").is_none(),
+            "temp consumed"
+        );
+    }
+
+    /// POSIX rename(2) contract: an EXISTING target is atomically replaced, never
+    /// refused. Every editor's atomic save (write temp + rename over) depends on
+    /// it; the old EEXIST guard broke exactly that (blender-headless CI gate).
+    #[test]
+    fn rename_over_existing_target_replaces_posix() {
+        let (_d1, fs, _mh) = setup_with_file(&[7u8; 4096]);
+        let pid = std::process::id();
+        let fh = fs.open_write_opts("A001.new", pid, true, true).unwrap();
+        fs.write_fh(fh, 0, b"replaced bytes").unwrap();
+        fs.release_fh(fh).unwrap();
+        fs.rename_entry("A001.new", "A001.mov", pid).unwrap();
+        let row = fs
+            .store
+            .get_file("p1", "A001.mov")
+            .expect("target survives replace");
+        assert_eq!(row.size, 14);
+        assert_eq!(fs.serve_read("A001.mov", 0, 14).unwrap(), b"replaced bytes");
+        assert!(
+            fs.store.get_file("p1", "A001.new").is_none(),
+            "source consumed"
+        );
+    }
+
+    /// rename(2) keeps the kernel inode; the table must follow the dentry (the
+    /// stale-mapping ENOENT after Blender's save, caught by CI gate run 1).
+    #[test]
+    fn inode_remap_moves_kernel_ino_to_new_path() {
+        let mut t = InodeTable::default();
+        let a = t.alloc("scene.blend@");
+        let b = t.alloc("scene.blend");
+        t.remap("scene.blend@", "scene.blend");
+        assert_eq!(t.by_ino.get(&a).map(String::as_str), Some("scene.blend"));
+        assert_eq!(t.by_path.get("scene.blend"), Some(&a));
+        assert!(!t.by_ino.contains_key(&b), "replaced inode evicted");
+        assert!(!t.by_path.contains_key("scene.blend@"), "temp path gone");
+    }
+
+    /// Direct truncate-in-place overwrite (editor fopen "wb" without temp): the
+    /// row must survive release with the new content and stay stat-able.
+    #[test]
+    fn direct_truncate_overwrite_keeps_row_statable() {
+        let (_d1, fs, _mh) = setup_with_file(&[0u8; 4096]);
+        let pid = std::process::id();
+        let fh = fs.open_write_opts("A001.mov", pid, true, true).unwrap();
+        fs.write_fh(fh, 0, b"overwritten").unwrap();
+        fs.release_fh(fh).unwrap();
+        let row = fs
+            .store
+            .get_file("p1", "A001.mov")
+            .expect("row survives overwrite");
+        assert_eq!(row.size, 11);
+        assert_eq!(fs.serve_read("A001.mov", 0, 11).unwrap(), b"overwritten");
     }
 }
