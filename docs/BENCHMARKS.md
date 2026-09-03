@@ -153,17 +153,23 @@ human-gated step). Caveats recorded in the script header: synthetic corpora
 (real NLE payloads unavailable to CI), file-level granularity (cairn chunks at
 256 KiB, so per-chunk dict benefit is bounded by these file-level numbers).
 
-## NLE matrix, CI-executable subset (round 13, 2026-09-04)
+## NLE matrix, CI-executable subset (round 13 — GREEN on a windows runner, 2026-09-04)
 
 What is measured and WHERE, so nobody misreads a loopback number as a WAN claim:
 
-- **I1 through the full stack on a windows-latest runner** (`scripts/win_nle_matrix.ps1` W2):
-  cold first-2-MiB read of a placeholder whose chunks are NOT in the local CAS —
-  the path is CfAPI callback → plane fetch → hash-verified chunk put → serve.
-  The runner's plane is loopback + NVMe, so this is a **best-case local bound**
-  (the mechanism + local latency budget), NOT a network claim; WAN RTT is the
-  studio leg (nle-test-matrix.md). The callback-level reference remains
-  16.32 ms (calm runner, first 2 MiB, `windows-cfapi-roundtrip`).
+- **I1 through the full stack on a windows-latest runner, MEASURED (run 33810991399,
+  evidence in docs/nle-matrix-results/windows-runner-matrix.json)**: the W2
+  cold-attach row (B re-joins with known rows + wiped root → bulk placeholders →
+  cold first-2-MiB read) drives the REAL CfAPI FETCH_DATA callback → plane →
+  hash-verified CAS put → serve: **29.43 ms cold, 0.59 ms warm** — inside the
+  50 ms SPEC budget with 40% headroom. The runner's plane is loopback + NVMe, so
+  this is a **best-case local bound** (the mechanism + local latency budget),
+  NOT a network claim; WAN RTT is the studio leg (nle-test-matrix.md). The
+  callback-level reference remains 16.32 ms (calm runner, `windows-cfapi-roundtrip`).
+- **A real NLE through the sync root, MEASURED (W3)**: headless Blender 5.2.1
+  open→scrub→save→reopen through B's CfAPI root: open 119 ms, save 109 ms,
+  reopen 35 ms, round-trip SHA256-verified; cross-device convergence of the
+  re-saved file 5.05 s (W4).
 - **Real-NLE timeline corpus** (`scripts/real_timeline_corpus.py`, 18 pinned
   real-world timelines): capture_ms per file is recorded per run in
   `docs/nle-matrix-results/real-timeline-corpus.json` (local 2026-09-03 run:
