@@ -67,8 +67,15 @@ impl Engine {
             if !matches!(state, LocalState::Dirty | LocalState::Conflict) {
                 continue;
             }
-            if f.mode == "symlink" {
-                continue; // symlink objects ride the journal without chunking (SPEC §10)
+            if f.mode != "file" {
+                // Metadata rows (dirs, symlinks) carry no content to chunk. A
+                // dirty DIR row reaches fs::read(directory) -> EACCES on
+                // Windows / EISDIR on Linux and wedges EVERY pass (round 13,
+                // caught LIVE by the W1 matrix row on a windows runner: the
+                // ReadDirectoryChangesW parent-dir event dirties the dir row
+                // the moment children appear). The scan walk re-puts dir rows
+                // as metadata; the push side must never touch them.
+                continue;
             }
             self.process_file(&f.path, stats).await?;
         }
