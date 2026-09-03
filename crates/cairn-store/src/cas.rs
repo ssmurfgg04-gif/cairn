@@ -54,8 +54,14 @@ impl Cas {
         let tmp = dir.join(format!(".tmp-{}", cairn_core::ids::new_device_id()));
         std::fs::write(&tmp, bytes)
             .map_err(|e| CairnError::new(ErrorKind::Io, format!("cas tmp write: {e}")))?;
-        // fsync before rename: the rename is the durability barrier (I2)
-        let f = std::fs::File::open(&tmp)
+        // fsync before rename: the rename is the durability barrier (I2).
+        // OPEN WITH WRITE ACCESS: Windows' FlushFileBuffers on a GENERIC_READ-
+        // only handle fails with ERROR_ACCESS_DENIED (os error 5) — Linux
+        // permits fsync on O_RDONLY, so only the windows build ever saw it
+        // (round 13, caught live by the W1 matrix row on a windows runner).
+        let f = std::fs::OpenOptions::new()
+            .write(true)
+            .open(&tmp)
             .map_err(|e| CairnError::new(ErrorKind::Io, format!("cas reopen: {e}")))?;
         f.sync_all()
             .map_err(|e| CairnError::new(ErrorKind::Io, format!("cas fsync: {e}")))?;
