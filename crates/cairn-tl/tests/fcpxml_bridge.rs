@@ -230,3 +230,138 @@ fn fcpxml_merge_output_is_stable_base() {
     assert_eq!(r2.outcome, Outcome::Clean);
     assert_eq!(round2.tracks.children[0].children[2].name, "Renamed B");
 }
+
+// ---------------------------------------------------------------------------
+// Round 13 — real-corpus descriptor preservation (BBC R&D fcpx-xml-composer,
+// cutlass samples, PRONOM authentic FCP X). All four real files REFUSED at
+// the bridge with `conform-rate outside the lossiness ledger` before this
+// landed; these tests pin the preserved-not-refused contract.
+// ---------------------------------------------------------------------------
+
+/// Shape lifted from the real corpus: self-closing conform-rate with
+/// srcFrameRate/scaleEnabled, nested adjust-crop > trim-rect (cutlass), and
+/// filter-video > param (cutlass pip).
+const REAL_DOC: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE fcpxml>
+<fcpxml version="1.8">
+  <resources>
+    <format id="r1" name="FFVideoFormat1080p30" frameDuration="100/3000s" width="1920" height="1080"/>
+    <asset id="a1" name="vibe" uid="BEBADC29549A80431DCEA6FE9E9C06CB" start="0s" duration="96000/3000s" hasVideo="1" hasAudio="1" format="r1">
+      <media-rep kind="original-media" src="file:///media/vibe.mov"/>
+    </asset>
+  </resources>
+  <library>
+    <event name="Round 13">
+      <project name="Real World">
+        <sequence id="s1" format="r1" duration="61200/6000s" tcStart="0s" tcFormat="NDF" name="Reels">
+          <spine>
+            <asset-clip ref="a1" lane="1" offset="3600s" name="vibe" start="6800/3000s" duration="76600/3000s" format="r1" tcFormat="NDF" audioRole="dialogue">
+              <conform-rate srcFrameRate="30" scaleEnabled="0"/>
+              <adjust-crop mode="trim">
+                <trim-rect left="58.6936" top="6.71007" right="61.3455"/>
+              </adjust-crop>
+              <filter-video name="Fast Blur">
+                <param name="amount">
+                  <real>2.25</real>
+                </param>
+              </filter-video>
+            </asset-clip>
+          </spine>
+        </sequence>
+      </project>
+    </event>
+  </library>
+</fcpxml>
+"#;
+
+#[test]
+fn real_world_descriptor_subtrees_preserved_not_refused() {
+    let tl = parse_fcpxml(REAL_DOC).expect("real-corpus shape must ingest");
+    let clip = &tl.tracks.children[1].children[0]; // lane=1 -> stacked V2
+
+    // conform-rate attrs preserved verbatim in extra
+    let conform = clip.extra.get("fcpxml:conform-rate").unwrap();
+    assert_eq!(conform["attrs"]["srcFrameRate"], "30");
+    assert_eq!(conform["attrs"]["scaleEnabled"], "0");
+
+    // nested adjust-crop > trim-rect: attrs at BOTH levels, order kept
+    let crop = clip.extra.get("fcpxml:adjust-crop").unwrap();
+    assert_eq!(crop["attrs"]["mode"], "trim");
+    let children = crop["children"].as_array().unwrap();
+    assert_eq!(children.len(), 1);
+    assert_eq!(children[0]["tag"], "trim-rect");
+    assert_eq!(children[0]["node"]["attrs"]["left"], "58.6936");
+
+    // filter-video > param > real chain preserved
+    let filter = clip.extra.get("fcpxml:filter-video").unwrap();
+    assert_eq!(filter["attrs"]["name"], "Fast Blur");
+    let fchildren = filter["children"].as_array().unwrap();
+    assert_eq!(fchildren[0]["tag"], "param");
+    assert_eq!(fchildren[0]["node"]["attrs"]["name"], "amount");
+
+    // identity stamping still covers everything
+    assert!(tl.walk().iter().all(|e| e.cairn_uuid().is_some()));
+
+    // the ledger documents the new families (tested fixture, not prose)
+    let features: Vec<_> = lossiness_ledger()
+        .iter()
+        .map(|e| e.fcpxml_feature)
+        .collect();
+    assert!(features.contains(&"conform-rate"));
+    assert!(features
+        .iter()
+        .any(|f| f.starts_with("adjust-* / filter-* / retime")));
+}
+
+#[test]
+fn descriptor_attr_changes_are_merge_visible() {
+    // the preserved data is not inert: an Attr edit inside a descriptor
+    // subtree surfaces as an applied op (data preservation IS diff-visible)
+    let base = parse_fcpxml(REAL_DOC).unwrap();
+    let mut ours = base.clone();
+    let clip = ours.tracks.children[1].children[0]
+        .extra
+        .get_mut("fcpxml:conform-rate")
+        .unwrap();
+    clip["attrs"]["scaleEnabled"] = serde_json::json!("1");
+    let theirs = base.clone();
+
+    let (merged, report) = merge(&base, &ours, &theirs).unwrap();
+    assert_eq!(report.outcome, Outcome::Clean);
+    let merged_clip = &merged.tracks.children[1].children[0];
+    assert_eq!(
+        merged_clip.extra["fcpxml:conform-rate"]["attrs"]["scaleEnabled"], "1",
+        "the Attr op on preserved descriptor data must apply"
+    );
+    assert!(report.stats.applied >= 1);
+}
+
+#[test]
+fn unknown_element_inside_descriptor_still_preserved_but_unknown_root_refuses() {
+    // inside an open descriptor subtree, unknown children are preserved
+    // (the subtree is captured verbatim); OUTSIDE the known families the
+    // C10 refusal still fires — the honesty contract did not regress.
+    let inner_unknown = REAL_DOC.replace(
+        "<trim-rect left=\"58.6936\" top=\"6.71007\" right=\"61.3455\"/>",
+        "<mystery-interior secret=\"1\"/>",
+    );
+    let tl = parse_fcpxml(&inner_unknown)
+        .expect("unknown element INSIDE a descriptor subtree is preserved, not refused");
+    let crop = &tl.tracks.children[1].children[0].extra["fcpxml:adjust-crop"];
+    let children = crop["children"].as_array().unwrap();
+    assert_eq!(children[0]["tag"], "mystery-interior");
+    assert_eq!(children[0]["node"]["attrs"]["secret"], "1");
+
+    // but an unknown ROOT under the spine still refuses, named
+    let root_unknown = REAL_DOC.replace(
+        "<conform-rate srcFrameRate=\"30\" scaleEnabled=\"0\"/>",
+        "<mystery-root secret=\"1\"/>",
+    );
+    let err = parse_fcpxml(&root_unknown).unwrap_err();
+    match &err {
+        BridgeError::Unsupported { element, .. } => {
+            assert_eq!(element, "mystery-root");
+        }
+        other => panic!("expected Unsupported, got {other:?}"),
+    }
+}

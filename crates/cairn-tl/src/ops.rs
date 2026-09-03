@@ -126,6 +126,16 @@ pub enum Op {
         side: Side,
         track: usize,
     },
+    /// Attribute edit on a MATCHED TRACK itself (name/enabled/metadata/extra).
+    /// Round 13 real-corpus catch: track-level edits were previously invisible
+    /// to the diff — both sides' track renames silently vanished. The op is
+    /// keyed by the BASE track index (matched tracks are stable across sides).
+    TrackAttr {
+        side: Side,
+        track: usize,
+        attr: AttrKind,
+        value: Value,
+    },
     /// The side's full ordering of matched base tracks (reorder), base indices.
     TrackReorder {
         side: Side,
@@ -145,6 +155,7 @@ impl Op {
             | Op::MarkerRemove { side, .. }
             | Op::TrackAdd { side, .. }
             | Op::TrackRemove { side, .. }
+            | Op::TrackAttr { side, .. }
             | Op::TrackReorder { side, .. } => *side,
         }
     }
@@ -162,6 +173,7 @@ impl Op {
             Op::Insert { .. }
             | Op::TrackAdd { .. }
             | Op::TrackRemove { .. }
+            | Op::TrackAttr { .. }
             | Op::TrackReorder { .. } => None,
         }
     }
@@ -214,6 +226,9 @@ impl Op {
             } => format!("marker- {marker_key} on {}", key.0),
             Op::TrackAdd { track, .. } => format!("track+ {}", el_name(track)),
             Op::TrackRemove { track, .. } => format!("track- {track}"),
+            Op::TrackAttr { track, attr, .. } => {
+                format!("track-attr #{track} {}", attr.as_str())
+            }
             Op::TrackReorder { order, .. } => format!("reorder {order:?}"),
         }
     }
@@ -274,6 +289,48 @@ pub fn extract_ops(side: Side, base: &Flat, side_flat: &Flat) -> Result<Vec<Op>,
             side,
             order: side_order,
         });
+    }
+
+    // ---- matched-track attrs (Round 13 real-corpus catch) ----
+    // Track-level edits (rename a track, disable it, touch its metadata)
+    // previously produced NO ops — both sides' edits silently vanished. Now
+    // every matched track pair diffs its own fields, keyed by base index.
+    for (side_ti, base_ti) in side_to_base.iter().enumerate() {
+        let Some(bt) = base_ti else { continue };
+        let base_el = &base.tracks[*bt].element;
+        let side_el = &side_flat.tracks[side_ti].element;
+        if side_el.name != base_el.name {
+            ops.push(Op::TrackAttr {
+                side,
+                track: *bt,
+                attr: AttrKind::Name,
+                value: Value::String(side_el.name.clone()),
+            });
+        }
+        if side_el.enabled != base_el.enabled {
+            ops.push(Op::TrackAttr {
+                side,
+                track: *bt,
+                attr: AttrKind::Enabled,
+                value: Value::Bool(side_el.enabled),
+            });
+        }
+        if side_el.metadata != base_el.metadata {
+            ops.push(Op::TrackAttr {
+                side,
+                track: *bt,
+                attr: AttrKind::Raw("metadata".into()),
+                value: serde_json::to_value(&side_el.metadata).unwrap_or(Value::Null),
+            });
+        }
+        if side_el.extra != base_el.extra {
+            ops.push(Op::TrackAttr {
+                side,
+                track: *bt,
+                attr: AttrKind::Raw("extra".into()),
+                value: serde_json::to_value(&side_el.extra).unwrap_or(Value::Null),
+            });
+        }
     }
 
     // ---- item-level: matched pairs ----
@@ -374,6 +431,7 @@ pub fn extract_ops(side: Side, base: &Flat, side_flat: &Flat) -> Result<Vec<Op>,
         Op::TrackAdd { .. } | Op::TrackRemove { .. } | Op::TrackReorder { .. } => {
             (usize::MAX, usize::MAX)
         }
+        Op::TrackAttr { track, .. } => (usize::MAX - 1, *track),
         Op::Insert { slot, .. } | Op::Move { slot, .. } => slot_key(slot),
         Op::Remove { base, .. }
         | Op::Trim { base, .. }

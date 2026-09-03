@@ -105,6 +105,12 @@ fn bounded_op(kind: u8, side: Side, a: i64, b: i64) -> Op {
             side,
             track: a.unsigned_abs() as usize,
         },
+        9 => Op::TrackAttr {
+            side,
+            track: a.unsigned_abs() as usize,
+            attr: AttrKind::Name,
+            value: serde_json::json!("x"),
+        },
         _ => Op::TrackReorder {
             side,
             order: vec![a.unsigned_abs() as usize, b.unsigned_abs() as usize],
@@ -114,14 +120,14 @@ fn bounded_op(kind: u8, side: Side, a: i64, b: i64) -> Op {
 
 /// Totality + panic-freedom: EVERY (ours-kind × theirs-kind) pair over the
 /// bounded op model classifies to a verdict with a legal class code, and
-/// nothing panics. 10×10 = 100 symbolic pairs, allocation-free.
+/// nothing panics. 11×11 = 121 symbolic pairs, allocation-free.
 #[cfg(kani)]
 #[kani::proof]
 fn proof_classifier_total_and_panic_free() {
     let ours_kind: u8 = kani::any();
     let theirs_kind: u8 = kani::any();
-    kani::assume(ours_kind < 10);
-    kani::assume(theirs_kind < 10);
+    kani::assume(ours_kind < 11);
+    kani::assume(theirs_kind < 11);
     let a: i64 = kani::any();
     let b: i64 = kani::any();
     let ours = bounded_op(ours_kind, Side::Ours, a, b);
@@ -154,8 +160,8 @@ fn proof_classifier_total_and_panic_free() {
 fn proof_interaction_symmetry() {
     let ka: u8 = kani::any();
     let kb: u8 = kani::any();
-    kani::assume(ka < 10);
-    kani::assume(kb < 10);
+    kani::assume(ka < 11);
+    kani::assume(kb < 11);
     let a: i64 = kani::any();
     let b: i64 = kani::any();
     let ours = bounded_op(ka, Side::Ours, a, b);

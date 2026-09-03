@@ -61,7 +61,8 @@ pub fn interacts(ours: &Op, theirs: &Op) -> bool {
             return true;
         }
     }
-    // track containment: TrackRemove vs item ops inside that track
+    // track containment: TrackRemove vs item ops inside that track (and
+    // TrackAttr edits ON the track itself)
     if let (Op::TrackRemove { track: bt, .. }, op) = (ours, theirs) {
         if op_in_base_track(op, *bt) {
             return true;
@@ -71,6 +72,10 @@ pub fn interacts(ours: &Op, theirs: &Op) -> bool {
         if op_in_base_track(op, *bt) {
             return true;
         }
+    }
+    // matched-track attr edits interact when they target the SAME base track
+    if let (Op::TrackAttr { track: t1, .. }, Op::TrackAttr { track: t2, .. }) = (ours, theirs) {
+        return t1 == t2;
     }
     // reorder vs reorder
     if let (Op::TrackReorder { .. }, Op::TrackReorder { .. }) = (ours, theirs) {
@@ -164,6 +169,7 @@ fn op_in_base_track(op: &Op, base_track: usize) -> bool {
         | Op::Attr { base, .. }
         | Op::MarkerAdd { base, .. }
         | Op::MarkerRemove { base, .. } => base.0 == base_track,
+        Op::TrackAttr { track, .. } => *track == base_track,
         _ => false,
     }
 }
@@ -347,6 +353,47 @@ pub fn classify_pair(ours: &Op, theirs: &Op) -> PairVerdict {
             note: "track removal vs edits inside it — human decides".into(),
             once: false,
         },
+        // ---- TRACK ATTR (matched-track field edits; interaction = same track) ----
+        (K::TrackAttr, K::TrackAttr) => match (ours, theirs) {
+            (
+                Op::TrackAttr { attr: a1, value: v1, .. },
+                Op::TrackAttr { attr: a2, value: v2, .. },
+            ) => {
+                if a1 != a2 {
+                    PairVerdict {
+                        class: class::C2,
+                        verdict: Auto,
+                        note: "different track attributes — both apply".into(),
+                        once: false,
+                    }
+                } else if v1 == v2 {
+                    PairVerdict {
+                        class: class::C6,
+                        verdict: Auto,
+                        note: "identical track attribute change — applied once".into(),
+                        once: true,
+                    }
+                } else {
+                    PairVerdict {
+                        class: class::C3,
+                        verdict: Human,
+                        note: format!(
+                            "same track attribute ({}), different values — no last-write-wins on creative parameters",
+                            a1.as_str()
+                        ),
+                        once: false,
+                    }
+                }
+            }
+            _ => unreachable!("kinds are TrackAttr"),
+        },
+        // track attrs are independent of item-level edits inside the track
+        (K::TrackAttr, _) | (_, K::TrackAttr) => PairVerdict {
+            class: class::C0,
+            verdict: Auto,
+            note: "track attribute alongside item edits — independent aspects".into(),
+            once: false,
+        },
         (K::TrackAdd, K::TrackAdd) => PairVerdict {
             class: class::C0,
             verdict: Auto,
@@ -391,6 +438,7 @@ enum K {
     MarkerRemove,
     TrackAdd,
     TrackRemove,
+    TrackAttr,
     TrackReorder,
 }
 
@@ -405,6 +453,7 @@ fn kind_of(op: &Op) -> K {
         Op::MarkerRemove { .. } => K::MarkerRemove,
         Op::TrackAdd { .. } => K::TrackAdd,
         Op::TrackRemove { .. } => K::TrackRemove,
+        Op::TrackAttr { .. } => K::TrackAttr,
         Op::TrackReorder { .. } => K::TrackReorder,
     }
 }

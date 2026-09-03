@@ -299,3 +299,142 @@ fn large_doc_merge_is_total() {
         .collect();
     assert_eq!(ids.len(), 50, "all 50 identities distinct");
 }
+
+// ---------------------------------------------------------------------------
+// Round 13 — the real-corpus catch: track-level edits were invisible to the
+// diff. PRONOM's authentic FCP X sample (empty spine, one V1 track) exposed
+// it live: both sides' track renames produced ZERO ops and the merged output
+// kept the base name — a silent drop of both editors' work. These tests pin
+// the fix (Op::TrackAttr) from both directions.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn track_rename_one_side_applies() {
+    let mut base = doc(vec![("V1", vec![clip("Hero", "hero", 0, 96)])]);
+    stamp(&mut base);
+    let mut ours = base.clone();
+    let theirs = base.clone();
+    ours.tracks.children[0].name = "V1 A-roll".into();
+
+    let (merged, report) = merge(&base, &ours, &theirs).unwrap();
+    assert_eq!(
+        merged.tracks.children[0].name, "V1 A-roll",
+        "a one-sided track rename MUST apply (was silently dropped before Round 13)"
+    );
+    assert_eq!(report.outcome, Outcome::Clean);
+    assert!(report.stats.applied >= 1, "the TrackAttr op must count");
+}
+
+#[test]
+fn track_rename_both_sides_conflicts_not_last_write_wins() {
+    let mut base = doc(vec![("V1", vec![clip("Hero", "hero", 0, 96)])]);
+    stamp(&mut base);
+    let mut ours = base.clone();
+    let mut theirs = base.clone();
+    ours.tracks.children[0].name = "V1 A-roll".into();
+    theirs.tracks.children[0].name = "V1 B-roll".into();
+
+    let (merged, report) = merge(&base, &ours, &theirs).unwrap();
+    assert_eq!(
+        report.outcome,
+        Outcome::Conflicts,
+        "same track, same field, different values = C3 human escalation"
+    );
+    assert_eq!(
+        merged.tracks.children[0].name, "V1",
+        "conflicting track renames withhold BOTH — base kept, never last-write-wins"
+    );
+    assert!(report.stats.withheld >= 2);
+    assert_eq!(
+        *report.histogram.get(&3).unwrap_or(&0),
+        1,
+        "classified C3 exactly once"
+    );
+}
+
+#[test]
+fn track_rename_vs_track_disable_both_apply() {
+    // same track, DIFFERENT fields: C2 auto — both sides' work survives
+    let mut base = doc(vec![("V1", vec![clip("Hero", "hero", 0, 96)])]);
+    stamp(&mut base);
+    let mut ours = base.clone();
+    let mut theirs = base.clone();
+    ours.tracks.children[0].name = "V1 A-roll".into();
+    theirs.tracks.children[0].enabled = false;
+
+    let (merged, report) = merge(&base, &ours, &theirs).unwrap();
+    assert_eq!(merged.tracks.children[0].name, "V1 A-roll");
+    assert!(
+        !merged.tracks.children[0].enabled,
+        "the disable applies too"
+    );
+    assert_eq!(report.outcome, Outcome::Clean);
+}
+
+#[test]
+fn identical_track_renames_apply_once() {
+    let mut base = doc(vec![("V1", vec![clip("Hero", "hero", 0, 96)])]);
+    stamp(&mut base);
+    let mut ours = base.clone();
+    let mut theirs = base.clone();
+    ours.tracks.children[0].name = "V1 A-roll".into();
+    theirs.tracks.children[0].name = "V1 A-roll".into();
+
+    let (merged, report) = merge(&base, &ours, &theirs).unwrap();
+    assert_eq!(merged.tracks.children[0].name, "V1 A-roll");
+    assert_eq!(report.outcome, Outcome::Clean);
+    assert!(report.stats.deduped >= 1, "identical ops dedupe to ours");
+}
+
+#[test]
+fn track_rename_vs_clip_edit_inside_independent() {
+    // track attr + clip trim inside that track: independent aspects (C0),
+    // both apply — the pre-Round-13 engine dropped the rename entirely
+    let mut base = doc(vec![("V1", vec![clip("Hero", "hero", 0, 96)])]);
+    stamp(&mut base);
+    let mut ours = base.clone();
+    let mut theirs = base.clone();
+    ours.tracks.children[0].name = "V1 A-roll".into();
+    theirs.tracks.children[0].children[0].source_range = Some(TimeRange {
+        start: tv(5, 24),
+        duration: tv(91, 24),
+    });
+
+    let (merged, report) = merge(&base, &ours, &theirs).unwrap();
+    assert_eq!(merged.tracks.children[0].name, "V1 A-roll");
+    assert_eq!(
+        merged.tracks.children[0].children[0]
+            .source_range
+            .as_ref()
+            .unwrap()
+            .start
+            .value,
+        tv(5, 24).value
+    );
+    assert_eq!(report.outcome, Outcome::Clean);
+}
+
+#[test]
+fn track_remove_vs_track_rename_escalates() {
+    // C9: removing a track the other side renamed — human decides
+    let mut base = doc(vec![
+        ("V1", vec![clip("Hero", "hero", 0, 96)]),
+        ("V2", vec![clip("Overlay", "ov", 0, 48)]),
+    ]);
+    stamp(&mut base);
+    let mut ours = base.clone();
+    let theirs = base.clone();
+    ours.tracks.children.remove(1); // remove V2
+    let mut theirs = theirs;
+    // match by index: theirs renames what base index 1 is
+    theirs.tracks.children[1].name = "V2 titles".into();
+
+    let (merged, report) = merge(&base, &ours, &theirs).unwrap();
+    assert_eq!(
+        report.outcome,
+        Outcome::Conflicts,
+        "C9: track removal vs edit on that track escalates"
+    );
+    // V2 kept (removal withheld, deletion never wins silently)
+    assert_eq!(merged.tracks.children.len(), 2);
+}
