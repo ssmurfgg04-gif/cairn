@@ -1,18 +1,27 @@
-# Cairn -- one-command Windows installer (SHIP v1.0 Task 2).
+# Cairn -- one-command Windows installer (round 12: CLI + tray, ADR-0016).
 #
 #   irm https://raw.githubusercontent.com/ssmurfgg04-gif/cairn/main/install.ps1 | iex
 #
 # What it does:
 #   1. Detects the Windows version (10/11) and edition (Pro/Home/...)
-#   2. Resolves the latest GitHub release and downloads cairn-windows-*.exe
-#   3. Verifies the download against the release's SHA256 asset
+#   2. Resolves the latest GitHub release and downloads:
+#        - cairn-windows-*.exe    (the engine: CLI + daemon + server)
+#        - cairn-tray-windows-*.exe (the system tray, ADR-0016 "clicky-clicky")
+#   3. Verifies each download against the release's SHA256 assets
 #   4. Adds the install dir to the user PATH (idempotent)
-#   5. Runs `cairn init` (creates the store; device id is issued at `cairn login`)
-#   6. Prints the next step
+#   5. Registers the tray to start at login (HKCU Run key, per-user, no admin)
+#      and creates a Desktop shortcut to it
+#   6. Starts the tray for THIS session (no reboot needed to see it)
+#   7. Runs `cairn init` (creates the store; device id is issued at `cairn login`)
+#   8. Prints the next step
+#
+# Explorer badge registration is NOT installer work: the daemon registers the
+# CfAPI sync root + provider state at `cairn attach` time (badge.rs). The
+# installer only needs the binaries + autostart.
 #
 # Exit code 0 = installed; non-zero = failure (reason on stderr).
-# CI gate: .github/workflows/install-windows.yml runs this on windows-latest
-# on every release and asserts exit 0.
+# CI gate: .github/workflows/release.yml installer-gate runs this on
+# windows-latest against the just-published release and asserts exit 0.
 #
 # For CI/testing you can pin an artifact instead of the latest release:
 #   powershell -File install.ps1 -ArtifactUrl https://.../cairn-windows-v1.0.exe
@@ -95,6 +104,38 @@ if ($actual -ne $expected) {
 }
 Write-Host "SHA256 verified: $actual"
 
+# ---- 3b. Download + verify the TRAY (optional asset: older releases, dev
+# pins and partial releases may ship engine-only; installer degrades
+# gracefully and says so) -------------------------------------------
+$trayUrl = "$exeUrl".Replace("cairn-windows-", "cairn-tray-windows-")
+$trayPath = Join-Path $InstallDir "cairn-tray.exe"
+$trayInstalled = $false
+try {
+    Invoke-WebRequest -Uri $trayUrl -OutFile $trayPath -UserAgent "cairn-installer" -UseBasicParsing
+    $trayShaUrl = "$trayUrl.sha256"
+    $tresp = Invoke-WebRequest -Uri $trayShaUrl -UserAgent "cairn-installer" -UseBasicParsing
+    $tshaText = if ($tresp.Content -is [byte[]]) {
+        [Text.Encoding]::ASCII.GetString($tresp.Content)
+    } else {
+        $tresp.Content
+    }
+    $texpected = ($tshaText.Trim() -split '\s+')[0].ToLower()
+    $tactual = (Get-FileHash $trayPath -Algorithm SHA256).Hash.ToLower()
+    if ($tactual -ne $texpected) {
+        Remove-Item $trayPath -Force
+        Write-Host "tray SHA256 mismatch -- skipping tray (engine still fully installed)"
+    } else {
+        if (Get-Command Unblock-File -ErrorAction SilentlyContinue) {
+            Unblock-File $trayPath
+        }
+        $trayInstalled = $true
+        Write-Host "cairn-tray.exe installed (SHA256 verified: $tactual)"
+    }
+} catch {
+    if (Test-Path $trayPath) { Remove-Item $trayPath -Force }
+    Write-Host "no tray asset on this release -- engine-only install (the CLI path works; re-run after a release that ships the tray)"
+}
+
 # Clear the Mark-of-the-Web so the freshly downloaded exe does not trip
 # SmartScreen on every launch (we just verified its hash).
 if (Get-Command Unblock-File -ErrorAction SilentlyContinue) {
@@ -114,15 +155,59 @@ if (($env:Path -split ';') -notcontains $InstallDir) {
     $env:Path = "$env:Path;$InstallDir"
 }
 
-# ---- 5. First-run init ------------------------------------------------------------
+# ---- 5. Tray autostart + shortcut + launch (only when the tray installed) ----------
+if ($trayInstalled) {
+    # HKCU Run key: per-user autostart, NO admin rights, silent on boot.
+    # Idempotent: overwrite with the same value.
+    $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+    try {
+        Set-ItemProperty -Path $runKey -Name "CairnTray" -Value "`"$trayPath`"" -ErrorAction Stop
+        Write-Host "Tray autostart registered (HKCU Run)"
+    } catch {
+        Write-Host "could not write the autostart key: $($_.Exception.Message) -- start the tray manually"
+    }
+    # Desktop shortcut to the tray (the visible affordance).
+    try {
+        $desktop = [Environment]::GetFolderPath("Desktop")
+        $lnk = Join-Path $desktop "Cairn.lnk"
+        $shell = New-Object -ComObject WScript.Shell
+        $sc = $shell.CreateShortcut($lnk)
+        $sc.TargetPath = $trayPath
+        $sc.WorkingDirectory = $InstallDir
+        $sc.Description = "Cairn -- sync status, connect, open project folder"
+        $sc.Save()
+        Write-Host "Desktop shortcut created: $lnk"
+    } catch {
+        Write-Host "could not create the desktop shortcut: $($_.Exception.Message)"
+    }
+    # Start it NOW (the user should not need a reboot to see the tray).
+    # CI sets CAIRN_INSTALL_NO_LAUNCH=1 (no interactive session there).
+    if ($env:CAIRN_INSTALL_NO_LAUNCH -ne "1") {
+        try {
+            Start-Process -FilePath $trayPath -WorkingDirectory $InstallDir
+            Write-Host "Cairn tray started"
+        } catch {
+            Write-Host "could not start the tray: $($_.Exception.Message) -- launch it from the shortcut"
+        }
+    }
+}
+
+# ---- 6. First-run init ------------------------------------------------------------
 & $exePath init
 if ($LASTEXITCODE -ne 0) {
     Fail "cairn init exited $LASTEXITCODE"
 }
 
-# ---- 6. Done ----------------------------------------------------------------------
+# ---- 7. Done ----------------------------------------------------------------------
 Write-Host ""
-Write-Host "Cairn installed."
-Write-Host "Run 'cairn attach <folder>' to start -- the 5-minute guide walks you through it:"
-Write-Host "  https://github.com/$Repo/blob/main/docs/BETA.md"
+if ($trayInstalled) {
+    Write-Host "Cairn installed."
+    Write-Host "The tray icon is in your notification area: right-click it to connect a project folder,"
+    Write-Host "check status, or open the project -- no terminal needed."
+} else {
+    Write-Host "Cairn installed (engine only -- no tray on this release)."
+    Write-Host "Run 'cairn attach <folder>' to start -- the 5-minute guide walks you through it:"
+    Write-Host "  https://github.com/$Repo/blob/main/docs/BETA.md"
+}
+Write-Host "Guide + beta docs: https://github.com/$Repo/blob/main/docs/BETA.md"
 exit 0

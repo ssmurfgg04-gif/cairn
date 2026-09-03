@@ -70,3 +70,42 @@ gates for all three.
 - Blender devtalk: "Why is compress file = off by default" (default OFF, rationale)
 - blenderartists / blender.SE: compressed .blend = gzip wrapper, openable cross-version
 - Blackmagic forum / davinciresolveclub: Resolve live-save + .drp export/backup flow
+
+## Instrumentation bundle (round 12) — the "report back" protocol
+
+`scripts/nle_matrix_collect.py` is the collector: it snapshots `cairn doctor`
++ `cairn status --json`, hashes the whole project tree before/after each
+confirmed H-row (the byte-identity oracle), pulls
+`cairn_hydration_first_byte_ms` / `sync_propagation` lines from the daemon
+log, and writes one JSON. It is read-only against the project tree and never
+needs admin rights.
+
+Studio procedure (the I1 human-gate contract):
+
+1. Attach the project on the Windows box; run the daemon with
+   `RUST_LOG=info` captured to a file.
+2. `python scripts/nle_matrix_collect.py --project <id> --log <daemon.log>
+   --box "<CPU/GPU/RAM/NVMe>" --nle premiere`
+3. Work the H-rows in the NLE; after each row run the collector again with
+   `--confirm-row H2` (repeatable) so the row pairs the human action with
+   the objective measurements.
+4. Send back the JSON (issue tracker, email, anything) — results land in
+   `docs/nle-matrix-results/` and update `docs/BENCHMARKS.md` with live
+   numbers.
+
+### Minimum hardware spec for a meaningful run
+
+The I1 claim is hydration speed under real access patterns, so the box must
+not be the bottleneck before Cairn is:
+
+- CPU: 6+ physical cores at 3 GHz+ (NLE decode + daemon hydration in
+  parallel)
+- RAM: 32 GB (NLE comfortable, cache not thrashed)
+- NVMe: 1 TB free, 2 GB/s+ read (placeholder hydration target)
+- Network: 100 Mbps+ to the object store (the sync path)
+- OS: Windows 10 22H2 / 11, NLE: Premiere Pro 2024+, Resolve 19+, Blender 3.6+
+- The 5 GB project media should EXCEED local free cache so hydration is
+  actually exercised (otherwise you measure the local disk, not Cairn)
+
+Anything weaker still produces a valid report — the JSON captures the box
+description; we grade against the claim, not the hardware.

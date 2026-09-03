@@ -5,9 +5,9 @@ name: kani
 on:
   push:
     branches: [main]
-    paths: ["crates/cairn-core/**", ".github/workflows/kani.yml"]
+    paths: ["crates/cairn-core/**", "crates/cairn-tl/**", ".github/workflows/kani.yml"]
   pull_request:
-    paths: ["crates/cairn-core/**", ".github/workflows/kani.yml"]
+    paths: ["crates/cairn-core/**", "crates/cairn-tl/**", ".github/workflows/kani.yml"]
   schedule:
     - cron: "0 4 * * *" # nightly re-proof (solver updates can flip results)
   workflow_dispatch: {}
@@ -26,6 +26,9 @@ jobs:
           # expensive shards (BLAKE3 in the symbolic path)
           - proof_commit_roundtrip_frozen_format
           - proof_bloom_probe_math_in_bounds
+          # cairn-tl (ADR-0015 §7): classifier totality + interaction symmetry
+          - proof_classifier_total_and_panic_free
+          - proof_interaction_symmetry
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -33,10 +36,15 @@ jobs:
         run: |
           cargo install --locked kani-verifier
           cargo kani setup
-      - name: Proof ${{ matrix.harness }}
+      - name: Proof (cairn-tl) ${{ matrix.harness }}
+        # bounded op model: 10 op kinds, fixed structures — unwind 12 covers it
+        run: cargo kani --harness ${{ matrix.harness }} -p cairn-tl --default-unwind 12
+        if: contains(matrix.harness, 'proof_') && !contains(matrix.harness, 'roundtrip_frozen') && !contains(matrix.harness, 'bloom_probe') && !contains(matrix.harness, 'b64_') && !contains(matrix.harness, 'hex_') && !contains(matrix.harness, 'sniff_')
+      - name: Proof (cairn-core) ${{ matrix.harness }}
         # per-shard unwind: the commit harness compares whole ~95-byte buffers
         # (memcmp model needs >96); bloom's probe loop is concrete-bounded at 16.
         run: >
           cargo kani --harness ${{ matrix.harness }} -p cairn-core
           ${{ matrix.harness == 'proof_commit_roundtrip_frozen_format' && '--default-unwind 104' || '' }}
           ${{ matrix.harness == 'proof_bloom_probe_math_in_bounds' && '--default-unwind 32' || '' }}
+        if: contains(matrix.harness, 'b64_') || contains(matrix.harness, 'hex_') || contains(matrix.harness, 'sniff_') || contains(matrix.harness, 'roundtrip_frozen') || contains(matrix.harness, 'bloom_probe')

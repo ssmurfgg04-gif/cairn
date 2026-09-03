@@ -581,6 +581,13 @@ impl Drop for Connection {
     }
 }
 
+impl Connection {
+    /// The raw connection key (badge layer FFI rides the same connection).
+    pub fn key(&self) -> windows::Win32::Storage::CloudFilters::CF_CONNECTION_KEY {
+        self.key.unwrap_or_default()
+    }
+}
+
 /// FETCH_DATA core (nextcloud/desktop cfApiFetchDataCallback pattern), shared by
 /// the read-only and write-back connections:
 /// 1. self-PID deadlock guard,

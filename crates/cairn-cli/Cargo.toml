@@ -10,6 +10,7 @@ name = "cairn"
 path = "src/main.rs"
 
 [dependencies]
+cairn-tl = { path = "../cairn-tl" }
 cairn-core = { path = "../cairn-core" }
 cairn-store = { path = "../cairn-store" }
 cairn-fs-win = { path = "../cairn-fs-win" }

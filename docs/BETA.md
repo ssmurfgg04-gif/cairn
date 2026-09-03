@@ -96,3 +96,48 @@ GUI and exits with a code you can assert in CI. The catch: this validates
 "does Cairn serve bytes correctly" — not "does a human editor find it smooth."
 Headless catches the mechanical 90% of bugs; the human session above catches
 the rest. Both matter; neither replaces the other.
+
+
+---
+
+## The zero-terminal path (round 12: tray + installer)
+
+The 5-minute guide below is the CLI path — for power users, servers, and
+anyone curious about the machinery. Everyone else installs and lives in the
+tray:
+
+1. **Install (one command, no admin):**
+
+   ```powershell
+   irm https://raw.githubusercontent.com/ssmurfgg04-gif/cairn/main/install.ps1 | iex
+   ```
+
+   SHA-verified engine + tray, per-user autostart, desktop shortcut, tray
+   starts immediately.
+
+2. **Day 2 operation is four clicks:** tray icon → Connect to Project…
+   (folder picker — attach, scan, and mount run in the daemon) → Status
+   Details (the doctor, "Everything is OK") → Open Project Folder. The tray
+   polls every 3 s; the icon tooltip is the sync state.
+
+3. **Two editors, one timeline:** the merge is automatic for OTIO/FCPXML —
+   when a conflict copy lands, `cairn tl-merge --base <ancestor> --ours
+   <surviving-save> --theirs <earlier-save>` writes `<ours>.merged.otio`
+   plus a machine-readable verdict report. Exit codes: 0 clean, 1 notes, 2
+   conflicts (a human looks — the report names the pair), 3 refused
+   (nothing touched). The tray surfaces conflicts through the status line;
+   resolving them is still a deliberate act, never a silent pick.
+
+4. **Explorer shows the truth:** synced files carry the in-sync badge; the
+   root shows syncing/offline/error state from the daemon. Errors are
+   sticky until the engine clears them.
+
+What the tray will never be: a review tool, a media browser, or an editor.
+It is a thin onboarding layer (ADR-0016) — the engine is the product.
+
+### Studio hardware-gate (I1)
+
+If you have a physical Windows box with Premiere/Resolve, run the collector
+and send back the JSON — that report is the last open item in the shipping
+matrix: `docs/design/nle-test-matrix.md` (procedure + minimum hardware
+spec) and `scripts/nle_matrix_collect.py`.

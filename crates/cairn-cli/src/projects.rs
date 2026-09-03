@@ -609,6 +609,25 @@ async fn run_loop(
     // server-release the reaped tokens. This is what turns a crashed editor's lock
     // into a seconds-long blip instead of a human-gated unlock.
     let mut last_lease_beat = tokio::time::Instant::now();
+
+    // Explorer badge layer (P1 #2): derive the root status from sync-loop
+    // facts and drive the CfAPI provider-status + error report when it
+    // CHANGES (no-op passes skip the FFI round-trip entirely).
+    #[cfg(windows)]
+    let mut badge = cairn_fs_win::badge::BadgeMachine::new();
+    #[cfg(windows)]
+    let badge_root_utf16: Vec<u16> = {
+        let mut v: Vec<u16> = rt.workspace.to_string_lossy().encode_utf16().collect();
+        v.push(0);
+        v
+    };
+    #[cfg(windows)]
+    let mut badge_pass_ok = true;
+    #[cfg(windows)]
+    let mut badge_syncing = false;
+    #[cfg(windows)]
+    let mut badge_error: Option<cairn_fs_win::badge::RootError> = None;
+
     loop {
         tokio::select! {
             _ = shutdown.changed() => return Ok(()),
@@ -740,14 +759,68 @@ async fn run_loop(
                 };
                 v.last_error = None;
                 let _ = p;
+                #[cfg(windows)]
+                {
+                    badge_pass_ok = true;
+                    badge_syncing = v.state == "syncing";
+                    badge_error = None;
+                }
             }
             (Err(e), _) | (_, Err(e)) => {
                 let mut v = rt.view.write().await;
                 v.state = "error".into();
                 v.last_error = Some(e.message.clone());
                 tracing::warn!(project = %pid, "pass error: {e}");
+                #[cfg(windows)]
+                {
+                    badge_pass_ok = false;
+                    badge_error = Some(cairn_fs_win::badge::RootError {
+                        // E_UNEXPECTED-class code with the engine message as
+                        // the Explorer-visible description (ASCII-truncated
+                        // at 200 bytes to fit the shell's buffer)
+                        code: 0x8000_FFFF,
+                        description: {
+                            let m = e.message.as_str();
+                            let cut: String = m.chars().take(200).collect();
+                            cut
+                        },
+                    });
+                }
                 // keep looping: full-jitter retry semantics live in the engine; the loop
                 // is the re-entry point (I2)
+            }
+        }
+
+        // badge apply (Windows): ride the CFAPI_CONNS connection the attach
+        // registered for THIS project; only changes hit the FFI.
+        #[cfg(windows)]
+        {
+            let facts = cairn_fs_win::badge::EngineFacts {
+                server_reachable: badge_pass_ok,
+                outbox_pending: outbox.pending_count(&pid),
+                transfers_in_flight: usize::from(badge_syncing),
+                last_error: badge_error.clone(),
+            };
+            if let Some(directive) = badge.next(&facts, cairn_fs_win::badge::Bulk::No) {
+                let conns = CFAPI_CONNS.lock().expect("cfapi conns");
+                if let Some(conn) = conns.get(&pid) {
+                    let bc = cairn_fs_win::badge::ffi::BadgeConnection {
+                        connection: conn,
+                        root_utf16: badge_root_utf16.clone(),
+                    };
+                    match cairn_fs_win::badge::ffi::apply(&bc, &directive) {
+                        Ok(()) => tracing::debug!(
+                            project = %pid,
+                            status = %directive.status,
+                            "explorer badge updated"
+                        ),
+                        Err(code) => tracing::warn!(
+                            project = %pid,
+                            code = code,
+                            "explorer badge update failed"
+                        ),
+                    }
+                }
             }
         }
     }

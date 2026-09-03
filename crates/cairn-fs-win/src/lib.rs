@@ -59,6 +59,10 @@ pub fn is_syncable(path: &str) -> bool {
 #[cfg(windows)]
 pub mod cfapi;
 
+// Explorer badge layer (P1 #2): the decision state machine is portable and
+// unit-tested everywhere; the FFI is Windows-only and policy-free.
+pub mod badge;
+
 #[cfg(test)]
 mod tests {
     use super::*;

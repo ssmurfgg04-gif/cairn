@@ -1,7 +1,14 @@
 # ADR-0015: OTIO/FCPXML three-way timeline merge (Phase 4 design, v2-by-design)
 
 Date: 2026-09-02
-Status: Proposed (design only — v2 target; v1 ships the capture substrate, zero merge logic)
+Status: Implemented (round 12, 2026-09-03): crates/cairn-tl — exact-rational
+core, identity ladder, C0–C10 classifier, three-way merge driver + report,
+FCPXML bridge + lossiness ledger, sidecar; `cairn tl-capture` / `cairn
+tl-merge` (exit codes 0/1/2/3); golden corpus C0–C10, two-editor
+simulations, 200-case property suite, python-otio interop oracle in CI.
+The "v1 substrate first / v2 merge later" split collapsed into one shipped
+implementation (the checklist round demanded it); the ADR's design carried
+through unchanged, including the total classifier and the honesty policies.
 Supersedes: none (design child of ADR-0014 §Phase 4)
 Related: ADR-0014 (phase strategy), docs/research/2026-09-02-cdc-collab-scan.md §2 (substrate scan),
 SPEC §7.1–7.2 (journal/fold), SPEC §8 (leases & fencing), docs/design/write-back.md

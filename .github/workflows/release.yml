@@ -38,6 +38,11 @@ jobs:
           RUSTFLAGS: -C target-feature=+crt-static
         run: cargo build --release -p cairn-cli --bin cairn
 
+      - name: Build the tray (static CRT)
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static
+        run: cargo build --release -p cairn-tray --bin cairn-tray
+
       - name: Smoke test (exit-code contract)
         shell: pwsh
         run: |
@@ -49,7 +54,7 @@ jobs:
           & target\release\cairn.exe status --json
           if ($LASTEXITCODE -ne 0) { throw "cairn status exited $LASTEXITCODE" }
 
-      - name: Package (exe + sha256)
+      - name: Package (exe + tray + sha256s)
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -59,6 +64,11 @@ jobs:
           # "<hash>  <name>" — the exact format `sha256sum -c` and install.ps1 both parse
           "$h  cairn-windows-$ver.exe" | Out-File "cairn-windows-$ver.exe.sha256" -NoNewline -Encoding ascii
           Write-Host "packaged cairn-windows-$ver.exe ($((Get-Item "cairn-windows-$ver.exe").Length / 1MB -as [int])) MiB, sha256 $h"
+
+          Copy-Item target\release\cairn-tray.exe "cairn-tray-windows-$ver.exe"
+          $th = (Get-FileHash "cairn-tray-windows-$ver.exe" -Algorithm SHA256).Hash.ToLower()
+          "$th  cairn-tray-windows-$ver.exe" | Out-File "cairn-tray-windows-$ver.exe.sha256" -NoNewline -Encoding ascii
+          Write-Host "packaged cairn-tray-windows-$ver.exe ($((Get-Item "cairn-tray-windows-$ver.exe").Length / 1MB -as [int])) MiB, sha256 $th"
 
       - name: Publish to GitHub Releases
         env:
@@ -70,12 +80,12 @@ jobs:
           $existing = gh release view "$ver" --json id -q .id 2>$null
           if ($existing) {
             # re-run of the job against an existing release: refresh the assets
-            gh release upload "$ver" "cairn-windows-$ver.exe" "cairn-windows-$ver.exe.sha256" --clobber
+            gh release upload "$ver" "cairn-windows-$ver.exe" "cairn-windows-$ver.exe.sha256" "cairn-tray-windows-$ver.exe" "cairn-tray-windows-$ver.exe.sha256" --clobber
           } else {
-            gh release create "$ver" "cairn-windows-$ver.exe" "cairn-windows-$ver.exe.sha256" `
+            gh release create "$ver" "cairn-windows-$ver.exe" "cairn-windows-$ver.exe.sha256" "cairn-tray-windows-$ver.exe" "cairn-tray-windows-$ver.exe.sha256" `
               --title "cairn $ver" --generate-notes
           }
-          Write-Host "release $ver published"
+          Write-Host "release $ver published (engine + tray)"
 
   # The installer gate lives INSIDE this workflow (not as a release:published
   # listener): GitHub does not fire events for releases created with the
@@ -89,6 +99,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Run the installer against the published release (Windows PowerShell 5.1)
         shell: powershell
+        env:
+          CAIRN_INSTALL_NO_LAUNCH: "1"
         run: ./install.ps1
       - name: Assert the installed state
         shell: powershell
@@ -109,4 +121,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "cairn --version exited $LASTEXITCODE" }
           & cairn init --json
           if ($LASTEXITCODE -ne 0) { throw "cairn init exited $LASTEXITCODE" }
-          Write-Host "installer gate GREEN"
+          # 4. the tray asset installed + autostart registered (ADR-0016)
+          $tray = "$env:LOCALAPPDATA\Programs\cairn\cairn-tray.exe"
+          if (-not (Test-Path $tray)) { throw "cairn-tray.exe not installed" }
+          $run = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "CairnTray" -ErrorAction SilentlyContinue).CairnTray
+          if (-not $run) { throw "tray autostart (HKCU Run) not registered" }
+          # tray binary is present; DO NOT launch the GUI on CI (no interactive session)
+          Write-Host "installer gate GREEN (engine + tray)"
