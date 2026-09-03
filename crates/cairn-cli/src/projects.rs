@@ -562,12 +562,23 @@ async fn run_loop(
                 if rt2.should_suppress(&store2, &ws, &rel).await {
                     continue;
                 }
-                if store2.get_file(&rt2.project_id, &rel).is_none() {
-                    // brand-new local file: no row exists to mark dirty — request a rescan
-                    rt2.rescan_requested.store(true, Ordering::Relaxed);
-                    continue;
+                match store2.get_file(&rt2.project_id, &rel) {
+                    None => {
+                        // brand-new local file: no row exists to mark dirty — request a rescan
+                        rt2.rescan_requested.store(true, Ordering::Relaxed);
+                    }
+                    Some(row) if row.mode == "file" => {
+                        let _ = store2.set_file_state(&rt2.project_id, &rel, "dirty");
+                    }
+                    Some(_) => {
+                        // metadata row (dir/symlink): windows fires a parent-dir
+                        // event the moment children appear; dirtying the DIR row
+                        // wedged every push pass on fs::read(directory) EACCES
+                        // (round 13, the W1 windows catch). The scan walk re-puts
+                        // metadata rows; just request the rescan it implies.
+                        rt2.rescan_requested.store(true, Ordering::Relaxed);
+                    }
                 }
-                let _ = store2.set_file_state(&rt2.project_id, &rel, "dirty");
             }
         });
     }
