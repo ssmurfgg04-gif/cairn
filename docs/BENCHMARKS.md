@@ -152,3 +152,31 @@ when real .blend/.prproj corpora arrive (corpus-capture to studios is still the
 human-gated step). Caveats recorded in the script header: synthetic corpora
 (real NLE payloads unavailable to CI), file-level granularity (cairn chunks at
 256 KiB, so per-chunk dict benefit is bounded by these file-level numbers).
+
+## NLE matrix, CI-executable subset (round 13, 2026-09-04)
+
+What is measured and WHERE, so nobody misreads a loopback number as a WAN claim:
+
+- **I1 through the full stack on a windows-latest runner** (`scripts/win_nle_matrix.ps1` W2):
+  cold first-2-MiB read of a placeholder whose chunks are NOT in the local CAS —
+  the path is CfAPI callback → plane fetch → hash-verified chunk put → serve.
+  The runner's plane is loopback + NVMe, so this is a **best-case local bound**
+  (the mechanism + local latency budget), NOT a network claim; WAN RTT is the
+  studio leg (nle-test-matrix.md). The callback-level reference remains
+  16.32 ms (calm runner, first 2 MiB, `windows-cfapi-roundtrip`).
+- **Real-NLE timeline corpus** (`scripts/real_timeline_corpus.py`, 18 pinned
+  real-world timelines): capture_ms per file is recorded per run in
+  `docs/nle-matrix-results/real-timeline-corpus.json` (local 2026-09-03 run:
+  17/18 green; per-file capture 3.8–20.1 ms across the corpus, the 356 KB
+  effects.otio at the top of the range; big_int.otio honestly refused —
+  python's non-standard JSON `Inf` tokens). The gate is outcome-pinned: drift
+  in EITHER direction fails.
+- **Blender through the filter** (W3): `STAGE` wall-times from
+  `scripts/test_cairn.py` (open / per-frame scrub p50-p95 / save / reopen) are
+  captured per run — the Linux FUSE twin's numbers live in the
+  `fuse-mount-live` blender-headless job logs.
+
+Runner-measured numbers land in workflow artifacts + job summaries
+(`nle-matrix` workflow); committed copies live in `docs/nle-matrix-results/`.
+Host caveat applies to all of them: shared-runner timing is noisy; the gates
+assert structural correctness + bounded latency, not championship numbers.

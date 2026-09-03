@@ -1,0 +1,232 @@
+# nle-matrix -- the NLE test matrix, executed where it can be executed.
+#
+# Round 13 part 2: the H1-H10 rows of docs/design/nle-test-matrix.md need a
+# studio box with a human artist (and, for Premiere/Resolve, licensed NLEs
+# and GPUs). This workflow runs the subset GitHub Actions CAN prove, on the
+# platform the studios actually use (windows-latest):
+#
+#   windows-nle            two real daemons + a real CfAPI sync root + a real
+#                          NLE (headless Blender, bpy) doing open -> scrub ->
+#                          save -> reopen through the filter (scripts/
+#                          win_nle_matrix.ps1, rows W0-W6). BLOCKING gate.
+#   resolve-probe          the empirical answer to "install DaVinci on the
+#                          runner": search -> silent install -> launch, one
+#                          honest JSON either way. NEVER blocks (the probe's
+#                          outcome is data, not a verdict on Cairn).
+#   real-timeline-corpus   the pinned real-NLE timeline corpus gate (round 13
+#                          part 1's scripts/real_timeline_corpus.py now in
+#                          CI, python-otio interop oracle included).
+#
+# I1 numbers from the windows runner are a BEST-CASE bound (loopback plane +
+# NVMe): CI proves the MECHANISM and the local latency budget; WAN RTT is the
+# studio leg and stays that way, honestly.
+name: nle-matrix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      - "scripts/win_nle_matrix.ps1"
+      - "scripts/win_nle_stack.ps1"
+      - "scripts/win_resolve_probe.ps1"
+      - "scripts/real_timeline_corpus.py"
+      - "scripts/test_cairn.py"
+      - ".github/workflows/nle-matrix.yml"
+  pull_request:
+    paths:
+      - "crates/**"
+      - "scripts/win_nle_matrix.ps1"
+      - "scripts/win_nle_stack.ps1"
+      - "scripts/win_resolve_probe.ps1"
+      - "scripts/real_timeline_corpus.py"
+      - "scripts/test_cairn.py"
+      - ".github/workflows/nle-matrix.yml"
+  schedule:
+    - cron: "23 4 * * 1" # weekly re-verification (runner images drift)
+  workflow_dispatch: {}
+
+concurrency:
+  group: nle-matrix
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+permissions:
+  contents: read
+
+jobs:
+  windows-nle:
+    runs-on: windows-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: "Build cairn (release: hydration timing wants an optimized binary)"
+        run: cargo build --release -p cairn-cli --bin cairn
+
+      - name: Install headless Blender (bpy wheel = Blender as a Python module)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: bpy import smoke
+        shell: pwsh
+        run: |
+          pip install --quiet bpy==5.2.1
+          python -c "import bpy; print('bpy', bpy.app.version_string)"
+
+      # `powershell` (5.1, .NET Framework) on purpose: the strictest shell the
+      # scripts claim to support -- if the studio box runs 5.1, CI proves 5.1
+      - name: The NLE matrix (W0 boot -> W6 tl contract)
+        shell: powershell
+        run: |
+          powershell -File scripts\win_nle_matrix.ps1 -Cairn target\release\cairn.exe -Python python
+
+      - name: Stage stack logs (workspace-relative, so the artifact path is deterministic)
+        if: always()
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force -Path logs | Out-Null
+          Copy-Item "$env:USERPROFILE\cairn-nle\nle\*.log" logs -ErrorAction SilentlyContinue
+          Copy-Item "$env:USERPROFILE\cairn-nle\nle\*.log.err" logs -ErrorAction SilentlyContinue
+          Get-ChildItem logs -ErrorAction SilentlyContinue | ForEach-Object { Write-Output "staged: $($_.Name)" }
+
+      - name: Job summary
+        if: always()
+        shell: powershell
+        run: |
+          $j = "docs\nle-matrix-results\windows-runner-matrix.json"
+          if (Test-Path $j) {
+            $m = Get-Content $j -Raw | ConvertFrom-Json
+            $lines = @("## NLE matrix (windows runner)", "")
+            foreach ($row in @($m.rows)) {
+              $v = "FAIL"; if ($row.ok) { $v = "PASS" }
+              $lines += ("- **{0} {1}** -- {2}" -f $row.row, $v, $row.desc)
+            }
+            $lines += ""
+            $lines += ("I1 cold first-2MiB: {0} ms (best-case: loopback + NVMe) -- full stack through CfAPI" -f $m.metrics.cold_first_2mib_ms)
+            if ($m.metrics.conflict_copy_name) { $lines += ("conflict copy: {0}" -f $m.metrics.conflict_copy_name) }
+            $lines += ($m.blender_stages | ForEach-Object { "    " + $_ })
+            $lines -join "`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          } else {
+            "## NLE matrix (windows runner)`n`nNo results JSON -- the matrix step failed before writing it; see logs." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          }
+
+      - name: Upload results + stack logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nle-matrix-windows
+          path: |
+            docs/nle-matrix-results/windows-runner-matrix.json
+            logs/
+          if-no-files-found: warn
+          retention-days: 30
+
+  resolve-probe:
+    # "the github runners have windows vms or install davinci etc light
+    # versions on it" -- answered empirically. Non-blocking: every outcome is
+    # data about the RUNNER, not about Cairn.
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: DaVinci Resolve probe (search -> install -> launch; outcome recorded either way)
+        shell: powershell
+        continue-on-error: true
+        run: |
+          powershell -File scripts\win_resolve_probe.ps1
+
+      - name: Job summary
+        if: always()
+        shell: powershell
+        run: |
+          $j = "docs\nle-matrix-results\resolve-probe.json"
+          if (Test-Path $j) {
+            $m = Get-Content $j -Raw | ConvertFrom-Json
+            $lines = @("## DaVinci Resolve probe (windows runner)", "")
+            foreach ($prop in $m.steps.PSObject.Properties) {
+              $v = "FAIL"; if ($prop.Value.ok) { $v = "OK" }
+              $lines += ("- {0}: {1} -- {2}" -f $prop.Name, $v, $prop.Value.detail)
+            }
+            $lines += ""
+            $lines += ("**verdict:** {0}" -f $m.verdict.meaning)
+            $lines -join "`n" | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          } else {
+            "## DaVinci Resolve probe (windows runner)`n`nNo probe JSON -- the probe step failed; see logs." | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Encoding utf8 -Append
+          }
+
+      - name: Upload probe result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: resolve-probe
+          path: docs/nle-matrix-results/resolve-probe.json
+          if-no-files-found: warn
+          retention-days: 90
+
+  real-timeline-corpus:
+    # Round 13 part 1's gate, now in CI: 18 pinned real-NLE timelines through
+    # tl-capture + both merge contracts + recapture + the python-otio interop
+    # oracle. Outcome pins fail on drift in BOTH directions.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install python-otio (the interop oracle)
+        run: pip install opentimelineio==0.18.1
+
+      - name: Build cairn
+        run: cargo build -p cairn-cli --bin cairn
+
+      - name: The real-NLE timeline corpus gate
+        run: |
+          python scripts/real_timeline_corpus.py \
+            --cairn target/debug/cairn \
+            --out docs/nle-matrix-results/real-timeline-corpus.json
+
+      - name: Job summary
+        if: always()
+        run: |
+          {
+            echo "## Real-NLE timeline corpus"
+            echo ""
+            if [ -f docs/nle-matrix-results/real-timeline-corpus.json ]; then
+              python - <<'EOF'
+          import json
+          m = json.load(open("docs/nle-matrix-results/real-timeline-corpus.json"))
+          t = m["totals"]
+          print(f"**{t['capture_merge_green']}/{t['files']}** files capture+merge green (pinned outcomes)")
+          for r in m["results"]:
+              mark = "PASS" if r["status"] == "capture+merge" else "REFUSED"
+              print(f"- {r['source']}: {mark} ({r.get('capture_ms')} ms capture)")
+          EOF
+            else
+              echo "No results JSON -- the gate failed before writing it; see logs."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: real-timeline-corpus
+          path: docs/nle-matrix-results/real-timeline-corpus.json
+          if-no-files-found: warn
+          retention-days: 30

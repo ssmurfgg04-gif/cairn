@@ -359,6 +359,14 @@ impl Store {
         Ok(())
     }
 
+    /// Remove a meta key (the fork markers' lifecycle end; absent key is a no-op).
+    pub fn meta_clear(&self, key: &str) -> Result<(), CairnError> {
+        let conn = self.conn.lock().expect("store poisoned");
+        conn.execute("DELETE FROM meta WHERE key=?1", rusqlite::params![key])
+            .map_err(db_err)?;
+        Ok(())
+    }
+
     /// Advance the per-device cursor (durable before any append is acknowledged upstream).
     pub fn set_cursor(
         &self,

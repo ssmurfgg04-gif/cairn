@@ -115,6 +115,9 @@ pub async fn materialize_missing(
             if tail.is_empty() { None } else { Some(&tail) },
         );
         store.set_file_state(project_id, &row.path, LocalState::Synced.as_str())?;
+        // the disk now descends from the remote head: consume any
+        // content-lineage fork marker for this path (round 13)
+        let _ = crate::apply::clear_fork(store, project_id, &row.path);
         stats.materialized += 1;
         stats.bytes = stats.bytes.saturating_add(bytes.len() as u64);
         stats.paths.push(row.path.clone());
