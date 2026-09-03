@@ -275,21 +275,20 @@ async fn connect_cfapi(
     server_url: &str,
     ca_pem: Option<&[u8]>,
 ) {
-    let plane: Arc<dyn cairn_sync::plane::Plane> =
-        match cairn_sync::plane_grpc::GrpcPlane::connect(
-            server_url,
-            &identity.token,
-            &identity.tenant_id,
-            ca_pem,
-        )
-        .await
-        {
-            Ok(p) => Arc::new(p),
-            Err(e) => {
-                tracing::warn!(project = %pid, "CfAPI: plane connect failed ({e}); read-only until restart");
-                return;
-            }
-        };
+    let plane: Arc<dyn cairn_sync::plane::Plane> = match cairn_sync::plane_grpc::GrpcPlane::connect(
+        server_url,
+        &identity.token,
+        &identity.tenant_id,
+        ca_pem,
+    )
+    .await
+    {
+        Ok(p) => Arc::new(p),
+        Err(e) => {
+            tracing::warn!(project = %pid, "CfAPI: plane connect failed ({e}); read-only until restart");
+            return;
+        }
+    };
     let rt = tokio::runtime::Handle::current();
     match crate::win_attach::attach_windows(
         store,
@@ -316,6 +315,7 @@ async fn connect_cfapi(
 }
 
 #[cfg(not(windows))]
+#[allow(clippy::unused_async)]
 async fn connect_cfapi(
     _store: &Store,
     _root: &Path,
