@@ -22,6 +22,14 @@
 //! flight, last error) and applies the derived directive — engine policy
 //! stays in cairn-sync, badge rendering stays here.
 
+// Same exception as cfapi.rs: the Windows-only FFI adapter necessarily
+// contains `unsafe` (raw C ABI). lib.rs's `#![deny(unsafe_code)]` stays the
+// rule for everything portable; this module is the audited exception.
+// (Round 13: Round 12 shipped badge.rs WITHOUT this attribute -- it never
+// compiled on the real windows target; the linux build never sees the
+// cfg(windows) FFI, so only windows CI caught it.)
+#![allow(unsafe_code)]
+
 use std::fmt;
 
 /// Root-level provider status for `CfUpdateSyncProviderStatus`.

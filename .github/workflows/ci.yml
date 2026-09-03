@@ -310,17 +310,22 @@ jobs:
         run: |
           set -e
           cargo build -p cairn-cli --bin cairn
-          CAIRN=target/debug/cairn
-          FIX=crates/cairn-tl/fixtures/roundtrip_base.otio
+          # ABSOLUTE paths: this step cds to /tmp/tl-gate -- a relative
+          # target/debug/cairn broke here (exit 127, round-12's run) because
+          # it resolved against the NEW cwd
+          CAIRN="$GITHUB_WORKSPACE/target/debug/cairn"
+          FIX="$GITHUB_WORKSPACE/crates/cairn-tl/fixtures/roundtrip_base.otio"
           mkdir -p /tmp/tl-gate && cd /tmp/tl-gate
-          cp $OLDPWD/$FIX base.otio
+          cp "$FIX" base.otio
           # capture stamps identities
-          $CAIRN tl-capture base.otio
-          # clean: identical sides
-          $CAIRN tl-merge --base base.canonical.otio --ours base.canonical.otio --theirs base.canonical.otio >/dev/null; [ $? -eq 0 ] || exit 1
-          # refused: garbage schema
+          "$CAIRN" tl-capture base.otio
+          # clean: identical sides (set -e enforces exit 0)
+          "$CAIRN" tl-merge --base base.canonical.otio --ours base.canonical.otio --theirs base.canonical.otio >/dev/null
+          # refused: garbage schema (must exit exactly 3)
           echo '{"OTIO_SCHEMA":"Nope.9"}' > garbage.otio
-          $CAIRN tl-merge --base base.canonical.otio --ours garbage.otio --theirs base.canonical.otio >/dev/null 2>&1; [ $? -eq 3 ] || { echo "expected exit 3"; exit 1; }
+          rc=0
+          "$CAIRN" tl-merge --base base.canonical.otio --ours garbage.otio --theirs base.canonical.otio >/dev/null 2>&1 || rc=$?
+          [ "$rc" -eq 3 ] || { echo "expected exit 3, got $rc"; exit 1; }
           echo "exit-code contract green"
       - name: python-otio interop oracle
         run: |

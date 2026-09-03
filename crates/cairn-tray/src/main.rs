@@ -3,6 +3,13 @@
 //! Windows-only: the implementation lives in [`tray`] (gated); other targets
 //! get a stub so `cargo check/test --workspace` stays green everywhere. The
 //! real binary builds on the windows-latest CI leg and ships in the release.
+//!
+//! Unsafe policy (WO6-9, the security sweep's rule): this crate root denies
+//! unsafe; the windows-only [`tray`] module re-allows it for the documented
+//! Win32 FFI (same pattern as cairn-fs-win: deny at root, audited module
+//! exception below). Round 13: the sweep caught the root declaration missing.
+
+#![deny(unsafe_code)]
 
 #[cfg(windows)]
 mod tray;
