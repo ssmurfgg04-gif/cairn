@@ -1140,8 +1140,7 @@ pub struct BulkEntry {
 /// match bit-for-bit: epoch offset 11,644,473,600 s = 11,644,473,600,000 ms,
 /// then ms → 100ns).
 fn filetime_from_unix_millis(ms: i64) -> i64 {
-    ms.saturating_add(11_644_473_600_000)
-        .saturating_mul(10_000)
+    ms.saturating_add(11_644_473_600_000).saturating_mul(10_000)
 }
 
 /// CfCreatePlaceholders BATCH (WO6-2: attach 2GB tree → placeholders appear in one
