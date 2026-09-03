@@ -1,0 +1,89 @@
+{
+    "schema":  "cairn-nle-matrix/windows-runner/1",
+    "captured_utc":  "2026-09-03T22:06:43Z",
+    "green":  true,
+    "host":  {
+                 "os":  "Windows 10.0.26100.0",
+                 "powershell":  "5.1.26100.33296",
+                 "cpu":  "AMD64 Family 25 Model 17 Stepping 1, AuthenticAMD",
+                 "context":  "GitHub Actions windows runner (best-case local I1: loopback plane + NVMe; WAN RTT is the studio leg)"
+             },
+    "stack":  {
+                  "cairn":  "",
+                  "project":  "p1",
+                  "rootA":  "C:\\Users\\runneradmin\\cairn-nle\\rootA",
+                  "rootB":  "C:\\Users\\runneradmin\\cairn-nle\\rootB"
+              },
+    "metrics":  {
+                    "cold_first_2mib_ms":  29.43,
+                    "warm_first_2mib_ms":  0.59,
+                    "scene_sha256_match":  true,
+                    "blender_exit":  0,
+                    "cross_device_converge_ms":  5052,
+                    "conflict_copy_name":  "conflict_probe (conflict — dev-01a0694f076e7953b0c7df0cbe4c3bd1 — 2026-09-03).txt",
+                    "conflict_copy_root":  "A",
+                    "conflict_copy_devices":  2
+                },
+    "blender_stages":  [
+                           "STAGE hash-pre          0.004 s",
+                           "STAGE open-r1           0.119 s",
+                           "STAGE scrub-r1          0.001 s",
+                           "STAGE save-r1           0.109 s",
+                           "STAGE open-r2           0.037 s",
+                           "STAGE scrub-r2          0.001 s",
+                           "STAGE save-r2           0.028 s",
+                           "STAGE reopen            0.035 s",
+                           "STAGE hash-post         0.003 s"
+                       ],
+    "rows":  [
+                 {
+                     "row":  "W0",
+                     "desc":  "boot: server + daemonA + daemonB + enroll + attach x2",
+                     "ok":  true,
+                     "ms":  2106,
+                     "detail":  "stack up; both roots attached"
+                 },
+                 {
+                     "row":  "W1",
+                     "desc":  "seed: BMW27.blend + probe through A\u0027s root -\u003e upload; B pulls + fully materializes",
+                     "ok":  true,
+                     "ms":  5329,
+                     "detail":  "scene.blend + conflict_probe.txt seeded via A; B pulled + materialized (rows + content)"
+                 },
+                 {
+                     "row":  "W2",
+                     "desc":  "cold attach: B re-joins (detach, wipe, re-attach -\u003e bulk placeholders) + cold first-2MiB through CfAPI + SHA256",
+                     "ok":  true,
+                     "ms":  2433,
+                     "detail":  "cold 29.43 ms / warm 0.59 ms for the first 2 MiB through CfAPI; SHA256 identical"
+                 },
+                 {
+                     "row":  "W3",
+                     "desc":  "real NLE: headless Blender open -\u003e scrub -\u003e save -\u003e reopen through B\u0027s root",
+                     "ok":  true,
+                     "ms":  2002,
+                     "detail":  "bpy open/scrub/save/reopen green through CfAPI"
+                 },
+                 {
+                     "row":  "W4",
+                     "desc":  "propagation: B\u0027s Blender save uploads; A\u0027s view converges byte-identical",
+                     "ok":  true,
+                     "ms":  5052,
+                     "detail":  "A re-read B\u0027s re-saved scene.blend byte-identically"
+                 },
+                 {
+                     "row":  "W5",
+                     "desc":  "conflict: offline edit on B vs live edit on A -\u003e ONE conflict copy, both recoverable",
+                     "ok":  true,
+                     "ms":  5667,
+                     "detail":  "one conflict copy name [conflict_probe (conflict — dev-01a0694f076e7953b0c7df0cbe4c3bd1 — 2026-09-03).txt], present on 2 device root(s); original = winner everywhere; both versions recoverable"
+                 },
+                 {
+                     "row":  "W6",
+                     "desc":  "tl contract: tl-capture + tl-merge exit codes 0 (clean) / 3 (refused) on the Windows binary",
+                     "ok":  true,
+                     "ms":  93,
+                     "detail":  "exit codes 0 and 3 verified on windows"
+                 }
+             ]
+}

@@ -1,0 +1,1221 @@
+{
+  "schema": "cairn-nle-matrix/real-timeline-corpus/1",
+  "captured_utc": "2026-09-03T22:02:11Z",
+  "cairn": "cairn 4.0.0",
+  "host": {
+    "os": "Linux"
+  },
+  "corpus": {
+    "premiere_example.otio": {
+      "origin": "OpenTimelineIO sample data (real Premiere sequence via the premiere adapter)",
+      "bytes": 115650
+    },
+    "screening_example.otio": {
+      "origin": "OpenTimelineIO sample data (real screening sequence)",
+      "bytes": 20954
+    },
+    "effects.otio": {
+      "origin": "OpenTimelineIO sample data (effect stacks, 356 KB)",
+      "bytes": 356446
+    },
+    "nested_example.otio": {
+      "origin": "OpenTimelineIO sample data (nested stacks)",
+      "bytes": 13242
+    },
+    "multitrack.otio": {
+      "origin": "OpenTimelineIO sample data (multitrack)",
+      "bytes": 13525
+    },
+    "multiple_track.otio": {
+      "origin": "OpenTimelineIO sample data (multiple tracks)",
+      "bytes": 13052
+    },
+    "transition.otio": {
+      "origin": "OpenTimelineIO sample data (transitions)",
+      "bytes": 8355
+    },
+    "transition_test.otio": {
+      "origin": "OpenTimelineIO sample data (transition edges)",
+      "bytes": 5609
+    },
+    "simple_cut.otio": {
+      "origin": "OpenTimelineIO sample data (simple cut)",
+      "bytes": 5299
+    },
+    "clip_example.otio": {
+      "origin": "OpenTimelineIO sample data (clip example)",
+      "bytes": 3750
+    },
+    "preflattened.otio": {
+      "origin": "OpenTimelineIO sample data (preflattened)",
+      "bytes": 8355
+    },
+    "generator_reference_test.otio": {
+      "origin": "OpenTimelineIO sample data (generator references)",
+      "bytes": 2557
+    },
+    "big_int.otio": {
+      "origin": "OpenTimelineIO sample data (large integer time values)",
+      "bytes": 3572
+    },
+    "pronom_fcp.fcpxml": {
+      "origin": "PRONOM (UK National Archives) authentic Final Cut Pro X sample, fcpxml 1.8",
+      "bytes": 1553
+    },
+    "bbc_3clips.fcpxml": {
+      "origin": "BBC R&D fcpx-xml-composer sample (3 clips, fcpxml 1.8)",
+      "bytes": 7658
+    },
+    "bbc_morgan.fcpxml": {
+      "origin": "BBC R&D fcpx-xml-composer sample (morgan-sequence, fcpxml 1.8)",
+      "bytes": 3561
+    },
+    "cutlass_short.fcpxml": {
+      "origin": "cutlass samples (short vertical edit, fcpxml 1.13)",
+      "bytes": 6446
+    },
+    "cutlass_pip.fcpxml": {
+      "origin": "cutlass samples (picture-in-picture, fcpxml 1.13)",
+      "bytes": 7584
+    }
+  },
+  "totals": {
+    "files": 18,
+    "capture_merge_green": 17
+  },
+  "results": [
+    {
+      "source": "bbc_3clips.fcpxml",
+      "bytes": 7658,
+      "sha256": "4509d63164e08adc465057e7bf4a9edcc92ae2d48c697621029e8e84091e32d9",
+      "origin": "BBC R&D fcpx-xml-composer sample (3 clips, fcpxml 1.8)",
+      "capture_ms": 5.5,
+      "capture_exit": 0,
+      "status": "capture+merge",
+      "editable_clips": 3,
+      "edit_plan": "trim",
+      "cooperative": {
+        "exit": 0,
+        "ms": 5.3,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Clean (applied=2, withheld=0, deduped=0)",
+        "report": {
+          "histogram": {},
+          "outcome": "clean",
+          "stats": {
+            "applied": 2,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 1,
+            "withheld": 0
+          },
+          "verdicts": []
+        },
+        "expected_exit": "0 or 1"
+      },
+      "conflict": {
+        "exit": 2,
+        "ms": 5.4,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
+        "report": {
+          "histogram": {
+            "C3": 1
+          },
+          "outcome": "conflicts",
+          "stats": {
+            "applied": 0,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 1,
+            "withheld": 2
+          },
+          "verdicts": [
+            {
+              "class": "C3",
+              "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
+              "ours": "trim uuid:01a0694b-2909-71d0-ab77-140e156592fa in=-0.04s out=0.04s",
+              "theirs": "trim uuid:01a0694b-2909-71d0-ab77-140e156592fa in=-0.2s out=0.2s",
+              "verdict": "Human"
+            }
+          ]
+        },
+        "expected_exit": "2"
+      },
+      "interops": {
+        "merged": {
+          "rc": 1,
+          "ok": false,
+          "out": "KeyError: \"While reading object named '' (of type 'N14opentimelineio7v0_18_117ExternalReferenceE'): target_url (near line 27)\""
+        }
+      }
+    },
+    {
+      "source": "bbc_morgan.fcpxml",
+      "bytes": 3561,
+      "sha256": "bd22fd76ad5f9ab6a97c6b8cec42483b36e70ae2b9c7b1ed293a17e95ccf8fc9",
+      "origin": "BBC R&D fcpx-xml-composer sample (morgan-sequence, fcpxml 1.8)",
+      "capture_ms": 5.0,
+      "capture_exit": 0,
+      "status": "capture+merge",
+      "editable_clips": 1,
+      "edit_plan": "trim",
+      "cooperative": {
+        "exit": 0,
+        "ms": 4.8,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Clean (applied=1, withheld=0, deduped=0)",
+        "report": {
+          "histogram": {},
+          "outcome": "clean",
+          "stats": {
+            "applied": 1,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 0,
+            "withheld": 0
+          },
+          "verdicts": []
+        },
+        "expected_exit": "0 or 1"
+      },
+      "conflict": {
+        "exit": 2,
+        "ms": 4.8,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
+        "report": {
+          "histogram": {
+            "C3": 1
+          },
+          "outcome": "conflicts",
+          "stats": {
+            "applied": 0,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 1,
+            "withheld": 2
+          },
+          "verdicts": [
+            {
+              "class": "C3",
+              "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
+              "ours": "trim uuid:01a0694b-29b8-7f20-9091-9a970e6ab20e in=-0.0004s out=0.0004s",
+              "theirs": "trim uuid:01a0694b-29b8-7f20-9091-9a970e6ab20e in=-0.002s out=0.002s",
+              "verdict": "Human"
+            }
+          ]
+        },
+        "expected_exit": "2"
+      },
+      "interops": {
+        "merged": {
+          "rc": 1,
+          "ok": false,
+          "out": "KeyError: \"While reading object named '' (of type 'N14opentimelineio7v0_18_117ExternalReferenceE'): target_url (near line 35)\""
+        }
+      }
+    },
+    {
+      "source": "big_int.otio",
+      "bytes": 3572,
+      "sha256": "065de8d684cd8598d6d21f8915008ccadf74b7ab978587703bf47597a8c556a7",
+      "origin": "OpenTimelineIO sample data (large integer time values)",
+      "capture_ms": 4.6,
+      "capture_exit": 1,
+      "status": "refused-at-capture",
+      "capture_err": "Error: otio parse: invalid JSON: expected value at line 39 column 45"
+    },
+    {
+      "source": "clip_example.otio",
+      "bytes": 3750,
+      "sha256": "b87fbdaf96561c4ba2b361c572b298a91aa2a73613e215402dd5ae400220b326",
+      "origin": "OpenTimelineIO sample data (clip example)",
+      "capture_ms": 4.7,
+      "capture_exit": 0,
+      "status": "capture+merge",
+      "editable_clips": 1,
+      "edit_plan": "trim",
+      "cooperative": {
+        "exit": 0,
+        "ms": 5.1,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Clean (applied=1, withheld=0, deduped=0)",
+        "report": {
+          "histogram": {},
+          "outcome": "clean",
+          "stats": {
+            "applied": 1,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 0,
+            "withheld": 0
+          },
+          "verdicts": []
+        },
+        "expected_exit": "0 or 1"
+      },
+      "conflict": {
+        "exit": 2,
+        "ms": 5.2,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
+        "report": {
+          "histogram": {
+            "C3": 1
+          },
+          "outcome": "conflicts",
+          "stats": {
+            "applied": 0,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 1,
+            "withheld": 2
+          },
+          "verdicts": [
+            {
+              "class": "C3",
+              "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
+              "ours": "trim uuid:01a0694b-2a53-7271-9ba6-b92c768a21af in=-0.041666666666666664s out=0.041666666666666664s",
+              "theirs": "trim uuid:01a0694b-2a53-7271-9ba6-b92c768a21af in=-0.20833333333333334s out=0.20833333333333334s",
+              "verdict": "Human"
+            }
+          ]
+        },
+        "expected_exit": "2"
+      },
+      "interops": {
+        "merged": {
+          "rc": 0,
+          "ok": true,
+          "out": "ok Timeline 1"
+        }
+      }
+    },
+    {
+      "source": "cutlass_pip.fcpxml",
+      "bytes": 7584,
+      "sha256": "84e82886621316c9cc884d5cac4d52ba9acb3dd181279aee927789a245ff06bb",
+      "origin": "cutlass samples (picture-in-picture, fcpxml 1.13)",
+      "capture_ms": 5.6,
+      "capture_exit": 0,
+      "status": "capture+merge",
+      "editable_clips": 2,
+      "edit_plan": "trim",
+      "cooperative": {
+        "exit": 0,
+        "ms": 5.7,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Clean (applied=2, withheld=0, deduped=0)",
+        "report": {
+          "histogram": {},
+          "outcome": "clean",
+          "stats": {
+            "applied": 2,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 1,
+            "withheld": 0
+          },
+          "verdicts": []
+        },
+        "expected_exit": "0 or 1"
+      },
+      "conflict": {
+        "exit": 2,
+        "ms": 5.9,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
+        "report": {
+          "histogram": {
+            "C3": 1
+          },
+          "outcome": "conflicts",
+          "stats": {
+            "applied": 0,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 1,
+            "withheld": 2
+          },
+          "verdicts": [
+            {
+              "class": "C3",
+              "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
+              "ours": "trim uuid:01a0694b-2aeb-7712-81a4-2194a011671c in=-0.0003333333333333333s out=0.0003333333333333333s",
+              "theirs": "trim uuid:01a0694b-2aeb-7712-81a4-2194a011671c in=-0.0016666666666666668s out=0.0016666666666666668s",
+              "verdict": "Human"
+            }
+          ]
+        },
+        "expected_exit": "2"
+      },
+      "interops": {
+        "merged": {
+          "rc": 0,
+          "ok": true,
+          "out": "ok Timeline 2"
+        }
+      }
+    },
+    {
+      "source": "cutlass_short.fcpxml",
+      "bytes": 6446,
+      "sha256": "c1f0b9cc6ce683742f39f6e7d34adcc4f092a9f9e8f12041f917759345c4b39e",
+      "origin": "cutlass samples (short vertical edit, fcpxml 1.13)",
+      "capture_ms": 5.3,
+      "capture_exit": 0,
+      "status": "capture+merge",
+      "editable_clips": 2,
+      "edit_plan": "trim",
+      "cooperative": {
+        "exit": 0,
+        "ms": 4.9,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Clean (applied=2, withheld=0, deduped=0)",
+        "report": {
+          "histogram": {},
+          "outcome": "clean",
+          "stats": {
+            "applied": 2,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 1,
+            "withheld": 0
+          },
+          "verdicts": []
+        },
+        "expected_exit": "0 or 1"
+      },
+      "conflict": {
+        "exit": 2,
+        "ms": 5.2,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
+        "report": {
+          "histogram": {
+            "C3": 1
+          },
+          "outcome": "conflicts",
+          "stats": {
+            "applied": 0,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 1,
+            "withheld": 2
+          },
+          "verdicts": [
+            {
+              "class": "C3",
+              "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
+              "ours": "trim uuid:01a0694b-2b83-7982-b2be-5b965523db69 in=-1s out=1s",
+              "theirs": "trim uuid:01a0694b-2b83-7982-b2be-5b965523db69 in=-5s out=5s",
+              "verdict": "Human"
+            }
+          ]
+        },
+        "expected_exit": "2"
+      },
+      "interops": {
+        "merged": {
+          "rc": 1,
+          "ok": false,
+          "out": "KeyError: \"While reading object named '1080x1920' (of type 'N14opentimelineio7v0_18_14ClipE'): media_references (near line 41)\""
+        }
+      }
+    },
+    {
+      "source": "effects.otio",
+      "bytes": 356446,
+      "sha256": "2507d49a7c14b391116da515521bd087dee238fbb27b9a83faec0dc1ffeb151c",
+      "origin": "OpenTimelineIO sample data (effect stacks, 356 KB)",
+      "capture_ms": 24.9,
+      "capture_exit": 0,
+      "status": "capture+merge",
+      "editable_clips": 37,
+      "edit_plan": "trim",
+      "cooperative": {
+        "exit": 0,
+        "ms": 52.0,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Clean (applied=2, withheld=0, deduped=0)",
+        "report": {
+          "histogram": {},
+          "outcome": "clean",
+          "stats": {
+            "applied": 2,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 1,
+            "withheld": 0
+          },
+          "verdicts": []
+        },
+        "expected_exit": "0 or 1"
+      },
+      "conflict": {
+        "exit": 2,
+        "ms": 51.5,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
+        "report": {
+          "histogram": {
+            "C3": 1
+          },
+          "outcome": "conflicts",
+          "stats": {
+            "applied": 0,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 1,
+            "withheld": 2
+          },
+          "verdicts": [
+            {
+              "class": "C3",
+              "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
+              "ours": "trim uuid:01a0694b-2c24-7240-899f-176234a13fd9 in=-0.041666666666666664s out=0.041666666666666664s",
+              "theirs": "trim uuid:01a0694b-2c24-7240-899f-176234a13fd9 in=-0.20833333333333334s out=0.20833333333333334s",
+              "verdict": "Human"
+            }
+          ]
+        },
+        "expected_exit": "2"
+      },
+      "interops": {
+        "merged": {
+          "rc": 0,
+          "ok": true,
+          "out": "ok Timeline 19"
+        }
+      }
+    },
+    {
+      "source": "generator_reference_test.otio",
+      "bytes": 2557,
+      "sha256": "85c0a9eca537134ee75809820e6555e9cbec0ef64be5d1806c23cedf382a8c59",
+      "origin": "OpenTimelineIO sample data (generator references)",
+      "capture_ms": 4.7,
+      "capture_exit": 0,
+      "status": "capture+merge",
+      "editable_clips": 1,
+      "edit_plan": "trim",
+      "cooperative": {
+        "exit": 0,
+        "ms": 4.9,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Clean (applied=1, withheld=0, deduped=0)",
+        "report": {
+          "histogram": {},
+          "outcome": "clean",
+          "stats": {
+            "applied": 1,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 0,
+            "withheld": 0
+          },
+          "verdicts": []
+        },
+        "expected_exit": "0 or 1"
+      },
+      "conflict": {
+        "exit": 2,
+        "ms": 4.6,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
+        "report": {
+          "histogram": {
+            "C3": 1
+          },
+          "outcome": "conflicts",
+          "stats": {
+            "applied": 0,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 1,
+            "withheld": 2
+          },
+          "verdicts": [
+            {
+              "class": "C3",
+              "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
+              "ours": "trim uuid:01a0694b-2dc3-7ce1-b129-1ee6b13e041e in=-0.041666666666666664s out=0.041666666666666664s",
+              "theirs": "trim uuid:01a0694b-2dc3-7ce1-b129-1ee6b13e041e in=-0.20833333333333334s out=0.20833333333333334s",
+              "verdict": "Human"
+            }
+          ]
+        },
+        "expected_exit": "2"
+      },
+      "interops": {
+        "merged": {
+          "rc": 0,
+          "ok": true,
+          "out": "ok Timeline 1"
+        }
+      }
+    },
+    {
+      "source": "multiple_track.otio",
+      "bytes": 13052,
+      "sha256": "8cfcaa5f346a302a3e3c23ed03b35f85046c9d9a6a67e5c894652d814a0b5668",
+      "origin": "OpenTimelineIO sample data (multiple tracks)",
+      "capture_ms": 5.7,
+      "capture_exit": 0,
+      "status": "capture+merge",
+      "editable_clips": 5,
+      "edit_plan": "trim",
+      "cooperative": {
+        "exit": 0,
+        "ms": 6.6,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Clean (applied=2, withheld=0, deduped=0)",
+        "report": {
+          "histogram": {},
+          "outcome": "clean",
+          "stats": {
+            "applied": 2,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 1,
+            "withheld": 0
+          },
+          "verdicts": []
+        },
+        "expected_exit": "0 or 1"
+      },
+      "conflict": {
+        "exit": 2,
+        "ms": 6.7,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
+        "report": {
+          "histogram": {
+            "C3": 1
+          },
+          "outcome": "conflicts",
+          "stats": {
+            "applied": 0,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 1,
+            "withheld": 2
+          },
+          "verdicts": [
+            {
+              "class": "C3",
+              "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
+              "ours": "trim uuid:01a0694b-2e57-7ba3-87bd-fcc2edda4058 in=-0.041666666666666664s out=0.041666666666666664s",
+              "theirs": "trim uuid:01a0694b-2e57-7ba3-87bd-fcc2edda4058 in=-0.20833333333333334s out=0.20833333333333334s",
+              "verdict": "Human"
+            }
+          ]
+        },
+        "expected_exit": "2"
+      },
+      "interops": {
+        "merged": {
+          "rc": 0,
+          "ok": true,
+          "out": "ok Timeline 3"
+        }
+      }
+    },
+    {
+      "source": "multitrack.otio",
+      "bytes": 13525,
+      "sha256": "8982f905993ca4c7113423e63fdd7d2eff69d56ed4659a080e3281b7e7f038e0",
+      "origin": "OpenTimelineIO sample data (multitrack)",
+      "capture_ms": 5.6,
+      "capture_exit": 0,
+      "status": "capture+merge",
+      "editable_clips": 5,
+      "edit_plan": "trim",
+      "cooperative": {
+        "exit": 0,
+        "ms": 6.7,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Clean (applied=2, withheld=0, deduped=0)",
+        "report": {
+          "histogram": {},
+          "outcome": "clean",
+          "stats": {
+            "applied": 2,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 1,
+            "withheld": 0
+          },
+          "verdicts": []
+        },
+        "expected_exit": "0 or 1"
+      },
+      "conflict": {
+        "exit": 2,
+        "ms": 6.8,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
+        "report": {
+          "histogram": {
+            "C3": 1
+          },
+          "outcome": "conflicts",
+          "stats": {
+            "applied": 0,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 1,
+            "withheld": 2
+          },
+          "verdicts": [
+            {
+              "class": "C3",
+              "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
+              "ours": "trim uuid:01a0694b-2ef9-7f80-8ae7-4ec40a726ef7 in=-0.041666666666666664s out=0.041666666666666664s",
+              "theirs": "trim uuid:01a0694b-2ef9-7f80-8ae7-4ec40a726ef7 in=-0.20833333333333334s out=0.20833333333333334s",
+              "verdict": "Human"
+            }
+          ]
+        },
+        "expected_exit": "2"
+      },
+      "interops": {
+        "merged": {
+          "rc": 0,
+          "ok": true,
+          "out": "ok Timeline 3"
+        }
+      }
+    },
+    {
+      "source": "nested_example.otio",
+      "bytes": 13242,
+      "sha256": "2d11b95eb34522952b8b3d99ddac8935be6700649fd9726f6f2424bacd22ccd0",
+      "origin": "OpenTimelineIO sample data (nested stacks)",
+      "capture_ms": 5.5,
+      "capture_exit": 0,
+      "status": "capture+merge",
+      "editable_clips": 7,
+      "edit_plan": "trim",
+      "cooperative": {
+        "exit": 0,
+        "ms": 6.5,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Clean (applied=1, withheld=0, deduped=0)",
+        "report": {
+          "histogram": {},
+          "outcome": "clean",
+          "stats": {
+            "applied": 1,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 0,
+            "withheld": 0
+          },
+          "verdicts": []
+        },
+        "expected_exit": "0 or 1"
+      },
+      "conflict": {
+        "exit": 2,
+        "ms": 6.5,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
+        "report": {
+          "histogram": {
+            "C3": 1
+          },
+          "outcome": "conflicts",
+          "stats": {
+            "applied": 0,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 1,
+            "withheld": 2
+          },
+          "verdicts": [
+            {
+              "class": "C3",
+              "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
+              "ours": "trim uuid:01a0694b-2f97-7311-9e4c-ce0f5c1c69d0 in=-0.041666666666666664s out=0.041666666666666664s",
+              "theirs": "trim uuid:01a0694b-2f97-7311-9e4c-ce0f5c1c69d0 in=-0.20833333333333334s out=0.20833333333333334s",
+              "verdict": "Human"
+            }
+          ]
+        },
+        "expected_exit": "2"
+      },
+      "interops": {
+        "merged": {
+          "rc": 0,
+          "ok": true,
+          "out": "ok Timeline 1"
+        }
+      }
+    },
+    {
+      "source": "preflattened.otio",
+      "bytes": 8355,
+      "sha256": "553240152332819a8b0a7bb3ab0469ac9f91e075ffb2a24e3e975f7473770424",
+      "origin": "OpenTimelineIO sample data (preflattened)",
+      "capture_ms": 5.1,
+      "capture_exit": 0,
+      "status": "capture+merge",
+      "editable_clips": 5,
+      "edit_plan": "trim",
+      "cooperative": {
+        "exit": 0,
+        "ms": 5.8,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Clean (applied=2, withheld=0, deduped=0)",
+        "report": {
+          "histogram": {},
+          "outcome": "clean",
+          "stats": {
+            "applied": 2,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 1,
+            "withheld": 0
+          },
+          "verdicts": []
+        },
+        "expected_exit": "0 or 1"
+      },
+      "conflict": {
+        "exit": 2,
+        "ms": 5.8,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
+        "report": {
+          "histogram": {
+            "C3": 1
+          },
+          "outcome": "conflicts",
+          "stats": {
+            "applied": 0,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 1,
+            "withheld": 2
+          },
+          "verdicts": [
+            {
+              "class": "C3",
+              "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
+              "ours": "trim uuid:01a0694b-3033-7ea2-b2b8-65dc1ea478cb in=-0.041666666666666664s out=0.041666666666666664s",
+              "theirs": "trim uuid:01a0694b-3033-7ea2-b2b8-65dc1ea478cb in=-0.20833333333333334s out=0.20833333333333334s",
+              "verdict": "Human"
+            }
+          ]
+        },
+        "expected_exit": "2"
+      },
+      "interops": {
+        "merged": {
+          "rc": 0,
+          "ok": true,
+          "out": "ok Timeline 1"
+        }
+      }
+    },
+    {
+      "source": "premiere_example.otio",
+      "bytes": 115650,
+      "sha256": "077bdb6e487a906db79cf0555aadfdf20e8ba6a8826ef2ee76a894377c08bc36",
+      "origin": "OpenTimelineIO sample data (real Premiere sequence via the premiere adapter)",
+      "capture_ms": 11.8,
+      "capture_exit": 0,
+      "status": "capture+merge",
+      "editable_clips": 13,
+      "edit_plan": "trim",
+      "cooperative": {
+        "exit": 0,
+        "ms": 21.5,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Clean (applied=2, withheld=0, deduped=0)",
+        "report": {
+          "histogram": {},
+          "outcome": "clean",
+          "stats": {
+            "applied": 2,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 1,
+            "withheld": 0
+          },
+          "verdicts": []
+        },
+        "expected_exit": "0 or 1"
+      },
+      "conflict": {
+        "exit": 2,
+        "ms": 21.1,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
+        "report": {
+          "histogram": {
+            "C3": 1
+          },
+          "outcome": "conflicts",
+          "stats": {
+            "applied": 0,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 1,
+            "withheld": 2
+          },
+          "verdicts": [
+            {
+              "class": "C3",
+              "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
+              "ours": "trim uuid:01a0694b-30cd-79f3-95dc-c0bfba4c7b00 in=-0.06666666666666667s out=0.06666666666666667s",
+              "theirs": "trim uuid:01a0694b-30cd-79f3-95dc-c0bfba4c7b00 in=-0.3333333333333333s out=0.3333333333333333s",
+              "verdict": "Human"
+            }
+          ]
+        },
+        "expected_exit": "2"
+      },
+      "interops": {
+        "merged": {
+          "rc": 1,
+          "ok": false,
+          "out": "opentimelineio._otio.UnsupportedSchemaError: unsupported schema version: near line 523"
+        }
+      }
+    },
+    {
+      "source": "pronom_fcp.fcpxml",
+      "bytes": 1553,
+      "sha256": "55439d9ea3779482ad8b53b4f296c62388004ec46d98d1d757d592c5c15c7c07",
+      "origin": "PRONOM (UK National Archives) authentic Final Cut Pro X sample, fcpxml 1.8",
+      "capture_ms": 4.9,
+      "capture_exit": 0,
+      "status": "capture+merge",
+      "editable_clips": 0,
+      "edit_plan": "track-name",
+      "cooperative": {
+        "exit": 0,
+        "ms": 4.1,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Clean (applied=1, withheld=0, deduped=0)",
+        "report": {
+          "histogram": {},
+          "outcome": "clean",
+          "stats": {
+            "applied": 1,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 0,
+            "withheld": 0
+          },
+          "verdicts": []
+        },
+        "expected_exit": "0 or 1"
+      },
+      "conflict": {
+        "exit": 2,
+        "ms": 4.2,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
+        "report": {
+          "histogram": {
+            "C3": 1
+          },
+          "outcome": "conflicts",
+          "stats": {
+            "applied": 0,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 1,
+            "withheld": 2
+          },
+          "verdicts": [
+            {
+              "class": "C3",
+              "note": "same track attribute (name), different values \u2014 no last-write-wins on creative parameters",
+              "ours": "track-attr #0 name",
+              "theirs": "track-attr #0 name",
+              "verdict": "Human"
+            }
+          ]
+        },
+        "expected_exit": "2"
+      },
+      "interops": {
+        "merged": {
+          "rc": 0,
+          "ok": true,
+          "out": "ok Timeline 1"
+        }
+      }
+    },
+    {
+      "source": "screening_example.otio",
+      "bytes": 20954,
+      "sha256": "d344ee732885c165f68d6f845e04aaf17d61de6cf8c75dd45519f460fca4d610",
+      "origin": "OpenTimelineIO sample data (real screening sequence)",
+      "capture_ms": 7.1,
+      "capture_exit": 0,
+      "status": "capture+merge",
+      "editable_clips": 9,
+      "edit_plan": "trim",
+      "cooperative": {
+        "exit": 0,
+        "ms": 8.0,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Clean (applied=2, withheld=0, deduped=0)",
+        "report": {
+          "histogram": {},
+          "outcome": "clean",
+          "stats": {
+            "applied": 2,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 1,
+            "withheld": 0
+          },
+          "verdicts": []
+        },
+        "expected_exit": "0 or 1"
+      },
+      "conflict": {
+        "exit": 2,
+        "ms": 7.9,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
+        "report": {
+          "histogram": {
+            "C3": 1
+          },
+          "outcome": "conflicts",
+          "stats": {
+            "applied": 0,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 1,
+            "withheld": 2
+          },
+          "verdicts": [
+            {
+              "class": "C3",
+              "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
+              "ours": "trim uuid:01a0694b-3246-7ed2-8946-c53aa0965fbb in=-0.041666666666666664s out=0.041666666666666664s",
+              "theirs": "trim uuid:01a0694b-3246-7ed2-8946-c53aa0965fbb in=-0.20833333333333334s out=0.20833333333333334s",
+              "verdict": "Human"
+            }
+          ]
+        },
+        "expected_exit": "2"
+      },
+      "interops": {
+        "merged": {
+          "rc": 1,
+          "ok": false,
+          "out": "opentimelineio._otio.UnsupportedSchemaError: unsupported schema version: near line 174"
+        }
+      }
+    },
+    {
+      "source": "simple_cut.otio",
+      "bytes": 5299,
+      "sha256": "a85440060aa8b421fb7430dcf4c6d9a89a78b256198767afcfff1496ededf7eb",
+      "origin": "OpenTimelineIO sample data (simple cut)",
+      "capture_ms": 5.1,
+      "capture_exit": 0,
+      "status": "capture+merge",
+      "editable_clips": 4,
+      "edit_plan": "trim",
+      "cooperative": {
+        "exit": 0,
+        "ms": 5.5,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Clean (applied=2, withheld=0, deduped=0)",
+        "report": {
+          "histogram": {},
+          "outcome": "clean",
+          "stats": {
+            "applied": 2,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 1,
+            "withheld": 0
+          },
+          "verdicts": []
+        },
+        "expected_exit": "0 or 1"
+      },
+      "conflict": {
+        "exit": 2,
+        "ms": 5.3,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
+        "report": {
+          "histogram": {
+            "C3": 1
+          },
+          "outcome": "conflicts",
+          "stats": {
+            "applied": 0,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 1,
+            "withheld": 2
+          },
+          "verdicts": [
+            {
+              "class": "C3",
+              "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
+              "ours": "trim uuid:01a0694b-32ec-7091-b20d-560617248c74 in=-0.041666666666666664s out=0.041666666666666664s",
+              "theirs": "trim uuid:01a0694b-32ec-7091-b20d-560617248c74 in=-0.20833333333333334s out=0.20833333333333334s",
+              "verdict": "Human"
+            }
+          ]
+        },
+        "expected_exit": "2"
+      },
+      "interops": {
+        "merged": {
+          "rc": 0,
+          "ok": true,
+          "out": "ok Timeline 1"
+        }
+      }
+    },
+    {
+      "source": "transition.otio",
+      "bytes": 8355,
+      "sha256": "976f608b6feb511ce6a1155d3d3c4703d51ea4c81a240a513d2cfc2939c3d246",
+      "origin": "OpenTimelineIO sample data (transitions)",
+      "capture_ms": 5.3,
+      "capture_exit": 0,
+      "status": "capture+merge",
+      "editable_clips": 4,
+      "edit_plan": "trim",
+      "cooperative": {
+        "exit": 0,
+        "ms": 5.6,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Clean (applied=2, withheld=0, deduped=0)",
+        "report": {
+          "histogram": {},
+          "outcome": "clean",
+          "stats": {
+            "applied": 2,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 1,
+            "withheld": 0
+          },
+          "verdicts": []
+        },
+        "expected_exit": "0 or 1"
+      },
+      "conflict": {
+        "exit": 2,
+        "ms": 5.5,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
+        "report": {
+          "histogram": {
+            "C3": 1
+          },
+          "outcome": "conflicts",
+          "stats": {
+            "applied": 0,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 1,
+            "withheld": 2
+          },
+          "verdicts": [
+            {
+              "class": "C3",
+              "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
+              "ours": "trim uuid:01a0694b-3383-7091-abde-8de0b0c13adb in=-0.041666666666666664s out=0.041666666666666664s",
+              "theirs": "trim uuid:01a0694b-3383-7091-abde-8de0b0c13adb in=-0.20833333333333334s out=0.20833333333333334s",
+              "verdict": "Human"
+            }
+          ]
+        },
+        "expected_exit": "2"
+      },
+      "interops": {
+        "merged": {
+          "rc": 0,
+          "ok": true,
+          "out": "ok Timeline 1"
+        }
+      }
+    },
+    {
+      "source": "transition_test.otio",
+      "bytes": 5609,
+      "sha256": "fe2a88668728386c1083cb964196e8966a5cc2062cfc022c7548fb43f21691da",
+      "origin": "OpenTimelineIO sample data (transition edges)",
+      "capture_ms": 5.4,
+      "capture_exit": 0,
+      "status": "capture+merge",
+      "editable_clips": 3,
+      "edit_plan": "trim",
+      "cooperative": {
+        "exit": 0,
+        "ms": 5.5,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Clean (applied=2, withheld=0, deduped=0)",
+        "report": {
+          "histogram": {},
+          "outcome": "clean",
+          "stats": {
+            "applied": 2,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 1,
+            "withheld": 0
+          },
+          "verdicts": []
+        },
+        "expected_exit": "0 or 1"
+      },
+      "conflict": {
+        "exit": 2,
+        "ms": 5.1,
+        "merged_recapture_ok": true,
+        "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
+        "report": {
+          "histogram": {
+            "C3": 1
+          },
+          "outcome": "conflicts",
+          "stats": {
+            "applied": 0,
+            "deduped": 0,
+            "ops_ours": 1,
+            "ops_theirs": 1,
+            "withheld": 2
+          },
+          "verdicts": [
+            {
+              "class": "C3",
+              "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
+              "ours": "trim uuid:01a0694b-341c-7342-adb3-6d5bd06b8bc4 in=-0.041666666666666664s out=0.041666666666666664s",
+              "theirs": "trim uuid:01a0694b-341c-7342-adb3-6d5bd06b8bc4 in=-0.20833333333333334s out=0.20833333333333334s",
+              "verdict": "Human"
+            }
+          ]
+        },
+        "expected_exit": "2"
+      },
+      "interops": {
+        "merged": {
+          "rc": 1,
+          "ok": false,
+          "out": "KeyError: \"While reading object named 'C' (of type 'N14opentimelineio7v0_18_14ClipE'): media_references (near line 131)\""
+        }
+      }
+    }
+  ],
+  "pin_violations": []
+}

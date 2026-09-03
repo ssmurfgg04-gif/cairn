@@ -1,0 +1,34 @@
+{
+    "schema":  "cairn-nle-matrix/resolve-probe/1",
+    "captured_utc":  "2026-09-03T22:01:35Z",
+    "host_os":  "Windows 10.0.26100.0",
+    "steps":  {
+                  "disk":  {
+                               "ok":  true,
+                               "detail":  "C: free 31.8 GB"
+                           },
+                  "winget-search":  {
+                                        "ok":  false,
+                                        "detail":  "no BlackmagicDesign DaVinciResolve id in search output:  |    -  |                                                                                                                          |  |   ████████▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  1024 KB / 3.40 MB |   █████████████████▒▒▒▒▒▒▒▒▒▒▒▒▒  2.00 MB / 3.40 MB |   ██████████████████████████▒▒▒▒  3.00 MB / 3.40 MB |   ██████████████████████████████  3.40 MB / 3.40 MB |                                                                                                                          |  |   ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  0% |   ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  0% |   ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  1% |   ▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒▒  2% |   ██████████████████▒▒▒▒▒▒▒▒▒▒▒▒  63% |   ██████████████████████▒▒▒▒▒▒▒▒  74% |   ████████████████████████▒▒▒▒▒▒  83% |   ███████████████████████████▒▒▒  92% |   ███████████████████████████▒▒▒  92% |   ██████████████████████████████  100% |                                                                                                                          | The `msstore` source requires that you view the following agreements before using. | Terms of Transaction: https://aka.ms/microsoft-store-terms-of-transaction | The source requires the current machine\u0027s 2-letter geographic region to be sent to the backend service to function properly (ex. \"US\"). |  | Name                Id                         Version Source | -------------------------------------------------------------- | DaVinci Resolve RPC elpideus.DaVinciResolveRPC 1.0.1   winget | "
+                                    },
+                  "winget-install":  {
+                                         "ok":  false,
+                                         "detail":  "winget exit -1978335212: \r   - \r                                                                                                                        \r\r   - \r                                                                                                                        \rNo package found matching input criteria. |"
+                                     },
+                  "locate-resolve":  {
+                                         "ok":  false,
+                                         "detail":  "not installed"
+                                     },
+                  "launch-resolve":  {
+                                         "ok":  false,
+                                         "detail":  "no exe to launch"
+                                     },
+                  "launch":  {
+                                 "attempted":  false
+                             }
+              },
+    "verdict":  {
+                    "resolve_runs_on_ci_runner":  false,
+                    "meaning":  "Resolve cannot run on GPU-less GitHub runners -- H4/H5 stay studio-legs (the CI-executable NLE coverage is headless Blender through CfAPI: scripts/win_nle_matrix.ps1 W3; timeline-level realism is the pinned real-NLE corpus gate)"
+                }
+}
