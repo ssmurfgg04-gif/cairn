@@ -797,7 +797,11 @@ async fn run_loop(
         {
             let facts = cairn_fs_win::badge::EngineFacts {
                 server_reachable: badge_pass_ok,
-                outbox_pending: outbox.pending_count(&pid),
+                // pending_count is u64 (store-wide accounting); the badge
+                // fact is usize — try_from is lossless on every real box
+                // (round 13: shipped as a raw u64 in round 12, a
+                // windows-only compile error Linux CI can never see)
+                outbox_pending: usize::try_from(outbox.pending_count(&pid)).unwrap_or(usize::MAX),
                 transfers_in_flight: usize::from(badge_syncing),
                 last_error: badge_error.clone(),
             };
