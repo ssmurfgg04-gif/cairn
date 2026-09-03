@@ -1,0 +1,154 @@
+{
+  "OTIO_SCHEMA": "Timeline.1",
+  "metadata": {},
+  "name": "Round Trip Base",
+  "global_start_time": null,
+  "tracks": {
+    "OTIO_SCHEMA": "Stack.1",
+    "metadata": {},
+    "name": "tracks",
+    "source_range": null,
+    "effects": [],
+    "markers": [],
+    "enabled": true,
+    "color": null,
+    "children": [
+      {
+        "OTIO_SCHEMA": "Track.1",
+        "metadata": {},
+        "name": "V1",
+        "source_range": null,
+        "effects": [],
+        "markers": [],
+        "enabled": true,
+        "color": null,
+        "children": [
+          {
+            "OTIO_SCHEMA": "Clip.2",
+            "metadata": {},
+            "name": "Sunrise A",
+            "source_range": {
+              "OTIO_SCHEMA": "TimeRange.1",
+              "duration": {"OTIO_SCHEMA": "RationalTime.1", "rate": 24.0, "value": 96.0},
+              "start_time": {"OTIO_SCHEMA": "RationalTime.1", "rate": 24.0, "value": 24.0}
+            },
+            "effects": [
+              {
+                "OTIO_SCHEMA": "Effect.1",
+                "metadata": {},
+                "name": "blur",
+                "effect_name": "org.blur.soft",
+                "enabled": true
+              }
+            ],
+            "markers": [],
+            "enabled": true,
+            "color": null,
+            "media_references": {
+              "DEFAULT_MEDIA": {
+                "OTIO_SCHEMA": "ExternalReference.1",
+                "metadata": {},
+                "name": "",
+                "available_range": null,
+                "available_image_bounds": null,
+                "target_url": "file:///media/sunrise_a.mov"
+              }
+            },
+            "active_media_reference_key": "DEFAULT_MEDIA"
+          },
+          {
+            "OTIO_SCHEMA": "Gap.1",
+            "metadata": {},
+            "name": "",
+            "source_range": {
+              "OTIO_SCHEMA": "TimeRange.1",
+              "duration": {"OTIO_SCHEMA": "RationalTime.1", "rate": 24.0, "value": 24.0},
+              "start_time": {"OTIO_SCHEMA": "RationalTime.1", "rate": 24.0, "value": 0.0}
+            },
+            "effects": [],
+            "markers": [],
+            "enabled": true,
+            "color": null
+          },
+          {
+            "OTIO_SCHEMA": "Clip.2",
+            "metadata": {},
+            "name": "Sunrise B",
+            "source_range": {
+              "OTIO_SCHEMA": "TimeRange.1",
+              "duration": {"OTIO_SCHEMA": "RationalTime.1", "rate": 24.0, "value": 48.0},
+              "start_time": {"OTIO_SCHEMA": "RationalTime.1", "rate": 24.0, "value": 0.0}
+            },
+            "effects": [],
+            "markers": [
+              {
+                "OTIO_SCHEMA": "Marker.2",
+                "metadata": {},
+                "name": "flag",
+                "color": "RED",
+                "marked_range": {
+                  "OTIO_SCHEMA": "TimeRange.1",
+                  "duration": {"OTIO_SCHEMA": "RationalTime.1", "rate": 24.0, "value": 0.0},
+                  "start_time": {"OTIO_SCHEMA": "RationalTime.1", "rate": 24.0, "value": 12.0}
+                },
+                "comment": "check this cut"
+              }
+            ],
+            "enabled": true,
+            "color": null,
+            "media_references": {
+              "DEFAULT_MEDIA": {
+                "OTIO_SCHEMA": "ExternalReference.1",
+                "metadata": {},
+                "name": "",
+                "available_range": null,
+                "available_image_bounds": null,
+                "target_url": "file:///media/sunrise_b.mov"
+              }
+            },
+            "active_media_reference_key": "DEFAULT_MEDIA"
+          }
+        ],
+        "kind": "Video"
+      },
+      {
+        "OTIO_SCHEMA": "Track.1",
+        "metadata": {},
+        "name": "A1",
+        "source_range": null,
+        "effects": [],
+        "markers": [],
+        "enabled": true,
+        "color": null,
+        "children": [
+          {
+            "OTIO_SCHEMA": "Clip.2",
+            "metadata": {},
+            "name": "Sunrise VO",
+            "source_range": {
+              "OTIO_SCHEMA": "TimeRange.1",
+              "duration": {"OTIO_SCHEMA": "RationalTime.1", "rate": 24.0, "value": 168.0},
+              "start_time": {"OTIO_SCHEMA": "RationalTime.1", "rate": 24.0, "value": 0.0}
+            },
+            "effects": [],
+            "markers": [],
+            "enabled": true,
+            "color": null,
+            "media_references": {
+              "DEFAULT_MEDIA": {
+                "OTIO_SCHEMA": "ExternalReference.1",
+                "metadata": {},
+                "name": "",
+                "available_range": null,
+                "available_image_bounds": null,
+                "target_url": "file:///media/sunrise_vo.wav"
+              }
+            },
+            "active_media_reference_key": "DEFAULT_MEDIA"
+          }
+        ],
+        "kind": "Audio"
+      }
+    ]
+  }
+}

@@ -19,6 +19,27 @@ Legend: ✅ implemented + tests green · 🟨 implemented, platform-gated / hard
 | M7 | fuzz targets; flags flip w/o restart; audit log; SLO metrics; runbooks; ctl-api frozen | ✅ / fuzz execution on nightly CI (targets build locally) |
 | M8 | onboarding e2e; doctor; THIRD_PARTY complete; beta runbook | ✅ (docs/runbook-beta.md; onboarding e2e) |
 
+## Round 12 — the 100% checklist (2026-09-03)
+
+The four-item shipping checklist, closed. Each row carries its evidence; the
+ones that need studio hardware say so honestly.
+
+| Item | Status | Evidence |
+|---|---|---|
+| OTIO/FCPXML three-way merge (P0) | ✅ | `crates/cairn-tl`: exact-rational core (192-bit limb compare, no float drift), identity ladder (uuid → name → fingerprint → positional, multi-rung rescue), LIS-based move detection, total C0–C10 classifier + Kani totality harness, apply engine with identity-following locators (no position drift, no double-apply), golden corpus per class C0–C10, two-editor simulations (trim+grade auto-merge; same-cut conflict → exit 2), 200-case property suite (no-silent-loss, determinism, mirror stability, outcome discipline), FCPXML bridge with a tested lossiness ledger (out-of-ledger elements refuse C10), `.cairn-timeline` sidecar with the version gate, python-otio 0.18.1 interop oracle green in CI (`tl-merge-gate`). CLI: `cairn tl-capture` (stamp + canonicalize + sidecar), `cairn tl-merge` with the 0/1/2/3 exit-code contract, verified end-to-end on real docs |
+| Windows Explorer badge (P1) | ✅ | `cairn-fs-win/src/badge.rs`: portable decision table (error > offline > syncing > idle, sticky errors, change-detection skips no-op FFI) unit-tested on Linux; windows FFI (`CfUpdateSyncProviderStatus` + `CfReportSyncStatus` + per-file in-sync via the existing `mark_in_sync`) cross-compiled against the real windows-0.58 bindings; wired into the daemon sync loop riding the SAME CfAPI connection as write-back (badge only updates on change). Real-Explorer rendering is exercised by the existing windows-cfapi-roundtrip CI leg + the studio matrix below |
+| Clicky-clicky onboarding (P0) | ✅ | `crates/cairn-tray` (ADR-0016): Win32 tray via windows-rs, embedded .ico, menu = status/connect (folder picker → `cairn attach`)/doctor/open/disconnect/settings, 3s poll on a worker thread, NEVER links the engine (subprocess boundary, CREATE_NO_WINDOW); compiles clean on the windows target (CI leg) with a non-windows stub. `install.ps1`: downloads+SHA-verifies engine AND tray, HKCU Run autostart (no admin), desktop shortcut, launches now, degrades loudly on engine-only releases; `release.yml` packages both assets + the installer gate asserts both + the Run key |
+| I1 NLE matrix, human-verified (P2) | 🟨 collector shipped | `scripts/nle_matrix_collect.py` (read-only: doctor/status snapshots, BLAKE3/SHA byte-identity oracle before/after each H-row, hydration-metric grep from the daemon log, one JSON to report back) + the reporting protocol + minimum hardware spec in docs/design/nle-test-matrix.md. The H1–H10 rows themselves need a physical Windows box with Premiere/Resolve — that is the studio's leg of the contract; results land in docs/nle-matrix-results/ and update BENCHMARKS.md |
+| Competitive ledger | ✅ | docs/COMPETITIVE.md — evidence-linked strengths AND named competitor wins (LucidLink macOS/enterprise, Frame.io workflows, NAS for single rooms) |
+
+Bugs the round's own gates caught (the reason the gates exist):
+
+- `stamp_uuid` was recursive → whole subtree shared ONE identity (identity collapse) — caught by the two-editor simulation
+- `mul_limbs` carry-ripple domain bug at the 2^128 boundary — caught by known-answer vectors computed independently in Python
+- self-anchored moves were no-ops at apply time — caught by the cross-side rename+move test
+- insert-shifted indices produced phantom moves → duplicate elements — caught by the property suite (no-duplicate-identity invariant)
+- stats double-counted withheld∩deduped ops — caught by the property suite's accounting identity
+
 ## Post-M8 hardening round (2026-08-31)
 
 | Item | Status | Evidence |

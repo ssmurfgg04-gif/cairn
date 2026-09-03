@@ -1,0 +1,20 @@
+[package]
+name = "cairn-tl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "OTIO/FCPXML timeline three-way merge (ADR-0015): exact-rational time, identity ladder, C0-C10 classifier, canonical OTIO JSON, FCPXML bridge"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+blake3 = { workspace = true }
+quick-xml = "0.36"
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true

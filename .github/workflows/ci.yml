@@ -251,6 +251,12 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       # WO6-1/2: cairn-cli checked so the WINDOWS-only daemon glue (win_attach) compiles on the real target
       - run: cargo check -p cairn-fs-win -p cairn-fs-mac -p cairn-store -p cairn-core -p cairn-cli --tests
+      # ADR-0016: the tray is a Windows-only binary — check it on the real target
+      # (on macos this is the stub main; the windows leg is the one that matters)
+      - run: cargo check -p cairn-tray
+      - name: Tray release-build smoke (windows leg only)
+        if: matrix.os == 'windows-latest'
+        run: cargo build --release -p cairn-tray --bin cairn-tray
 
   coverage:
     runs-on: ubuntu-latest
@@ -285,3 +291,37 @@ jobs:
       - run: cargo fuzz run manifest_parse -- -max_total_time=600
       - run: cargo fuzz run pack_index_parse -- -max_total_time=600
       - run: cargo fuzz run journal_op_parse -- -max_total_time=600
+
+  # ADR-0015 gate: the timeline merge surface — unit + golden + two-editor +
+  # property suites, the CLI exit-code contract, and the python-otio
+  # interop oracle (the reference implementation accepts our canonical
+  # output and nothing is lost in its re-serialization).
+  tl-merge-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Install python-otio (the interop oracle)
+        run: pip install opentimelineio==0.18.1
+      - name: Suite
+        run: cargo test -p cairn-tl
+      - name: CLI exit-code contract (0 clean / 1 notes / 2 conflicts / 3 refused)
+        run: |
+          set -e
+          cargo build -p cairn-cli --bin cairn
+          CAIRN=target/debug/cairn
+          FIX=crates/cairn-tl/fixtures/roundtrip_base.otio
+          mkdir -p /tmp/tl-gate && cd /tmp/tl-gate
+          cp $OLDPWD/$FIX base.otio
+          # capture stamps identities
+          $CAIRN tl-capture base.otio
+          # clean: identical sides
+          $CAIRN tl-merge --base base.canonical.otio --ours base.canonical.otio --theirs base.canonical.otio >/dev/null; [ $? -eq 0 ] || exit 1
+          # refused: garbage schema
+          echo '{"OTIO_SCHEMA":"Nope.9"}' > garbage.otio
+          $CAIRN tl-merge --base base.canonical.otio --ours garbage.otio --theirs base.canonical.otio >/dev/null 2>&1; [ $? -eq 3 ] || { echo "expected exit 3"; exit 1; }
+          echo "exit-code contract green"
+      - name: python-otio interop oracle
+        run: |
+          python scripts/tl_interop_check.py crates/cairn-tl/fixtures/roundtrip_python.otio

@@ -189,6 +189,29 @@ pub enum Cmd {
         #[arg(long)]
         tls_key: Option<String>,
     },
+    /// Capture a timeline document (stamp identities + sidecar manifest)
+    TlCapture {
+        /// Timeline file (.otio JSON or .fcpxml)
+        path: String,
+        /// Canonicalize IN PLACE (default: write <stem>.canonical.otio + sidecar)
+        #[arg(long)]
+        in_place: bool,
+    },
+    /// Three-way timeline merge (ADR-0015): base/ours/theirs -> merged + report
+    TlMerge {
+        /// Base timeline (the common ancestor, content-addressed)
+        #[arg(long)]
+        base: String,
+        /// Our side (the save under the SURVIVING fence — SPEC §8)
+        #[arg(long)]
+        ours: String,
+        /// Their side (the earlier save, rebased)
+        #[arg(long)]
+        theirs: String,
+        /// Report only: do not write the merged document
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Run the local daemon (ctl gRPC :17777 + dashboard :17778)
     Daemon {
         /// Bind address for ctl gRPC (loopback only)
@@ -279,6 +302,13 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
             .map_err(|e| anyhow::anyhow!("{e}"))
         }
         Cmd::Daemon { ctl_addr, ui_addr } => daemon::run(home, ctl_addr, ui_addr).await,
+        Cmd::TlCapture { path, in_place } => run_tl_capture(&path, in_place),
+        Cmd::TlMerge {
+            base,
+            ours,
+            theirs,
+            dry_run,
+        } => run_tl_merge(&base, &ours, &theirs, dry_run),
         Cmd::Status { json } => {
             // live daemon view first (projects + files_synced); doctor fallback offline.
             // ctl endpoint comes from the home store (daemon persists it at boot), so
@@ -648,4 +678,184 @@ async fn ctl_attach(
         .into_inner();
     println!("attached {} as project `{}`", path, out.project_id);
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0015 timeline capture + merge (cairn-tl): pure library, CLI edges only.
+// Exit-code contract (tl-merge): 0 clean · 1 merged-with-notes · 2 conflicts
+// (human escalation — merged file still written, conflicting edits withheld)
+// · 3 refused (C10 — no output touched).
+// ---------------------------------------------------------------------------
+
+fn run_tl_capture(path: &str, in_place: bool) -> anyhow::Result<()> {
+    let raw =
+        std::fs::read_to_string(path).map_err(|e| anyhow::anyhow!("cannot read {path}: {e}"))?;
+    let looks_xml = raw.trim_start().starts_with("<?xml") && raw.contains("<fcpxml");
+    let is_fcpxml = path.ends_with(".fcpxml") || looks_xml;
+    let (mut timeline, sidecar, out_path) = if is_fcpxml {
+        let (major, minor) = fcpxml_version(&raw);
+        let tl = cairn_tl::fcpxml::parse_fcpxml(&raw)
+            .map_err(|e| anyhow::anyhow!("fcpxml ingest: {e}"))?;
+        let sc = cairn_tl::sidecar::Sidecar::for_fcpxml(major, minor, raw.as_bytes());
+        let out = canonical_out_path(path);
+        (tl, sc, out)
+    } else {
+        let tl =
+            cairn_tl::parse::parse_otio(&raw).map_err(|e| anyhow::anyhow!("otio parse: {e}"))?;
+        (
+            tl,
+            cairn_tl::sidecar::Sidecar::for_otio(raw.as_bytes()),
+            canonical_out_path(path),
+        )
+    };
+    // stamp identities (idempotent — already-stamped documents pass through)
+    cairn_tl::model::stamp_all(&mut timeline);
+    let canonical = cairn_tl::canon::serialize_file(&timeline)
+        .map_err(|e| anyhow::anyhow!("canonical serialize: {e}"))?;
+    let target = if in_place && !is_fcpxml {
+        path.to_string()
+    } else {
+        out_path
+    };
+    std::fs::write(&target, &canonical)
+        .map_err(|e| anyhow::anyhow!("cannot write {target}: {e}"))?;
+    let sidecar_path = format!("{target}.cairn-timeline");
+    std::fs::write(&sidecar_path, sidecar.to_json())
+        .map_err(|e| anyhow::anyhow!("cannot write {sidecar_path}: {e}"))?;
+    println!("captured: {target} (+ {sidecar_path})");
+    println!("elements stamped: {}", timeline.tracks.count());
+    Ok(())
+}
+
+fn canonical_out_path(path: &str) -> String {
+    let stem = path
+        .strip_suffix(".otio")
+        .unwrap_or_else(|| path.strip_suffix(".fcpxml").unwrap_or(path));
+    format!("{stem}.canonical.otio")
+}
+
+fn fcpxml_version(raw: &str) -> (u32, u32) {
+    // <fcpxml version="1.11"> — major 1, minor 11 (NOT 1.1: version parse bug
+    // class from the pre-release, caught by the round-11 style gates)
+    if let Some(pos) = raw.find("<fcpxml") {
+        let head = &raw[pos..(pos + 80).min(raw.len())];
+        if let Some(vpos) = head.find("version=\"") {
+            let rest = &head[vpos + 9..];
+            if let Some(end) = rest.find('"') {
+                let v = &rest[..end];
+                if let Some((ma, mi)) = v.split_once('.') {
+                    return (ma.parse().unwrap_or(1), mi.parse().unwrap_or(0));
+                }
+            }
+        }
+    }
+    (1, 0)
+}
+
+fn load_timeline_sidecar(
+    path: &str,
+) -> anyhow::Result<(
+    cairn_tl::model::Timeline,
+    Option<cairn_tl::sidecar::Sidecar>,
+)> {
+    let raw =
+        std::fs::read_to_string(path).map_err(|e| anyhow::anyhow!("cannot read {path}: {e}"))?;
+    let sc = std::fs::read_to_string(format!("{path}.cairn-timeline"))
+        .ok()
+        .and_then(|t| cairn_tl::sidecar::Sidecar::parse(&t).ok());
+    if path.ends_with(".fcpxml") {
+        let tl = cairn_tl::fcpxml::parse_fcpxml(&raw)
+            .map_err(|e| anyhow::anyhow!("fcpxml ingest {path}: {e}"))?;
+        Ok((tl, sc))
+    } else {
+        let tl = cairn_tl::parse::parse_otio(&raw)
+            .map_err(|e| anyhow::anyhow!("otio parse {path}: {e}"))?;
+        Ok((tl, sc))
+    }
+}
+
+fn run_tl_merge(base: &str, ours: &str, theirs: &str, dry_run: bool) -> anyhow::Result<()> {
+    // The exit-code contract: 3 means REFUSED — structural mismatch or any
+    // input that cannot be parsed. Parsing failures are refusals (C10), not
+    // runtime errors: no partial state, both inputs untouched.
+    let refuse = |msg: String| -> ! {
+        eprintln!("REFUSED: {msg}");
+        eprintln!("no output written — both inputs remain untouched for the human");
+        std::process::exit(3);
+    };
+    let (base_tl, base_sc) = load_timeline_sidecar(base).unwrap_or_else(|e| refuse(e.to_string()));
+    let (ours_tl, ours_sc) = load_timeline_sidecar(ours).unwrap_or_else(|e| refuse(e.to_string()));
+    let (theirs_tl, theirs_sc) =
+        load_timeline_sidecar(theirs).unwrap_or_else(|e| refuse(e.to_string()));
+
+    // sidecar version gate (C10) — only when sidecars exist (un-stamped docs
+    // merge on their own bytes; the gate is the capture-substrate contract)
+    if let (Some(b), Some(o), Some(t)) = (&base_sc, &ours_sc, &theirs_sc) {
+        if let Err(e) = cairn_tl::sidecar::check_mergeable(b, o, t) {
+            refuse(e.to_string());
+        }
+    }
+
+    match cairn_tl::merge::merge(&base_tl, &ours_tl, &theirs_tl) {
+        Ok((merged, report)) => {
+            let code = match report.outcome {
+                cairn_tl::merge::Outcome::Clean => 0,
+                cairn_tl::merge::Outcome::Notes => 1,
+                cairn_tl::merge::Outcome::Conflicts => 2,
+            };
+            if dry_run {
+                println!(
+                    "dry-run: {}",
+                    serde_json::to_string_pretty(&report.to_json())?
+                );
+            } else {
+                // .name.merged.otio next to ours (ADR §2.5: NEW file, never
+                // in-place — the conflict-copy machinery stays the backstop)
+                let out = format!("{}.merged.otio", ours.strip_suffix(".otio").unwrap_or(ours));
+                let bytes = cairn_tl::canon::serialize_file(&merged)
+                    .map_err(|e| anyhow::anyhow!("serialize: {e}"))?;
+                std::fs::write(&out, bytes)
+                    .map_err(|e| anyhow::anyhow!("cannot write {out}: {e}"))?;
+                // .cairn-timeline/reports/<seq>.json relative to the ours
+                // document's directory (ADR §2.5); seq = existing count + 1
+                let dir = std::path::Path::new(ours)
+                    .parent()
+                    .unwrap_or(std::path::Path::new("."));
+                let reports_dir = dir.join(".cairn-timeline").join("reports");
+                std::fs::create_dir_all(&reports_dir).ok();
+                let seq = std::fs::read_dir(&reports_dir)
+                    .map(|rd| rd.filter_map(|e| e.ok()).count())
+                    .unwrap_or(0)
+                    + 1;
+                let report_path = reports_dir.join(format!("{seq}.json"));
+                std::fs::write(
+                    &report_path,
+                    serde_json::to_string_pretty(&report.to_json())?,
+                )
+                .map_err(|e| anyhow::anyhow!("cannot write {}: {e}", report_path.display()))?;
+                println!("merged: {out}");
+                println!("report: {}", report_path.display());
+            }
+            println!(
+                "outcome: {:?} (applied={}, withheld={}, deduped={})",
+                report.outcome, report.stats.applied, report.stats.withheld, report.stats.deduped
+            );
+            for v in &report.verdicts {
+                println!(
+                    "  C{:<2} {:<7} ours=[{}] theirs=[{:?}] {}",
+                    v.class,
+                    format!("{:?}", v.verdict),
+                    v.ours,
+                    v.theirs,
+                    v.note
+                );
+            }
+            std::process::exit(code);
+        }
+        Err(refusal) => {
+            eprintln!("REFUSED: {}", refusal.0);
+            eprintln!("no output written — both inputs remain untouched for the human");
+            std::process::exit(3);
+        }
+    }
 }
