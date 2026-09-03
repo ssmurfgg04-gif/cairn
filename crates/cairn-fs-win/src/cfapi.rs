@@ -1221,15 +1221,18 @@ pub fn create_placeholders_batch(root: &str, entries: &[BulkEntry]) -> Result<us
         match res {
             Ok(_) => created += idxs.len(),
             Err(e) => {
-                // partial success: count entries whose per-entry Result succeeded,
-                // then report the FIRST failure with its entry index (attach is
-                // idempotent: re-running creates only what is missing).
+                // partial success: find the FIRST per-entry failure and report
+                // its index (attach is idempotent: re-running creates only
+                // what is missing). Note: per-entry successes in this branch
+                // are NOT counted into `created` -- the caller gets Err and
+                // never reads it (the round-13 windows build flagged the dead
+                // increments; kept the 0xB7 read for the first_fail scan).
                 let mut first_fail: Option<usize> = None;
                 for (k, info) in infos.iter().enumerate() {
                     let code = info.Result.0;
                     if code == 0 || code == 0x0000_00B7 {
                         // 0xB7 = ERROR_ALREADY_EXISTS (win32) — idempotent re-run
-                        created += 1;
+                        continue;
                     } else if first_fail.is_none() {
                         first_fail = Some(idxs[k]);
                     }
