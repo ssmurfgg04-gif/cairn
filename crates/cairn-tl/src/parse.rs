@@ -125,7 +125,10 @@ fn parse_element_value(v: &Value, at: &str) -> Result<Element, ParseError> {
                 ..common_fields(obj, tag, at, extra, children)?
             })
         }
-        "Track.1" => {
+        // "Sequence.1" is OTIO's ORIGINAL schema name for a track (renamed
+        // Track before 1.0); real-world files from the wild still carry it
+        // (Round 13 corpus: python-otio's generator_reference_test sample).
+        "Track.1" | "Sequence.1" => {
             let kind = TrackKind::parse(obj.get("kind").and_then(Value::as_str).unwrap_or("Video"));
             let children = children_of(obj, at)?;
             Ok(Element {
@@ -161,10 +164,17 @@ fn parse_element_value(v: &Value, at: &str) -> Result<Element, ParseError> {
                 ..common_fields(obj, tag, at, extra, Vec::new())?
             })
         }
-        _ => Ok(Element {
-            kind: Kind::Unknown(tag.to_string()),
-            ..common_fields(obj, tag, at, extra, Vec::new())?
-        }),
+        // Unknown schemas: fields ride verbatim in `extra` AND children are
+        // parsed structurally (Round 13 real-corpus catch: the old code
+        // dropped children of unknown schemas — the module's own "never
+        // dropped" contract, violated and now pinned by tests).
+        _ => {
+            let children = children_of(obj, at)?;
+            Ok(Element {
+                kind: Kind::Unknown(tag.to_string()),
+                ..common_fields(obj, tag, at, extra, children)?
+            })
+        }
     }
 }
 

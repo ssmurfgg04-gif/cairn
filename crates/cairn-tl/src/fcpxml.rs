@@ -68,6 +68,17 @@ pub fn lossiness_ledger() -> Vec<LedgerEntry> {
             fcpxml_feature: "lane (connected clips)",
             otio_approximation: "stacked tracks: lane N → track above the spine",
         },
+        LedgerEntry {
+            fcpxml_feature: "conform-rate",
+            otio_approximation:
+                "attrs preserved verbatim in extra[fcpxml:conform-rate] (Attr ops on diff)",
+        },
+        LedgerEntry {
+            fcpxml_feature: "adjust-* / filter-* / retime descriptor subtrees",
+            otio_approximation:
+                "subtree preserved as JSON in extra[fcpxml:<tag>] (attrs, children, order);
+                does not round-trip as vendor XML (bridge is ingest-only)",
+        },
     ]
 }
 
@@ -97,6 +108,36 @@ impl std::fmt::Display for BridgeError {
 }
 
 impl std::error::Error for BridgeError {}
+
+/// Clip-child descriptor subtrees present in REAL exports (Round 13
+/// real-timeline corpus: BBC R&D fcpx-xml-composer, cutlass samples,
+/// PRONOM authentic FCP X). Opening one of these under a spine item
+/// starts a preserved subtree: the whole XML subtree is captured as JSON
+/// in the enclosing item's `extra["fcpxml:<tag>"]` — attributes, children,
+/// order — so diffs surface them as Attr ops. Data-preserving, never a
+/// silent drop; structurally approximate (they do not round-trip as vendor
+/// XML — the bridge is ingest-only by design). While a subtree is open,
+/// every element inside it (trim-rect, param, array, string, md, ...)
+/// is consumed by the preservation itself.
+const DESCRIPTOR_ROOTS: &[&str] = &[
+    "conform-rate",
+    "adjust-crop",
+    "adjust-transform",
+    "adjust-volume",
+    "adjust-blend",
+    "adjust-speed",
+    "adjust-effects",
+    "adjust-audio",
+    "filter-video",
+    "filter-audio",
+    "retime",
+    "rate-retime",
+    "stabilization",
+    "sync",
+    "timecode",
+    "video-fade",
+    "audio-fade",
+];
 
 /// Ingest FCPXML text into an OTIO `Timeline` (stamped with cairn uuids).
 pub fn parse_fcpxml(input: &str) -> Result<Timeline, BridgeError> {
@@ -155,6 +196,9 @@ struct BridgeState {
     /// audition/transition): their internal elements are CONSUMED by the
     /// ledger entry, never refused.
     ledgered_depth: usize,
+    /// Open descriptor-subtree levels (Round 13 real-corpus preservation):
+    /// each level is the JSON node under construction, root tag in `tag`.
+    descriptor_stack: Vec<(String, serde_json::Map<String, serde_json::Value>)>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -432,6 +476,18 @@ impl BridgeState {
             "project" => self.project_name = attrs.get("name").cloned().unwrap_or_default(),
             "event" => self.event_name = attrs.get("name").cloned().unwrap_or_default(),
             "library" | "resources" | "effect" | "notes" | "keywords" | "smart-collections" => {}
+            // Round 13 real-corpus descriptor preservation: opens a subtree
+            // (or records a nested element inside an open one) that lands
+            // VERBATIM in the enclosing spine item's extra — data-preserving,
+            // ledgered, test-covered. Markers stay markers (the arm above
+            // wins regardless of descriptor state).
+            other
+                if self.in_spine
+                    && (self.descriptor_stack.is_empty() && DESCRIPTOR_ROOTS.contains(&other)
+                        || !self.descriptor_stack.is_empty()) =>
+            {
+                self.descriptor_push(other, attrs);
+            }
             other if self.in_spine && self.ledgered_depth == 0 => {
                 return Err(BridgeError::Unsupported {
                     element: other.into(),
@@ -444,6 +500,12 @@ impl BridgeState {
     }
 
     fn handle_end(&mut self, tag: &str, _stack: &[String]) {
+        // descriptor subtree levels close FIRST (their contents never reach
+        // the spine-item end handling)
+        if !self.descriptor_stack.is_empty() {
+            self.descriptor_pop();
+            return;
+        }
         // ledgered subtrees close their consumption scope
         if matches!(
             tag,
@@ -461,6 +523,53 @@ impl BridgeState {
         }
         if tag == "spine" {
             self.in_spine = false;
+        }
+    }
+
+    /// Open one descriptor-subtree level: node = {"attrs": {...}, "children":
+    /// [...]}. The subtree is assembled bottom-up in `descriptor_pop`.
+    fn descriptor_push(&mut self, tag: &str, attrs: &AttrMap) {
+        let mut node = serde_json::Map::new();
+        if !attrs.is_empty() {
+            let map: serde_json::Map<String, serde_json::Value> = attrs
+                .iter()
+                .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
+                .collect();
+            node.insert("attrs".into(), serde_json::Value::Object(map));
+        }
+        node.insert("children".into(), serde_json::Value::Array(Vec::new()));
+        self.descriptor_stack.push((tag.into(), node));
+    }
+
+    /// Close one level: attach the finished node to its parent's children;
+    /// when the ROOT closes, land it in the enclosing spine item's extra.
+    /// quick-xml guarantees well-formed pairing, so each End pops exactly the
+    /// level its Start opened (Event::Empty = Start+End = open+close).
+    fn descriptor_pop(&mut self) {
+        let Some((root_tag, node)) = self.descriptor_stack.pop() else {
+            return;
+        };
+        let value = serde_json::Value::Object(node);
+        match self.descriptor_stack.last_mut() {
+            Some((_, parent_node)) => {
+                if let Some(children) = parent_node
+                    .get_mut("children")
+                    .and_then(|c| c.as_array_mut())
+                {
+                    let mut named = serde_json::Map::new();
+                    named.insert("tag".into(), serde_json::Value::String(root_tag));
+                    named.insert("node".into(), value);
+                    children.push(serde_json::Value::Object(named));
+                }
+            }
+            None => {
+                // root closed: land in the enclosing spine item's extra
+                if let Some(item) = self.spine_items.last_mut() {
+                    item.element
+                        .extra
+                        .insert(format!("fcpxml:{root_tag}"), value);
+                }
+            }
         }
     }
 

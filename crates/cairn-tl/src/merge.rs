@@ -559,11 +559,22 @@ impl Working {
     }
 
     /// (c) Trim/Attr/Marker ops resolved by (key, origin) — identity that
-    /// FOLLOWS moves.
+    /// FOLLOWS moves. TrackAttr applies to the matched track's own element
+    /// (base index — matched tracks are stable across sides; a removed track
+    /// keeps base state, which is exactly the C9-withheld contract).
     fn apply_edits(&mut self, eff_ours: &[Op], eff_theirs: &[Op], report: &mut MergeReport) {
         for op_list in [eff_ours, eff_theirs] {
             for op in op_list {
                 match op {
+                    Op::TrackAttr {
+                        track, attr, value, ..
+                    } => {
+                        if *track < self.base_track_count && !self.removed_tracks.contains(track) {
+                            if let Some(wt) = self.tracks.get_mut(*track) {
+                                apply_attr(&mut wt.element, attr, value);
+                            }
+                        }
+                    }
                     Op::Trim {
                         key,
                         base,
