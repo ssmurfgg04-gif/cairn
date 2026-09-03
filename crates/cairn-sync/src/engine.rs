@@ -241,7 +241,27 @@ impl Engine {
             .await?;
 
         // outbox → append (fencing token included when leased)
-        let base_seq = self.store.get_cursor(&self.device_id, &self.project_id);
+        // Content-lineage fork (round 13, the W5 catch): base_seq must declare
+        // what the local BYTES descend from, not what this device has READ.
+        // When apply refused a remote upsert for this path (undiscovered-local-
+        // edit guard or the dirty-keep arm), the local content forks at the
+        // pre-refusal head -- claiming the cursor would let the server accept
+        // the append linearly and silently supersede the other device's
+        // version with NO conflict copy. Claim min(cursor, fork-1) so the
+        // server's seq>base rule fires (SPEC 7.1) and the conflict copy
+        // preserves BOTH versions.
+        let mut base_seq = self.store.get_cursor(&self.device_id, &self.project_id);
+        if let Some(fork) = crate::apply::fork_seq(&self.store, &self.project_id, path) {
+            if fork > 0 && fork - 1 < base_seq {
+                tracing::info!(
+                    path = %path,
+                    fork,
+                    cursor = base_seq,
+                    "append claims the content-lineage fork, not the read cursor"
+                );
+                base_seq = fork - 1;
+            }
+        }
         let lease_token = self.store.get_lease(path).map_or(0, |(t, _)| t);
         // Content-derived idempotency key (WO6-4): the watcher and the scan can both
         // enqueue the same fresh file before either append lands; a random id made
@@ -306,6 +326,9 @@ impl Engine {
             pushed_size,
             pushed_mtime,
         )?;
+        // the append resolved the fork (accepted: the head now descends from
+        // these bytes; conflicted: conflict_copy handles the original path)
+        let _ = crate::apply::clear_fork(&self.store, &self.project_id, path);
         Ok(())
     }
 
@@ -477,6 +500,29 @@ impl Engine {
         // original = winner, copy = ours, both preserved).
         self.store
             .set_file_state(&self.project_id, path, LocalState::Clean.as_str())?;
+        // Re-delivery (round 13, the W5 lag case): when the fork marker exists,
+        // the refused remote entries are already PAST this device's cursor
+        // (the pull that triggered the guard consumed them) -- the original
+        // path would never re-receive the winner's head. Re-pin the journal
+        // replay to the fork point: the next pull re-delivers everything the
+        // local bytes refused, now that the local claim lives at the copy path
+        // (apply is idempotent; own-device entries rewrite nothing). The
+        // CLASSIC offline case has no marker: the winner's entry is still
+        // ahead of the cursor and the next pull delivers it naturally.
+        if let Some(fork) = crate::apply::fork_seq(&self.store, &self.project_id, path) {
+            if fork > 0 {
+                let _ = self
+                    .store
+                    .set_cursor(&self.device_id, &self.project_id, fork - 1);
+                tracing::info!(
+                    path = %path,
+                    fork,
+                    "conflict resolved: journal replay re-pinned to the fork point"
+                );
+            }
+        }
+        // the original path's local claim is over: any fork is resolved
+        let _ = crate::apply::clear_fork(&self.store, &self.project_id, path);
         // re-append for the new path (content already chunked + uploaded); boxed because the
         // conflict path is strictly one level deep per file
         let mut inner = PassStats::default();

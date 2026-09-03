@@ -440,3 +440,145 @@ async fn sqlx_all(state: &cairn_server::ServerState, sql: &str) -> Vec<(String, 
 // keep unused-proto imports referenced
 #[allow(dead_code)]
 fn _probe(_: FileUpsertOp, _: OpKind) {}
+
+#[cfg(test)]
+mod w5_tests {
+    use super::*;
+
+    /// W5 (round 13), the deterministic-conflict recipe the windows matrix
+    /// drives, replayed here against the REAL server + REAL journal conflict
+    /// rule: device B's local edit is UNDISCOVERED (edit-discovery lag: the
+    /// row still says clean -- exactly what a plain-file workspace does
+    /// between scans), device A edits live and appends. B's pull must NOT
+    /// clobber B's bytes (pre-fix: materialize overwrote them silently), and
+    /// B's append must NOT supersede A's linearly (pre-fix: the cursor-based
+    /// base_seq made the server accept it with NO conflict copy). Contract:
+    /// exactly ONE conflict copy, the original path converges to A's version
+    /// on BOTH devices, the copy carries B's version.
+    #[tokio::test]
+    async fn conflict_copy_survives_edit_discovery_lag() {
+        let mut world = World::boot(7).await;
+        // roots captured UP FRONT (TempDirs live in `world`; the closure must
+        // not hold a borrow across the mutable pass calls)
+        let ws: Vec<std::path::PathBuf> = (0..2usize)
+            .map(|i| {
+                let p = world.devices[i].root.path().join("store").join("workspace");
+                std::fs::create_dir_all(&p).unwrap();
+                p
+            })
+            .collect();
+        let wspath = |i: usize| ws[i].clone();
+        // daemon-like pass: sync (push dirty, pull remote) THEN materialize
+        // (the exact run_loop order in cairn-cli/src/projects.rs)
+        async fn pass(world: &mut World, i: usize) {
+            let dev = &mut world.devices[i];
+            let engine = dev.engine.as_mut().expect("device live");
+            engine.sync_pass().await.expect("sync pass");
+            cairn_sync::hydrate::materialize_missing(
+                engine.plane.as_ref(),
+                &engine.store,
+                &engine.cas,
+                &engine.headers,
+                "t1",
+                "p1",
+            )
+            .await
+            .expect("materialize");
+        }
+        fn set_dirty(world: &mut World, i: usize, path: &str, len: u64) {
+            let meta = std::fs::metadata(
+                world.devices[i]
+                    .root
+                    .path()
+                    .join("store/workspace")
+                    .join(path),
+            )
+            .unwrap();
+            let dev = &mut world.devices[i];
+            let engine = dev.engine.as_mut().expect("device live");
+            engine
+                .store
+                .put_file(&FileRow {
+                    path: path.into(),
+                    project_id: "p1".into(),
+                    manifest_hash: None,
+                    size: len,
+                    mode: "file".into(),
+                    mtime: cairn_sync::scan::mtime_millis(&meta),
+                    local_state: LocalState::Dirty.as_str().into(),
+                })
+                .unwrap();
+        }
+
+        // (1) A authors the seed; both devices converge on v1
+        std::fs::write(wspath(0).join("probe.bin"), b"seed").unwrap();
+        set_dirty(&mut world, 0, "probe.bin", 4);
+        pass(&mut world, 0).await;
+        pass(&mut world, 1).await;
+        assert_eq!(
+            std::fs::read(wspath(1).join("probe.bin")).unwrap(),
+            b"seed",
+            "B must materialize the seed before the divergence"
+        );
+
+        // (2) B's UNDISCOVERED local edit: disk changes, the row still says
+        // clean (edit-discovery lag). mtime bumped so the drift is unambiguous.
+        std::fs::write(wspath(1).join("probe.bin"), b"seed+B-offline-edit").unwrap();
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(2);
+        std::fs::File::options()
+            .append(true)
+            .open(wspath(1).join("probe.bin"))
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+
+        // (3) A edits LIVE (discovered) and appends: server head = v2A
+        std::fs::write(wspath(0).join("probe.bin"), b"seed+A-live-edit").unwrap();
+        set_dirty(&mut world, 0, "probe.bin", 15);
+        pass(&mut world, 0).await;
+        assert_eq!(
+            std::fs::read(wspath(0).join("probe.bin")).unwrap(),
+            b"seed+A-live-edit"
+        );
+
+        // (4) B syncs: the pull sees A's v2A over a clean-but-drifted row ->
+        // guard re-dirties + forks; the push appends with the FORK lineage ->
+        // server CONFLICT -> conflict copy; the re-pinned replay re-delivers
+        // the winner to the original path; materialize writes it.
+        pass(&mut world, 1).await;
+        // B's bytes may already be at the copy now; settle both sides
+        pass(&mut world, 0).await;
+        pass(&mut world, 1).await;
+
+        // (5) THE CONTRACT
+        let copies: Vec<std::path::PathBuf> = [0usize, 1usize]
+            .into_iter()
+            .flat_map(|i| {
+                let mut v: Vec<std::path::PathBuf> = Vec::new();
+                for e in std::fs::read_dir(&ws[i]).unwrap() {
+                    let e = e.unwrap();
+                    if e.file_name()
+                        .to_string_lossy()
+                        .starts_with("probe (conflict")
+                    {
+                        v.push(e.path());
+                    }
+                }
+                v
+            })
+            .collect();
+        assert_eq!(copies.len(), 1, "exactly ONE conflict copy, saw {copies:?}");
+        assert_eq!(
+            std::fs::read(&copies[0]).unwrap(),
+            b"seed+B-offline-edit",
+            "the copy must carry B's divergent version"
+        );
+        for (i, w) in ws.iter().enumerate() {
+            assert_eq!(
+                std::fs::read(w.join("probe.bin")).unwrap(),
+                b"seed+A-live-edit",
+                "original path must converge to A's version on BOTH devices (device {i})"
+            );
+        }
+    }
+}

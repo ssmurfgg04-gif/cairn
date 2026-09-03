@@ -1,6 +1,7 @@
 # NLE human-gate test matrix — DaVinci Resolve · Blender · Premiere Pro
 
-Status: plan (WO6-10 round) · Scope: real-Windows-studio-box human gates, companion to
+Status: rounds 12–13 — collector + CI-executable subset shipped; the H1–H10 human rows remain the studio's leg ·
+Scope: real-Windows-studio-box human gates, companion to
 the automated `windows-cfapi-roundtrip` CI job (which already proves placeholder
 registration, callback hydration, and I1 through the filter on a VM).
 
@@ -52,6 +53,36 @@ cairn daemon attached and `RUST_LOG=info` captured to a file.
 
 Rows H1–H3 are the Premiere beta blockers; H4/H5 Resolve; H6–H8 Blender; H9/H10 ship
 gates for all three.
+
+## CI coverage map (round 13) — the runner-executable subset
+
+The premise the whole matrix rests on: **Cairn's engine is payload-agnostic** —
+the merge surface never sees pixels, and the sync surface sees bytes + patterns.
+So what CI can prove without an artist, it now DOES prove, on every push
+(`.github/workflows/nle-matrix.yml`):
+
+| Row | What runs on a windows-latest runner | Proves (H-row analog) |
+|---|---|---|
+| W0 | server + two real daemons, two CfAPI sync roots, enrollment, attach | the whole stack boots and attaches on the NLE platform |
+| W1 | BMW27.blend + probe authored through A's root → upload; B reconciles | H2's write path: whole-file ingest through write-back |
+| W2 | cold first-2-MiB read on B (empty CAS → fetch through the plane) + full SHA256 | H1's cold-open: hydration is lazy, byte-identical, and measured |
+| W3 | **headless Blender (bpy wheel): open → scrub → save → reopen through B's root** | H6+H7 — a real NLE, not a mock, through the real filter |
+| W4 | B's Blender save uploads; A's view converges byte-identically | H4's shape: cross-device re-read of an NLE-written file |
+| W5 | deterministic divergence (B offline-edit vs A live-edit, daemon restart) | H9: ONE conflict copy, BOTH versions recoverable, spec naming |
+| W6 | `tl-merge` exit codes on the Windows binary | the timeline-merge contract on the NLE platform |
+| corpus | 18 pinned real-NLE timelines (real Premiere OTIO, authentic FCP X FCPXML) × both merge contracts × interop oracle | timeline-level realism without an artist (round 13 part 1) |
+| probe | winget install + launch of DaVinci Resolve free on the runner | answers "can CI ever run Resolve?" empirically, either way |
+
+What stays a studio leg, honestly: WAN RTT (the runner's plane is loopback +
+NVMe — a best-case I1 bound, not a network claim), licensed Premiere (H1–H3),
+GPU-driven Resolve (H4–H5, pending the probe's verdict), week-long offline
+editing (H10), and a human's eyes on Explorer badges.
+
+Rows W0–W6 live in `scripts/win_nle_matrix.ps1` (driven by
+`scripts/win_nle_stack.ps1`); the corpus gate is `scripts/real_timeline_corpus.py`;
+the Resolve probe is `scripts/win_resolve_probe.ps1`. Results land as workflow
+artifacts + job summaries; committed evidence lives in
+`docs/nle-matrix-results/`.
 
 ## GitHub scan result (prior art, 2026-09-01)
 
