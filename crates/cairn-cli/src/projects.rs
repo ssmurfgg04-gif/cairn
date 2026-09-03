@@ -201,7 +201,7 @@ pub async fn attach(
         let store2 = store.clone();
         let ca2 = ca_pem.clone();
         spawn_loop(Arc::clone(&rt), store, identity, server_url, ca_pem);
-        connect_cfapi(&store2, &root2, &pid2, &id2, &url2, ca2.as_deref());
+        connect_cfapi(&store2, &root2, &pid2, &id2, &url2, ca2.as_deref()).await;
         return Ok(pid);
     }
 
@@ -226,7 +226,7 @@ pub async fn attach(
     let store2 = store.clone();
     let ca2 = ca_pem.clone();
     spawn_loop(Arc::clone(&rt), store, identity, server_url, ca_pem);
-    connect_cfapi(&store2, &root2, &pid2, &id2, &url2, ca2.as_deref());
+    connect_cfapi(&store2, &root2, &pid2, &id2, &url2, ca2.as_deref()).await;
     Ok(pid)
 }
 
@@ -256,8 +256,18 @@ pub static CFAPI_CONNS: std::sync::LazyLock<
 
 /// Windows attach glue: register + bulk placeholders + write-back callbacks
 /// (WO6-1/WO6-2; no-op on other platforms).
+///
+/// ASYNC since round 13: this runs INSIDE the daemon's ctl handler (an async
+/// context) — the round-12 version used Handle::block_on here, which panics
+/// with "Cannot start a runtime from within a runtime" on the FIRST real
+/// windows attach (caught live by the W0 row of the windows-runner matrix;
+/// Linux never compiles this path, and the cfapi_roundtrip test drives the
+/// connection machinery OUTSIDE a runtime, so nothing else ever saw it).
+/// The plane connect is simply awaited; the CfAPI callback threads keep using
+/// the passed `rt` handle (block_on from NON-runtime threads is the
+/// documented, legal pattern).
 #[cfg(windows)]
-fn connect_cfapi(
+async fn connect_cfapi(
     store: &Store,
     root: &Path,
     pid: &str,
@@ -265,21 +275,21 @@ fn connect_cfapi(
     server_url: &str,
     ca_pem: Option<&[u8]>,
 ) {
-    let plane: Arc<dyn cairn_sync::plane::Plane> = match tokio::runtime::Handle::try_current() {
-        Ok(h) => match h.block_on(cairn_sync::plane_grpc::GrpcPlane::connect(
+    let plane: Arc<dyn cairn_sync::plane::Plane> =
+        match cairn_sync::plane_grpc::GrpcPlane::connect(
             server_url,
             &identity.token,
             &identity.tenant_id,
             ca_pem,
-        )) {
+        )
+        .await
+        {
             Ok(p) => Arc::new(p),
             Err(e) => {
                 tracing::warn!(project = %pid, "CfAPI: plane connect failed ({e}); read-only until restart");
                 return;
             }
-        },
-        Err(_) => return,
-    };
+        };
     let rt = tokio::runtime::Handle::current();
     match crate::win_attach::attach_windows(
         store,
@@ -306,7 +316,7 @@ fn connect_cfapi(
 }
 
 #[cfg(not(windows))]
-fn connect_cfapi(
+async fn connect_cfapi(
     _store: &Store,
     _root: &Path,
     _pid: &str,

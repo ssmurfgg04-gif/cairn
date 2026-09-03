@@ -415,6 +415,10 @@ pub fn attach_windows(
                 relative_path: r.path.replace('/', "\\"),
                 identity_hex: identity,
                 size: r.size,
+                // punch #5: stamp the journaled mtime so the scan predicate
+                // keeps the fresh placeholder CLEAN (lazy) instead of
+                // redirtying + re-hydrating the whole attach
+                mtime_ms: r.mtime,
             })
         })
         .collect();

@@ -658,16 +658,19 @@ fn write_back_gates_edit_newfile_fencing_crash_budget() {
             relative_path: "media\\a.bin".into(),
             identity_hex: hash1.clone(),
             size: 1024,
+            mtime_ms: 1_700_000_000_000,
         },
         BulkEntry {
             relative_path: "media\\b.bin".into(),
             identity_hex: hash1.clone(),
             size: 2048,
+            mtime_ms: 1_700_000_000_000,
         },
         BulkEntry {
             relative_path: "c.bin".into(),
             identity_hex: hash1.clone(),
             size: 4096,
+            mtime_ms: 1_700_000_000_000,
         },
     ];
     let created = create_placeholders_batch(root.path().to_str().unwrap(), &entries)
