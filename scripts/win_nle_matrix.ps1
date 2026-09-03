@@ -197,7 +197,7 @@ try {
         if ($failFast) { throw }
     }
 
-    $rowW1 = New-Row "W1" "seed: BMW27.blend + probe through A's root -> upload; B reconciles + hydrates probe"
+    $rowW1 = New-Row "W1" "seed: BMW27.blend + probe through A's root -> upload; B pulls + fully materializes"
     $row = $rowW1
     if ($rowW0.ok) {
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
@@ -207,11 +207,11 @@ try {
             for ($i = 0; $i -lt $probeBytes.Length; $i++) { $probeBytes[$i] = $i % 251 }
             [System.IO.File]::WriteAllBytes((Join-Path $ProjDirA "conflict_probe.txt"), $probeBytes)
             $seedSceneSha = Sha256 -Path (Join-Path $ProjDirA "scene.blend")
-            $seedProbeSha = Sha256 -Path (Join-Path $ProjDirA "conflict_probe.txt")
             # A ingests + uploads both
             [void](Wait-ProjectSynced -HomeDir $HomeA -Project $Project -CtlPort $CtlA -TimeoutSec 600)
-            # B's engine reconciles the new heads into its root (placeholders);
-            # full read of the probe NOW so W5's offline edit has a materialized file
+            # B's engine pulls + fully materializes both (the CURRENT v1 design:
+            # remote files arriving after attach materialize whole -- the lazy
+            # placeholder path is the COLD-ATTACH state W2 creates on purpose)
             $deadline = (Get-Date).AddSeconds(300)
             $probeB = $null
             while ((Get-Date) -lt $deadline) {
@@ -220,12 +220,10 @@ try {
                 Start-Sleep -Seconds 2
             }
             if (-not (Test-Path $probeB)) { throw "B never saw the seeded files (reconcile timeout)" }
-            $probeRead = Read-FirstBytes -Path $probeB -Len 131072
-            if ($probeRead.got -ne 131072) { throw ("probe hydration short read: " + $probeRead.got) }
             [void](Wait-ProjectSynced -HomeDir $HomeB -Project $Project -CtlPort $CtlB -TimeoutSec 300)
             $sw.Stop()
             Complete-Row $row $true ([int]$sw.ElapsedMilliseconds) `
-                "scene.blend + conflict_probe.txt seeded via A; B reconciled (files_synced reached)"
+                "scene.blend + conflict_probe.txt seeded via A; B pulled + materialized (rows + content)"
         } catch {
             $sw.Stop(); $green = $false
             Complete-Row $row $false ([int]$sw.ElapsedMilliseconds) ("seed failed: " + $_.Exception.Message)
@@ -233,28 +231,58 @@ try {
         }
     }
 
-    $rowW2 = New-Row "W2" "cold I1: first 2 MiB of scene.blend placeholder on B (empty CAS -> full-stack fetch) + full SHA256"
+    # W2 = the TRUE cold-attach story: B detaches (rows SURVIVE detach -- only the
+    # workspace binding is cleared), its local files are wiped (the 'cleared cache /
+    # re-joined device' state), then B re-attaches: attach_windows bulk-creates
+    # PLACEHOLDERS from the surviving rows (metadata-speed, zero content), and the
+    # first read then drives the REAL CfAPI FETCH_DATA callback -> plane -> verified
+    # CAS put -> serve. THAT is the I1 mechanism end-to-end -- measuring a read of a
+    # fully-materialized file (what remote-arrival currently produces) would just
+    # time the local disk and lie about the mechanism.
+    $rowW2 = New-Row "W2" "cold attach: B re-joins (detach, wipe, re-attach -> bulk placeholders) + cold first-2MiB through CfAPI + SHA256"
     $row = $rowW2
     if ($rowW1.ok) {
         $sw = [System.Diagnostics.Stopwatch]::StartNew()
         try {
+            # (a) detach B (loop stops, CfAPI connection drops, binding clears; ROWS stay)
+            $det = Invoke-Cairn -Args @("detach", "--project", $Project,
+                "--ctl", ("http://127.0.0.1:" + $CtlB)) -HomeDir "" -TimeoutSec 60
+            if ($det.Code -ne 0) { throw ("detach failed: " + $det.Err + " " + $det.Out) }
+            Start-Sleep -Seconds 2
+            # (b) wipe B's local copies (no daemon loop watches p1 now: no tombstones)
+            Remove-Item -LiteralPath (Join-Path $ProjDirB "scene.blend") -Force -ErrorAction Stop
+            Remove-Item -LiteralPath (Join-Path $ProjDirB "conflict_probe.txt") -Force -ErrorAction Stop
+            # (c) re-attach: bulk placeholders from the surviving rows
+            [void](Invoke-CairnAttach -HomeDir $HomeB -Root $RootB -Project $Project -CtlPort $CtlB)
+            # (d) placeholders exist (metadata-only; content is NOT local)
             $sceneB = Join-Path $ProjDirB "scene.blend"
+            $deadline = (Get-Date).AddSeconds(120)
+            while ((Get-Date) -lt $deadline) {
+                if ((Test-Path $sceneB) -and (Test-Path (Join-Path $ProjDirB "conflict_probe.txt"))) { break }
+                Start-Sleep -Seconds 2
+            }
+            if (-not (Test-Path $sceneB)) { throw "placeholders never appeared on B after re-attach" }
+            # (e) THE COLD READ: first 2 MiB through the CfAPI callback path
             $cold = Read-FirstBytes -Path $sceneB -Len 2097152
             if ($cold.got -ne 2097152) { throw ("cold read short: " + $cold.got + " of 2097152") }
             $warm = @()
             for ($k = 0; $k -lt 2; $k++) { $warm += (Read-FirstBytes -Path $sceneB -Len 2097152).ms }
+            # (f) byte identity through the full path
             $sceneShaB = Sha256 -Path $sceneB
-            $identical = ($sceneShaB -eq $seedSceneSha)
-            if (-not $identical) { throw "byte identity FAILED: B's scene.blend differs from the seed" }
+            if ($sceneShaB -ne $seedSceneSha) { throw "byte identity FAILED: B's scene.blend differs from the seed" }
+            # (g) hydrate the probe fully (W5's offline edit needs a materialized file)
+            $probeRead = Read-FirstBytes -Path (Join-Path $ProjDirB "conflict_probe.txt") -Len 131072
+            if ($probeRead.got -ne 131072) { throw ("probe hydration short read: " + $probeRead.got) }
+            [void](Wait-ProjectSynced -HomeDir $HomeB -Project $Project -CtlPort $CtlB -TimeoutSec 300)
             $metrics["cold_first_2mib_ms"] = [math]::Round($cold.ms, 2)
             $metrics["warm_first_2mib_ms"] = [math]::Round((($warm | Measure-Object -Minimum).Minimum), 2)
-            $metrics["scene_blake_sha256_match"] = $true
+            $metrics["scene_sha256_match"] = $true
             $sw.Stop()
             Complete-Row $row $true ([int]$sw.ElapsedMilliseconds) `
-                ("cold {0:N2} ms / warm {1:N2} ms for the first 2 MiB; SHA256 identical" -f $cold.ms, $metrics["warm_first_2mib_ms"])
+                ("cold {0:N2} ms / warm {1:N2} ms for the first 2 MiB through CfAPI; SHA256 identical" -f $cold.ms, $metrics["warm_first_2mib_ms"])
         } catch {
             $sw.Stop(); $green = $false
-            Complete-Row $row $false ([int]$sw.ElapsedMilliseconds) ("cold I1/identity failed: " + $_.Exception.Message)
+            Complete-Row $row $false ([int]$sw.ElapsedMilliseconds) ("cold-attach failed: " + $_.Exception.Message)
             Dump-Diagnostics
         }
     }

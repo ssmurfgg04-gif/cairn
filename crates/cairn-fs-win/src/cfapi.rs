@@ -1125,6 +1125,23 @@ pub struct BulkEntry {
     /// manifest-hash identity (same encoding create_placeholder writes)
     pub identity_hex: String,
     pub size: u64,
+    /// Journaled mtime (unix millis, FileRow encoding). Stamping the
+    /// placeholder's LastWriteTime with THIS (not 'now') is punch #5 for the
+    /// attach path: the scan's size+mtime predicate then classifies the
+    /// freshly created placeholder as UNCHANGED instead of redirtying every
+    /// attach (which would re-hydrate the whole tree through the callback
+    /// and re-append it — caught by round 13's design review of the
+    /// cold-attach matrix row; materialize_missing already did this).
+    pub mtime_ms: i64,
+}
+
+/// Unix millis → NT FILETIME (100ns units since 1601-01-01), exact at
+/// millisecond granularity (mirrors the row encoding so stat round-trips
+/// match bit-for-bit: epoch offset 11,644,473,600 s = 11,644,473,600,000 ms,
+/// then ms → 100ns).
+fn filetime_from_unix_millis(ms: i64) -> i64 {
+    ms.saturating_add(11_644_473_600_000)
+        .saturating_mul(10_000)
 }
 
 /// CfCreatePlaceholders BATCH (WO6-2: attach 2GB tree → placeholders appear in one
@@ -1199,11 +1216,23 @@ pub fn create_placeholders_batch(root: &str, entries: &[BulkEntry]) -> Result<us
                 CreateUsn: 0,
             };
             info.FsMetadata.FileSize = e.size as i64;
+            // punch #5 for placeholders: stamp the JOURNALED write time (exact
+            // ms, bit-for-bit with FileRow.mtime) so the scan predicate sees
+            // disk == row and the placeholder stays clean (lazy). Degenerate
+            // rows (mtime <= 0, unknown) keep the pre-round-13 'now' stamp.
+            let (lwt, cht) = if e.mtime_ms > 0 {
+                (
+                    filetime_from_unix_millis(e.mtime_ms),
+                    filetime_from_unix_millis(e.mtime_ms),
+                )
+            } else {
+                (ft, ft)
+            };
             info.FsMetadata.BasicInfo = FILE_BASIC_INFO {
                 CreationTime: ft,
                 LastAccessTime: ft,
-                LastWriteTime: ft,
-                ChangeTime: ft,
+                LastWriteTime: lwt,
+                ChangeTime: cht,
                 FileAttributes: FILE_ATTRIBUTE_NORMAL.0 as u32,
             };
             infos.push(info);

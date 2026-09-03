@@ -64,8 +64,8 @@ So what CI can prove without an artist, it now DOES prove, on every push
 | Row | What runs on a windows-latest runner | Proves (H-row analog) |
 |---|---|---|
 | W0 | server + two real daemons, two CfAPI sync roots, enrollment, attach | the whole stack boots and attaches on the NLE platform |
-| W1 | BMW27.blend + probe authored through A's root → upload; B reconciles | H2's write path: whole-file ingest through write-back |
-| W2 | cold first-2-MiB read on B (empty CAS → fetch through the plane) + full SHA256 | H1's cold-open: hydration is lazy, byte-identical, and measured |
+| W1 | BMW27.blend + probe authored through A's root → upload; B pulls + fully materializes | H2's write path: whole-file ingest through write-back. NOTE (honest v1 design note, round 13): remote files arriving AFTER attach fully materialize — the lazy placeholder path is the cold-attach state W2 creates; fresh-collaborator laziness on NEW content is a documented post-v1 gap |
+| W2 | **cold attach**: B detaches (rows survive), local files wiped, re-attaches → bulk placeholders from surviving rows → cold first-2-MiB read drives the REAL CfAPI FETCH_DATA callback → plane → verified CAS put → serve; then full SHA256 byte identity | H1's cold-open: the true I1 mechanism end-to-end (a read of a materialized file would just time the local disk and lie about the mechanism) |
 | W3 | **headless Blender (bpy wheel): open → scrub → save → reopen through B's root** | H6+H7 — a real NLE, not a mock, through the real filter |
 | W4 | B's Blender save uploads; A's view converges byte-identically | H4's shape: cross-device re-read of an NLE-written file |
 | W5 | deterministic divergence (B offline-edit vs A live-edit, daemon restart) | H9: ONE conflict copy, BOTH versions recoverable, spec naming |
