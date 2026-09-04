@@ -669,13 +669,13 @@ kbd {
 .keys-full { list-style: none; display: grid; gap: 7px; }
 .keys-full li {
   display: grid;
-  grid-template-columns: 118px 1fr;
+  grid-template-columns: 150px 1fr;
   align-items: baseline;
   gap: 12px;
   font-size: 12.5px;
   color: #98918a;
 }
-.keys-full .k { color: #ece7df; white-space: nowrap; }
+.keys-full .k { color: #ece7df; line-height: 2.1; }
 .keys-full kbd {
   font-family: inherit;
   font-size: 10.5px;
