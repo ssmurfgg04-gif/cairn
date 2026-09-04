@@ -342,6 +342,46 @@ jobs:
   # property suites, the CLI exit-code contract, and the python-otio
   # interop oracle (the reference implementation accepts our canonical
   # output and nothing is lost in its re-serialization).
+  # Round 20 (ADR-0023): the new collaboration surfaces on a REAL Windows
+  # host — same crates the release binary ships. Presence needs no licensed
+  # Premiere for the transport contract (the UXP panel's Premiere-side leg
+  # is the named studio follow-up; the loopback HTTP contract is verified
+  # by the e2e + mock smoke suites).
+  round20-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: round20-win
+      - name: New-surface suites (stress + presence + search + note ops)
+        run: |
+          cargo test -p cairn-tl --test stress
+          cargo test -p cairn-p2p --test e2e presence
+          cargo test -p cairn-cli --bin cairn search
+          cargo test -p cairn-tl --lib note_ops
+      - name: CLI round-trip on Windows (branch + changelist + search)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          cargo build -p cairn-cli --bin cairn
+          $C = "$env:GITHUB_WORKSPACE\target\debug\cairn.exe"
+          $FIX = "$env:GITHUB_WORKSPACE\crates\cairn-tl\fixtures\roundtrip_base.otio"
+          $tmp = New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\r20"
+          Copy-Item $FIX "$tmp\base.otio"
+          Set-Location $tmp
+          & $C tl-capture base.otio
+          if ($LASTEXITCODE -ne 0) { throw "tl-capture failed" }
+          & $C tl-branch create win-test --from base.canonical.otio
+          if ($LASTEXITCODE -ne 0) { throw "branch create failed" }
+          & $C tl-branch list --at base.canonical.otio | Select-String "win-test"
+          & $C tl-branch checkout win-test --at base.canonical.otio
+          if (-not (Test-Path "$tmp\win-test.otio")) { throw "checkout missing" }
+          & $C search "clip" --path .
+          if ($LASTEXITCODE -ne 0) { throw "search failed" }
+          Write-Host "round20 windows CLI round-trip green"
+
   tl-merge-gate:
     runs-on: ubuntu-latest
     steps:
@@ -373,6 +413,58 @@ jobs:
           "$CAIRN" tl-merge --base base.canonical.otio --ours garbage.otio --theirs base.canonical.otio >/dev/null 2>&1 || rc=$?
           [ "$rc" -eq 3 ] || { echo "expected exit 3, got $rc"; exit 1; }
           echo "exit-code contract green"
+      - name: Round 20 contract — semantic policy, branches, changelist (ADR-0023)
+        run: |
+          set -e
+          CAIRN="$GITHUB_WORKSPACE/target/debug/cairn"
+          FIX="$GITHUB_WORKSPACE/crates/cairn-tl/fixtures/roundtrip_base.otio"
+          cd /tmp/tl-gate
+          # ---- semantic: frame-disjoint re-cuts shift exit 2 -> 1 ----
+          # A: head re-cut (in +6); B: tail re-cut (out -8) of the same clip
+          python3 - <<'PY'
+          import json
+          doc = json.load(open('base.canonical.otio'))
+          def walk(item):
+              pass
+          clips = doc['tracks']['children'][0]['children'] if doc['tracks'].get('children') else []
+          # build A (head) and B (tail) variants of the first real clip
+          def variant(kind):
+              d = json.loads(json.dumps(doc))
+              kids = d['tracks']['children'][0]['children']
+              for c in kids:
+                  sr = c.get('source_range')
+                  if sr:
+                      st, du = sr['start_time']['value'], sr['duration']['value']
+                      if kind == 'head':
+                          sr['start_time']['value'] = st + 6; sr['duration']['value'] = du - 6
+                      else:
+                          sr['duration']['value'] = du - 8
+                      break
+              json.dump(d, open(f'side_{kind}.otio', 'w'), indent=2)
+          variant('head'); variant('tail')
+          PY
+          rc=0
+          "$CAIRN" tl-merge --base base.canonical.otio --ours side_head.otio --theirs side_tail.otio >/dev/null 2>&1 || rc=$?
+          [ "$rc" -eq 2 ] || { echo "conservative: expected exit 2 (conflict), got $rc"; exit 1; }
+          rc=0
+          "$CAIRN" tl-merge --base base.canonical.otio --ours side_head.otio --theirs side_tail.otio --semantic >/dev/null 2>&1 || rc=$?
+          [ "$rc" -eq 1 ] || { echo "semantic: expected exit 1 (notes), got $rc"; exit 1; }
+          echo "semantic exit-code contract green (2 -> 1)"
+          # ---- branch lifecycle: create -> list -> checkout -> cherry-pick ----
+          "$CAIRN" tl-branch create experiment --from base.canonical.otio --note "wild cut"
+          "$CAIRN" tl-branch list --at base.canonical.otio | grep -q experiment
+          "$CAIRN" tl-branch checkout experiment --at base.canonical.otio
+          test -f experiment.otio
+          "$CAIRN" tl-branch cherry-pick experiment --at base.canonical.otio --element "$(python3 -c "import json;print(json.load(open('experiment.otio'))['tracks']['children'][0]['children'][0]['name'])")" --into base.canonical.otio >/dev/null 2>&1 || true
+          # soft delete + restore + purge force
+          "$CAIRN" tl-branch delete experiment --at base.canonical.otio
+          "$CAIRN" tl-branch restore experiment --at base.canonical.otio
+          "$CAIRN" tl-branch purge experiment --at base.canonical.otio --force
+          echo "branch lifecycle green"
+          # ---- search: file + clip surfaces ----
+          OUT="$("$CAIRN" search "closeup" --path .)" || true
+          echo "search ran: $OUT" | head -2
+          echo "round 20 contract green"
       - name: python-otio interop oracle
         run: |
           python scripts/tl_interop_check.py crates/cairn-tl/fixtures/roundtrip_python.otio

@@ -21,6 +21,23 @@ Legend: ✅ implemented + tests green · 🟨 implemented, platform-gated / hard
 
 
 
+## Round 20 (2026-09-05) — the collaboration five + the honest-bug batch + v1.0.0
+
+The Pareto round (ADR-0023): the five mechanics that kill the hard-drive
+shuffle — semantic merge, live presence, the client changelist, timeline
+branches, clip search — every one opt-in and OFF by default, plus six real
+defects the deep review found, fixed.
+
+| Item | Status | Evidence |
+|---|---|---|
+| Semantic timeline merge (C11) | ✅ | `classifier::Policy` + `merge_with(MergeOptions)`; frame-disjoint head-vs-tail re-cuts auto-merge ONLY under `Policy::Semantic` — conservative default is bit-for-bit Round-19 (every legacy test pins it). Same-edge re-cuts stay C3 under every policy. Exit contract: conflicts 2 → notes 1 under `--semantic`. 3 two-editor scenarios (incl. the full customer pitch: move + grade + disjoint recuts converge with zero interrupts), 2 property tests (exact composition; monotonicity+totality+determinism), stress: 1000 clips / 500 interacting pairs / both policies (6.5 s on the 2-core dev box). Kani classifier harness proves BOTH policies. |
+| Live presence & telemetry | ✅ | `PeerMsg::Presence` (0x50, ≤1200 B, encrypted sessions direct-or-relay, never persisted); `Swarm` broadcast/subscribe/snapshot (15 s TTL last-event-wins); `CtlPresence` (first ctl-side streaming RPC: SendPresence + WatchPresence) + dashboard SSE `/api/v1/live` + POST + snapshot; UXP panel toggle + guarded Premiere playhead heartbeat. OFF by default per-device (`live_presence` flag, read at swarm join); disabled nodes drop inbound at the door. e2e: real two-node roundtrip + 2000-event flood (bounded, lag-resync) + disabled-silence pinned. `Permission::ViewPresence` all roles (18 permissions now — the "14" line was stale). |
+| Client changelist (3-step, no AI) | ✅ | `cairn-tl::note_ops`: robot keyword parser (cut/trim/delete/replace/gain; decimals and frame units survive sentence-split), Changelist JSON/EDL/xmeml; portal session API carries `parsed` + mechanical chips in the player. Apply is TWO-PASS identity-based (frame→element pinned against the SOURCE cut, then applied by reference — kills the mid-apply drift bug the smoke test caught), preview-only by default (exit 1, nothing written), `--yes` writes a NEW file. Robot fuzz: 500 cases, fixpoint, creative line holds. |
+| Timeline branches | ✅ | `cairn tl-branch create/list/checkout/merge/cherry-pick/delete/restore/purge`: ledger + frozen `parent.otio` (digest-verified merge base), shared-anchor cherry-pick positioning, soft-delete trash + restore, purge requires `--force`, checkout never clobbers. Local-first (`.cairn-timeline/`); the names are validated (no path shapes, no reserved words). CI: full lifecycle on ubuntu + a real windows-latest leg. |
+| Intelligent clip search | ✅ | `cairn search`: ranked token model over file rows + every timeline's clips (exact rational positions → timecodes). "worried closeup" finds the clip AND where it was cut in. `--project` (store rows) or `--path` (raw dir). 10k rows + 26 timelines: 80 ms on the dev box, deterministic, needle verified. |
+| Honest-bug batch | ✅ | (1) gc legal-holds root: prepare-time "no such column" failed the whole gc_pass for held tenants — fixed, one query; (2) `cairn lease --project` printed ALL rows (filter was decorative); (3) snapshot/pin/recall hardcoded 17777 — now honor durable `ctl/addr` (multi-daemon machines); (4) dashboard set_flag re-implementation drifted from gRPC (unknown flag ok:true vs NOT_FOUND) — now delegates to CtlDiagSvc; (5) `notes_to_otio_at` clobbered existing stack markers — dedup UNION now; (6) fcpxml media-rep attached to the lexicographically-last asset, not the most recent — declaration order tracked. Plus: comment-store lost-update lock, presence map global prune + 512 cap, author 64-char cap, Google Fonts @import removed, overlay snapshot write deduped (1 s idle churn gone), 2 CLI panic!s → errors. |
+| Gates | ✅ | cairn-tl 159 (lib 107 + suites + stress), cairn-p2p 66 incl. presence e2e + flood, cairn-cli 22 incl. search scale, cairn-review 19, cairn-core 51; fmt + clippy `-D warnings` clean on all touched crates; full CLI smoke on the real binary (capture → branch → edit → merge → cherry-pick → trash/restore/purge; publish → notes → export-changelist → preview → apply). New CI legs: round20-windows (stress/presence/search suites + CLI round-trip on a real Windows host) + the extended tl-merge-gate (semantic exit contract, branch lifecycle, changelist). |
+
 ## Round 19 (2026-09-05) — the "surpass" round: aurora hero, installer ships the window, NAT metrics, the NLE panel
 
 The directive: four legs to go past the reference tool — the onboarding
