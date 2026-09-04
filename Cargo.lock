@@ -313,6 +313,7 @@ dependencies = [
  "cairn-fs-win",
  "cairn-p2p",
  "cairn-proto",
+ "cairn-proxy",
  "cairn-review",
  "cairn-server",
  "cairn-shell-ext",
@@ -347,6 +348,7 @@ dependencies = [
  "proptest",
  "rand 0.8.8",
  "serde",
+ "serde_json",
  "tempfile",
  "thiserror 2.0.20",
  "unicode-normalization",
@@ -411,6 +413,17 @@ dependencies = [
  "serde_json",
  "tonic",
  "tonic-build",
+]
+
+[[package]]
+name = "cairn-proxy"
+version = "4.0.0"
+dependencies = [
+ "blake3",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tracing",
 ]
 
 [[package]]
