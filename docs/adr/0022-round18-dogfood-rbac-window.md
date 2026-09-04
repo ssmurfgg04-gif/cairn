@@ -139,6 +139,20 @@ file association (never a hard-coded NLE path).
   WAN runbook assumes a VPS for signal+relay (~$5/mo, bandwidth-metered)
   — direct WAN punch is best-effort by NAT class and the relay is the
   floor, not the exception.
+* The round's own CI landing caught a REAL convergence defect the sim
+  never modeled: a stat-only drift (mtime moves, content does not) made
+  the §7.1 guard refuse a remote upsert and consume it with no
+  re-delivery — the device held its old head forever, silently, with no
+  conflict copy (nle-matrix W4, one firing in ~7 runs, timing race).
+  apply_entry no longer clobbers the row's disk stat on same-manifest
+  no-op replays (that clobber FAKED the drift), and process_file
+  short-circuits identical-content re-hashes into the fork-point
+  re-delivery (the conflict_copy mechanism, minus the copy). The exact
+  on-runner toucher for the observed firing is unidentified (CfAPI
+  placeholder conversion and metadata-normalizing I/O are the
+  candidates) — the fix makes ANY stat-only touch converge, which is
+  the property the guard needed all along. Two regression tests pin
+  both halves.
 * Honest ledger for next round: live Resolve import of the exported
   FCP7/OTIO markers (a human run), the cairn-app NSIS build + tray
   launch wiring on a real Windows box, `cairn update check` writing the

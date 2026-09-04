@@ -81,8 +81,22 @@ pub fn apply_entry(
             // conflict rule resolves at append time (§7.1). Otherwise the remote manifest
             // becomes authoritative: a fresh row or a stale local copy is a PLACEHOLDER
             // that the hydrator materializes (missing or overwritten on disk).
+            // Row-stat provenance (round 18, the W4 catch): `mtime` is
+            // informational for rows that have never touched this disk
+            // (fresh placeholders, renames), but the round-13 §7.1 guard
+            // COMPARES it against the live disk stat -- so any arm that
+            // describes content this device already has on disk MUST carry
+            // the row's own recorded stat, not the server's ts/size. The
+            // shared-put below used to clobber `mtime` with `server_ts` on
+            // every apply: replaying our OWN upsert (same manifest, no-op)
+            // replaced the row's push-time disk stat with the server
+            // timestamp, and the next remote-differing upsert then read as
+            // "stat drifted" -- a spurious undiscovered-local-edit that
+            // refused the remote and diverged forever (Windows-matrix W4,
+            // timing-dependent: fires only when the remote lands before the
+            // next scan re-records the stat).
             let mut takes_remote = true;
-            let local_state = match store.get_file(project_id, &u.path) {
+            let (local_state, row_size, row_mtime) = match store.get_file(project_id, &u.path) {
                 Some(e)
                     if matches!(
                         LocalState::parse(&e.local_state),
@@ -98,12 +112,22 @@ pub fn apply_entry(
                         mark_fork(store, project_id, &u.path, entry.seq)?;
                         takes_remote = false;
                     }
-                    e.local_state.clone()
+                    (e.local_state.clone(), e.size, e.mtime)
                 }
                 Some(e) if e.manifest_hash.as_deref() == Some(u.manifest_hash.as_str()) => {
-                    e.local_state.clone()
+                    // no-op replay (own entry, or identical bytes from a peer):
+                    // keep the row's OWN stat -- it is the local truth the §7.1
+                    // guard compares; a server_ts here fakes a drift
+                    (e.local_state.clone(), e.size, e.mtime)
                 }
-                _ => LocalState::Placeholder.as_str().into(),
+                // fresh or stale-local row: the remote manifest is authoritative;
+                // size/mtime stay informational until materialization records
+                // the real disk stat (I4)
+                _ => (
+                    LocalState::Placeholder.as_str().into(),
+                    u.size,
+                    entry.server_ts,
+                ),
             };
             if takes_remote {
                 // the row (and, after materialization, the disk) now descends from
@@ -114,9 +138,9 @@ pub fn apply_entry(
                 path: u.path.clone(),
                 project_id: project_id.into(),
                 manifest_hash: Some(u.manifest_hash.clone()),
-                size: u.size,
+                size: row_size,
                 mode: "file".into(),
-                mtime: entry.server_ts, // informational only (I4)
+                mtime: row_mtime,
                 local_state,
             })?;
         }
@@ -373,6 +397,63 @@ mod tests {
         apply_entry(&store, "p1", "me", &entry(upsert("gone.txt", "v2", 8), 5)).unwrap();
         let row = store.get_file("p1", "gone.txt").unwrap();
         assert_eq!(row.local_state, LocalState::Placeholder.as_str());
+        assert_eq!(row.manifest_hash.as_deref(), Some("v2"));
+    }
+
+    // ---------- row-stat provenance (round 18, the Windows-matrix W4 catch) ----------
+    //
+    // The pull phase skips OWN-device ops (see own_op_livelock), but a REMOTE
+    // same-manifest upsert -- identical bytes re-asserted by a peer (the
+    // re-materialize + re-append shape a cold re-attach produces) -- still
+    // goes through apply_entry. The shared put_file used to write
+    // mtime=server_ts there, clobbering the row's push-time DISK stat. The
+    // very next remote-differing upsert then read as "stat drifted" at the
+    // §7.1 guard: a spurious undiscovered-local-edit that refused the remote
+    // and diverged silently (A held v1 forever, B held v2, no conflict copy).
+
+    #[test]
+    fn remote_same_manifest_replay_preserves_row_stat() {
+        let ws = tempfile::tempdir().unwrap();
+        let store = Store::open(ws.path(), Arc::new(WallClock)).unwrap();
+        crate::workspace::set_workspace(&store, "p1", ws.path()).unwrap();
+        let f = ws.path().join("probe.txt");
+        std::fs::write(&f, b"seed").unwrap();
+        let st = std::fs::metadata(&f).unwrap();
+        let disk_mtime = crate::scan::mtime_millis(&st);
+        store
+            .put_file(&FileRow {
+                path: "probe.txt".into(),
+                project_id: "p1".into(),
+                manifest_hash: Some("v1".into()),
+                size: st.len(),
+                mode: "file".into(),
+                mtime: disk_mtime,
+                local_state: LocalState::Synced.as_str().into(),
+            })
+            .unwrap();
+
+        // a peer re-asserts the SAME bytes (same manifest): a no-op content-wise,
+        // carrying a fresh server_ts that must NOT be written into the row
+        apply_entry(&store, "p1", "me", &entry(upsert("probe.txt", "v1", 4), 5)).unwrap();
+
+        let row = store.get_file("p1", "probe.txt").unwrap();
+        assert_eq!(
+            row.mtime, disk_mtime,
+            "no-op replay must keep the disk stat"
+        );
+        assert_eq!(row.size, st.len());
+        assert_eq!(row.local_state, LocalState::Synced.as_str());
+        assert_eq!(row.manifest_hash.as_deref(), Some("v1"));
+
+        // THE W4 SHAPE: the next remote-differing upsert must apply cleanly
+        // (no spurious drift -> no refusal -> the row takes the remote head)
+        apply_entry(&store, "p1", "me", &entry(upsert("probe.txt", "v2", 9), 6)).unwrap();
+        let row = store.get_file("p1", "probe.txt").unwrap();
+        assert_eq!(
+            row.local_state,
+            LocalState::Placeholder.as_str(),
+            "the guard must NOT fire on a stat the replay preserved"
+        );
         assert_eq!(row.manifest_hash.as_deref(), Some("v2"));
     }
 }
