@@ -10,12 +10,15 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use cairn_core::clock::WallClock;
+use cairn_core::hash::Hash;
 use cairn_core::pathutil::nfc_normalize;
 use cairn_core::{CairnError, ErrorKind};
+use cairn_p2p::swarm::{ServeBlocks, Swarm, SwarmConfig};
 use cairn_proto::pb::project_client::ProjectClient;
 use cairn_proto::pb::{CreateProjectRequest, GetProjectRequest};
 use cairn_store::state::LocalState;
 use cairn_store::{Cas, HeaderCache, Outbox, Store};
+use cairn_sync::peer::PeerSource;
 use cairn_sync::plane::Plane;
 use cairn_sync::plane_grpc::GrpcPlane;
 use cairn_sync::workspace::{set_workspace, workspace_dir};
@@ -97,6 +100,9 @@ pub struct ProjectRuntime {
     /// Monotonic sweep counter — rotates the bounded rehash sample so successive
     /// sweeps cover different files (full coverage over time, bounded cost per sweep).
     sweep_counter: AtomicU64,
+    /// The project's swarm node (ADR-0017), lazily joined when the daemon runs
+    /// with `--swarm-signal`; reused across sync-loop restarts, shut down on stop.
+    pub swarm: Mutex<Option<Swarm>>,
     abort: tokio::sync::watch::Sender<bool>,
 }
 
@@ -133,7 +139,119 @@ impl ProjectRuntime {
 
     pub fn stop(&self) {
         let _ = self.abort.send(true);
+        // stopping the project also leaves its swarm (the Swarm handle is
+        // clone-safe; shutdown is idempotent)
+        if let Some(swarm) = blocking_swarm(&self.swarm) {
+            swarm.shutdown();
+        }
     }
+}
+
+fn blocking_swarm(slot: &Mutex<Option<Swarm>>) -> Option<Swarm> {
+    // stop() is sync — a try_lock is fine here (the loop only holds this lock
+    // briefly while joining; contention is not a stop-path concern)
+    slot.try_lock().ok().and_then(|g| g.clone())
+}
+
+// ---- swarm bridge (ADR-0017 §7) --------------------------------------------------
+
+/// The local CAS as the swarm's serving set.
+struct CasServeBlocks {
+    cas: Cas,
+}
+
+impl ServeBlocks for CasServeBlocks {
+    fn block_bytes(&self, h: &Hash) -> Option<Vec<u8>> {
+        self.cas.get(h).ok()
+    }
+    fn owned_hashes(&self) -> Vec<Hash> {
+        self.cas.list_hashes()
+    }
+    fn owned_count(&self) -> u64 {
+        // blob_stats' COUNT(*) — no full enumeration on the hot path
+        self.cas.blob_stats().map(|(c, _, _, _)| c).unwrap_or(0)
+    }
+}
+
+/// A live swarm as hydration's PeerSource.
+struct SwarmPeerSource {
+    swarm: Swarm,
+}
+
+#[async_trait::async_trait]
+impl PeerSource for SwarmPeerSource {
+    fn peer_may_have(&self, h: &Hash) -> bool {
+        self.swarm.may_have(h)
+    }
+    async fn fetch_peer_block(&self, h: &Hash) -> Option<Vec<u8>> {
+        // generous budget: the warm pre-walk already scheduled the fetch, and
+        // an in-flight transfer can legitimately take seconds on slow links
+        self.swarm.fetch_block(h, Duration::from_secs(10)).await
+    }
+    async fn warm_blocks(&self, hashes: &[Hash]) {
+        // sync underneath (state-lock only) — the async surface stays for
+        // the trait contract
+        self.swarm.warm_blocks(hashes);
+    }
+}
+
+/// Join (or reuse) this project's swarm. `None` when the daemon was not
+/// started with a signal address (swarm disabled — the plain plane path).
+async fn ensure_swarm(
+    rt: &Arc<ProjectRuntime>,
+    store: &Store,
+    identity: &Identity,
+) -> Option<Swarm> {
+    let signal = store.meta_get("swarm/signal").filter(|s| !s.is_empty())?;
+    // Admission (ADR-0017 §7): a stored join code (parse + KDF-derive the
+    // cluster key) is the primary path; the legacy raw-key slot survives
+    // only for dev-key smoke runs written by older daemons.
+    let cluster_key: Vec<u8> = match store.meta_get("swarm/join-code").filter(|s| !s.is_empty()) {
+        Some(raw) => match cairn_p2p::JoinCode::parse(&raw) {
+            Ok(code) => code.cluster_key().to_vec(),
+            Err(e) => {
+                // fail closed, loudly: a corrupted stored code must never
+                // silently fall back to a key that admits nobody
+                tracing::warn!("stored swarm join code is invalid ({e}); swarm disabled");
+                return None;
+            }
+        },
+        None => store
+            .meta_get("swarm/key")
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "cairn-dev-swarm-key".to_string())
+            .into_bytes(),
+    };
+    let mut slot = rt.swarm.lock().await;
+    if let Some(existing) = slot.as_ref() {
+        return Some(existing.clone());
+    }
+    let signal_addr: std::net::SocketAddr = signal.parse().ok()?;
+    let serving = Arc::new(CasServeBlocks {
+        cas: Cas::open(&store.root().join("blobs"), store.conn_handle()).ok()?,
+    });
+    let swarm = Swarm::spawn(
+        SwarmConfig {
+            bind: "0.0.0.0:0".parse().expect("static"),
+            signal: signal_addr,
+            cluster_key,
+            project: format!("{}:{}", identity.tenant_id, rt.project_id),
+            node_id: Some(identity.device_id.clone()),
+            stun: None,
+            force_relay: false,
+        },
+        serving,
+    )
+    .await
+    .ok()?;
+    tracing::info!(
+        project = %rt.project_id,
+        node = %swarm.node_id(),
+        local = %swarm.local_addr(),
+        "swarm joined (peer-first hydration active)"
+    );
+    *slot = Some(swarm.clone());
+    Some(swarm)
 }
 
 /// Attach a root: validate, bind workspace, ensure the project exists server-side, spawn
@@ -216,6 +334,7 @@ pub async fn attach(
         rescan_requested: AtomicBool::new(false),
         files_synced: AtomicU64::new(0),
         sweep_counter: AtomicU64::new(0),
+        swarm: Mutex::new(None),
         abort: tokio::sync::watch::channel(false).0,
     });
     RUNTIMES.write().await.insert(pid.clone(), Arc::clone(&rt));
@@ -533,6 +652,12 @@ async fn run_loop(
         gate: Gate::default(),
     };
 
+    // swarm join (ADR-0017): peer-first hydration when the daemon runs with
+    // --swarm-signal. Failure to join is NON-FATAL — the plane path is the
+    // fallback everywhere (None = plane-only, exactly the pre-swarm behavior)
+    let swarm = ensure_swarm(rt, store, identity).await;
+    let swarm_source: Option<SwarmPeerSource> = swarm.map(|s| SwarmPeerSource { swarm: s });
+
     // local-edit watcher: settled paths → dirty (suppress hydration echoes)
     let (wtx, wrx) = std::sync::mpsc::channel::<cairn_sync::watch::QuiescedEvent>();
     let _watcher = cairn_sync::watch::watch(&rt.workspace, wtx)?;
@@ -729,8 +854,10 @@ async fn run_loop(
             }
         }
         let pass = engine.sync_pass().await;
+        let peer_ref: Option<&dyn PeerSource> = swarm_source.as_ref().map(|s| s as &dyn PeerSource);
         let hydr = hydrate::materialize_missing(
             engine.plane.as_ref(),
+            peer_ref,
             store,
             &engine.cas,
             &engine.headers,

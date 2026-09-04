@@ -23,6 +23,21 @@ use tonic::{Request, Response, Status};
 use crate::doctor;
 use crate::projects;
 
+/// Daemon-wide swarm options (ADR-0017): the signal server to rendezvous
+/// through + the join code the host shared (swarm admission, §7).
+#[derive(Clone)]
+pub struct SwarmOpts {
+    /// Signal server `host:port`.
+    pub signal: String,
+    /// The host-shared join code. `None` = the well-known dev-key path
+    /// (smoke tests only; pairs with `cairn signal --dev-key`).
+    ///
+    /// Not `Debug`-printed: a join code is a credential. (JoinCode's own
+    /// Debug renders it — acceptable for a host-side shareable — but opts
+    /// structs end up in generic debug logs, so we stay manual.)
+    pub join_code: Option<cairn_p2p::JoinCode>,
+}
+
 /// Shared daemon state.
 pub struct DaemonState {
     /// Data directory.
@@ -247,12 +262,51 @@ impl CtlDiagnostics for CtlDiagSvc {
 /// Run the daemon (M1 skeleton: ctl status/diagnostics live; project services attach at M4;
 /// dashboard at UI phase; the process is SIGTERM/SIGKILL-safe by construction — all state is
 /// durable in the client store before any ack).
-pub async fn run(home: PathBuf, ctl_addr: String, ui_addr: String) -> anyhow::Result<()> {
+///
+/// `swarm` (ADR-0017): when set, every attached project joins the signal server's
+/// swarm and hydration goes peer-first (LAN blocks before cloud egress).
+pub async fn run(
+    home: PathBuf,
+    ctl_addr: String,
+    ui_addr: String,
+    swarm: Option<SwarmOpts>,
+) -> anyhow::Result<()> {
     let state = Arc::new(DaemonState::new(home));
     // persist the ctl endpoint so CLI status/attach in THIS home find the right daemon
     // (multi-daemon machines run several ctl ports; 17777 is only the default)
     if let Ok(store) = cairn_store::Store::open(&state.home, Arc::new(WallClock)) {
         let _ = store.meta_set("ctl/addr", &format!("http://{ctl_addr}"));
+        // swarm opts are daemon-wide and durable: loop restarts rejoin without
+        // re-passing flags (same meta pattern as ctl/addr). The join code is
+        // stored in its normalized display form so `JoinCode::parse` accepts
+        // it on the rejoin path. It is a credential and this home is
+        // user-private (device tokens live here too) — never logged.
+        match &swarm {
+            Some(SwarmOpts { signal, join_code }) => {
+                let _ = store.meta_set("swarm/signal", signal);
+                match join_code {
+                    Some(code) => {
+                        let _ = store.meta_set("swarm/join-code", &code.display());
+                        // clear the legacy raw-key slot so it can never shadow
+                        // the code on the read path
+                        let _ = store.meta_set("swarm/key", "");
+                    }
+                    None => {
+                        let _ = store.meta_set("swarm/join-code", "");
+                        let _ = store.meta_set("swarm/key", "cairn-dev-swarm-key");
+                    }
+                }
+                tracing::info!(
+                    signal = %signal,
+                    "swarm transport enabled (join-code gated, peer-first hydration)"
+                );
+            }
+            None => {
+                let _ = store.meta_set("swarm/signal", "");
+                let _ = store.meta_set("swarm/join-code", "");
+                let _ = store.meta_set("swarm/key", "");
+            }
+        }
     }
     tracing::info!(ctl_addr = %ctl_addr, ui_addr = %ui_addr, "cairn daemon starting");
 
@@ -640,6 +694,7 @@ impl CtlSnapshots for CtlSnapshotsSvc {
                 .map_err(|e| Status::internal(format!("restore {path}: {e}")))?;
             let written = match cairn_sync::hydrate::hydrate_one_into(
                 plane.as_ref(),
+                None, // snapshot restore: plane only (no swarm plumbing here yet)
                 &cas,
                 &tenant,
                 manifest_hex,
@@ -899,6 +954,7 @@ async fn recall_paths_simple(
             // RAM stays bounded by one chunk regardless of file size (review round)
             let _ = cairn_sync::hydrate::hydrate_one_into(
                 plane.as_ref(),
+                None, // recall warms from the plane; swarm blocks land as a side effect
                 &cas,
                 &id.tenant_id,
                 &hex,

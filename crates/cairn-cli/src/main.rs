@@ -211,6 +211,48 @@ pub enum Cmd {
         /// Report only: do not write the merged document
         #[arg(long)]
         dry_run: bool,
+        /// Explicit output path (default: <ours>.merged.otio)
+        #[arg(long)]
+        out: Option<String>,
+    },
+    /// Round-trip audit (ADR-0018): verify a timeline that traveled through
+    /// another NLE kept its clips, durations, effects, markers — the
+    /// broken-speed-ramp / dropped-title detector. Exit 1 on any LOSS.
+    TlVerify {
+        /// The timeline BEFORE the round-trip
+        #[arg(long)]
+        base: String,
+        /// What came back from the other NLE
+        #[arg(long)]
+        roundtrip: String,
+        /// Machine-readable JSON report
+        #[arg(long)]
+        json: bool,
+    },
+    /// Review notes (ADR-0018): frame-anchored, three-way mergeable,
+    /// CSV-interop with review tools (the scattered-feedback fix)
+    Notes {
+        #[command(subcommand)]
+        cmd: notes::NotesCmd,
+    },
+    /// Bin-lock a path (ADR-0014 local pen): claim write authority so other
+    /// editors see "locked by <device>" — no silent automatic merges
+    Lock {
+        /// Project id
+        #[arg(long)]
+        project: String,
+        /// Project-relative path (or a directory prefix)
+        #[arg(long)]
+        path: String,
+    },
+    /// Release a bin-lock
+    Unlock {
+        /// Project id
+        #[arg(long)]
+        project: String,
+        /// Project-relative path
+        #[arg(long)]
+        path: String,
     },
     /// Run the local daemon (ctl gRPC :17777 + dashboard :17778)
     Daemon {
@@ -220,7 +262,93 @@ pub enum Cmd {
         /// Bind address for the local dashboard (loopback only, ADR-0009)
         #[arg(long, default_value = "127.0.0.1:17778")]
         ui_addr: String,
+        /// Signal server (ADR-0017) — join every project's swarm for
+        /// peer-first hydration (LAN-speed blocks, zero cloud egress)
+        #[arg(long)]
+        swarm_signal: Option<String>,
+        /// Join code the swarm host shared with you (ADR-0017 §7). Required
+        /// with --swarm-signal: nodes without the code are locked out.
+        #[arg(long)]
+        swarm_join_code: Option<String>,
+        /// Use the well-known dev key instead of a join code (smoke tests
+        /// only; pairs with `cairn signal --dev-key`)
+        #[arg(long)]
+        swarm_dev_key: bool,
     },
+    /// Run the P2P signal server + relay (ADR-0017): the lightweight
+    /// rendezvous directory nodes register business cards with, plus the
+    /// encrypted pass-through relay for punch-proof firewalls. Never stores
+    /// or reads media blocks.
+    ///
+    /// The swarm is join-code gated: a fresh code is generated and printed
+    /// unless --join-code pins one — share it only with people who may join
+    /// (everyone else is dropped silently, ADR-0017 §7).
+    Signal {
+        /// UDP bind for the signal directory
+        #[arg(long, default_value = "0.0.0.0:17780")]
+        bind: String,
+        /// UDP bind for the relay
+        #[arg(long, default_value = "0.0.0.0:17781")]
+        relay_bind: String,
+        /// Host with THIS join code (validated; peers must present the same
+        /// code). Default: generate a fresh code and print it.
+        #[arg(long)]
+        join_code: Option<String>,
+        /// Use the well-known dev key instead of a join code (smoke tests
+        /// only; pairs with `cairn daemon --swarm-dev-key`)
+        #[arg(long)]
+        dev_key: bool,
+    },
+}
+
+pub mod notes {
+    use clap::Subcommand;
+
+    #[derive(Subcommand)]
+    pub enum NotesCmd {
+        /// Import a review-tool CSV (Frame.io export etc.) into a notes file
+        Import {
+            /// CSV file to import
+            csv: String,
+            /// Output .notes.json (default: <csv stem>.notes.json)
+            #[arg(long)]
+            out: Option<String>,
+            /// Author for rows with no author column
+            #[arg(long, default_value = "unknown")]
+            author: String,
+            /// Default frame rate when the CSV has none
+            #[arg(long, default_value = "24")]
+            rate: i64,
+        },
+        /// List the notes in a .notes.json file
+        List {
+            /// Notes file
+            file: String,
+        },
+        /// Export a notes file to CSV (for review tools / spreadsheets)
+        Export {
+            /// Notes file
+            file: String,
+            /// Output CSV (default: stdout)
+            #[arg(long)]
+            out: Option<String>,
+        },
+        /// Three-way merge notes files (deterministic; conflicts reported)
+        Merge {
+            /// Base notes file (common ancestor)
+            #[arg(long)]
+            base: String,
+            /// Our side
+            #[arg(long)]
+            ours: String,
+            /// Their side
+            #[arg(long)]
+            theirs: String,
+            /// Output merged notes file (default: <ours>.merged.notes.json)
+            #[arg(long)]
+            out: Option<String>,
+        },
+    }
 }
 
 pub mod snapshot {
@@ -301,14 +429,71 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))
         }
-        Cmd::Daemon { ctl_addr, ui_addr } => daemon::run(home, ctl_addr, ui_addr).await,
+        Cmd::Daemon {
+            ctl_addr,
+            ui_addr,
+            swarm_signal,
+            swarm_join_code,
+            swarm_dev_key,
+        } => {
+            let swarm = match swarm_signal {
+                None => None,
+                Some(signal) => {
+                    if swarm_dev_key {
+                        if swarm_join_code.is_some() {
+                            return Err(anyhow::anyhow!(
+                                "--swarm-dev-key and --swarm-join-code are mutually exclusive"
+                            ));
+                        }
+                        tracing::warn!(
+                            "--swarm-dev-key: using the well-known DEV key (smoke tests ONLY)"
+                        );
+                        Some(daemon::SwarmOpts {
+                            signal,
+                            join_code: None,
+                        })
+                    } else {
+                        let code = match swarm_join_code.as_deref() {
+                            Some(c) => cairn_p2p::JoinCode::parse(c)
+                                .map_err(|e| anyhow::anyhow!("--swarm-join-code: {e}"))?,
+                            None => {
+                                return Err(anyhow::anyhow!(
+                                    "--swarm-signal requires --swarm-join-code — the code the \
+                                     swarm host shared with you (or --swarm-dev-key for smoke tests)"
+                                ))
+                            }
+                        };
+                        Some(daemon::SwarmOpts {
+                            signal,
+                            join_code: Some(code),
+                        })
+                    }
+                }
+            };
+            daemon::run(home, ctl_addr, ui_addr, swarm).await
+        }
+        Cmd::Signal {
+            bind,
+            relay_bind,
+            join_code,
+            dev_key,
+        } => run_signal_server(&bind, &relay_bind, join_code, dev_key).await,
         Cmd::TlCapture { path, in_place } => run_tl_capture(&path, in_place),
         Cmd::TlMerge {
             base,
             ours,
             theirs,
             dry_run,
-        } => run_tl_merge(&base, &ours, &theirs, dry_run),
+            out,
+        } => run_tl_merge(&base, &ours, &theirs, dry_run, out.as_deref()),
+        Cmd::TlVerify {
+            base,
+            roundtrip,
+            json,
+        } => run_tl_verify(&base, &roundtrip, json),
+        Cmd::Notes { cmd } => run_notes(cmd),
+        Cmd::Lock { project, path } => run_lock(&home, &project, &path),
+        Cmd::Unlock { project, path } => run_unlock(&home, &project, &path),
         Cmd::Status { json } => {
             // live daemon view first (projects + files_synced); doctor fallback offline.
             // ctl endpoint comes from the home store (daemon persists it at boot), so
@@ -687,6 +872,103 @@ async fn ctl_attach(
 // · 3 refused (C10 — no output touched).
 // ---------------------------------------------------------------------------
 
+/// How this signal server authenticates swarm members (ADR-0017 §7).
+enum Admission {
+    /// A join code: generated fresh or pinned via `--join-code`.
+    JoinCode(cairn_p2p::JoinCode),
+    /// The well-known dev key (smoke tests only — pairs with
+    /// `cairn daemon --swarm-dev-key`).
+    DevKey,
+}
+
+impl Admission {
+    fn cluster_key(&self) -> Vec<u8> {
+        match self {
+            Admission::JoinCode(code) => code.cluster_key().to_vec(),
+            Admission::DevKey => b"cairn-dev-swarm-key".to_vec(),
+        }
+    }
+}
+
+/// Run the signal server + relay until Ctrl-C (ADR-0017 §2/§5/§7).
+async fn run_signal_server(
+    bind: &str,
+    relay_bind: &str,
+    join_code: Option<String>,
+    dev_key: bool,
+) -> anyhow::Result<()> {
+    if dev_key && join_code.is_some() {
+        return Err(anyhow::anyhow!(
+            "--dev-key and --join-code are mutually exclusive"
+        ));
+    }
+    let admission = if dev_key {
+        tracing::warn!("--dev-key: well-known DEV cluster key (smoke tests ONLY)");
+        Admission::DevKey
+    } else {
+        match join_code {
+            // explicit code: validated HERE, so a typo fails with the
+            // checksum message instead of a runtime mystery
+            Some(s) => Admission::JoinCode(
+                cairn_p2p::JoinCode::parse(&s).map_err(|e| anyhow::anyhow!("--join-code: {e}"))?,
+            ),
+            // default: create your own join code and share it — this IS the
+            // hosting flow ("get others to join")
+            None => Admission::JoinCode(cairn_p2p::JoinCode::generate()),
+        }
+    };
+    let key = admission.cluster_key();
+    let bind_addr: std::net::SocketAddr = bind
+        .parse()
+        .map_err(|e| anyhow::anyhow!("bad --bind {bind}: {e}"))?;
+    let relay_addr: std::net::SocketAddr = relay_bind
+        .parse()
+        .map_err(|e| anyhow::anyhow!("bad --relay-bind {relay_bind}: {e}"))?;
+
+    let signal = cairn_p2p::signal::SignalServer::spawn(bind_addr, &key).await?;
+    let relay = cairn_p2p::relay::RelayServer::spawn(relay_addr, signal.local_addr, &key).await?;
+    println!(
+        "signal: {} (rendezvous directory, join-code gated)",
+        signal.local_addr
+    );
+    println!(
+        "relay:  {} (encrypted pass-through fallback)",
+        relay.local_addr
+    );
+    let host = signal
+        .local_addr
+        .ip()
+        .to_string()
+        .trim_start_matches("0.0.0.0")
+        .to_string();
+    match &admission {
+        Admission::JoinCode(code) => {
+            println!();
+            println!("  join code (share ONLY with people who may join this swarm):");
+            println!();
+            println!("  {}", code.display());
+            println!();
+            println!(
+                "  point editors at:  cairn daemon --swarm-signal {host}:{} --swarm-join-code <code>",
+                signal.local_addr.port()
+            );
+            println!();
+            println!("  nodes without the code are dropped silently; rotating the code");
+            println!("  (restart with --join-code <new>) locks out everyone who held the old one.");
+        }
+        Admission::DevKey => {
+            println!(
+                "point editors at:  cairn daemon --swarm-signal {host}:{} --swarm-dev-key",
+                signal.local_addr.port()
+            );
+        }
+    }
+    tokio::signal::ctrl_c().await?;
+    relay.task.abort();
+    signal.task.abort();
+    Ok(())
+}
+
 fn run_tl_capture(path: &str, in_place: bool) -> anyhow::Result<()> {
     let raw =
         std::fs::read_to_string(path).map_err(|e| anyhow::anyhow!("cannot read {path}: {e}"))?;
@@ -774,7 +1056,13 @@ fn load_timeline_sidecar(
     }
 }
 
-fn run_tl_merge(base: &str, ours: &str, theirs: &str, dry_run: bool) -> anyhow::Result<()> {
+fn run_tl_merge(
+    base: &str,
+    ours: &str,
+    theirs: &str,
+    dry_run: bool,
+    out_arg: Option<&str>,
+) -> anyhow::Result<()> {
     // The exit-code contract: 3 means REFUSED — structural mismatch or any
     // input that cannot be parsed. Parsing failures are refusals (C10), not
     // runtime errors: no partial state, both inputs untouched.
@@ -810,8 +1098,11 @@ fn run_tl_merge(base: &str, ours: &str, theirs: &str, dry_run: bool) -> anyhow::
                 );
             } else {
                 // .name.merged.otio next to ours (ADR §2.5: NEW file, never
-                // in-place — the conflict-copy machinery stays the backstop)
-                let out = format!("{}.merged.otio", ours.strip_suffix(".otio").unwrap_or(ours));
+                // in-place — the conflict-copy machinery stays the backstop);
+                // --out overrides for pipeline callers
+                let out = out_arg.map(str::to_string).unwrap_or_else(|| {
+                    format!("{}.merged.otio", ours.strip_suffix(".otio").unwrap_or(ours))
+                });
                 let bytes = cairn_tl::canon::serialize_file(&merged)
                     .map_err(|e| anyhow::anyhow!("serialize: {e}"))?;
                 std::fs::write(&out, bytes)
@@ -858,4 +1149,211 @@ fn run_tl_merge(base: &str, ours: &str, theirs: &str, dry_run: bool) -> anyhow::
             std::process::exit(3);
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// TlVerify — the round-trip audit (ADR-0018): the broken-speed-ramp /
+// dropped-title detector. Exit codes: 0 = clean, 1 = LOSS(es), 3 = refused.
+// ---------------------------------------------------------------------------
+
+fn run_tl_verify(base: &str, roundtrip: &str, json: bool) -> anyhow::Result<()> {
+    let (base_tl, _) = load_timeline_sidecar(base)
+        .map_err(|e| anyhow::anyhow!("cannot parse base {base}: {e}"))?;
+    let (rt_tl, _) = load_timeline_sidecar(roundtrip)
+        .map_err(|e| anyhow::anyhow!("cannot parse round-trip {roundtrip}: {e}"))?;
+    let rep = cairn_tl::verify::verify_roundtrip(&base_tl, &rt_tl);
+    if json {
+        println!("{}", serde_json::to_string_pretty(&rep.to_json())?);
+    } else {
+        for c in &rep.checks {
+            let mark = match c.severity {
+                cairn_tl::verify::Severity::Loss => "LOSS",
+                cairn_tl::verify::Severity::Warn => "warn",
+            };
+            println!("[{mark}] {}: {}", c.name, c.detail);
+        }
+        println!(
+            "result: {} (loss={}, warn={})",
+            if rep.passed() {
+                "PASSED — round-trip is frame-accurate"
+            } else {
+                "FAILED — content was lost"
+            },
+            rep.loss_count,
+            rep.warn_count
+        );
+    }
+    std::process::exit(i32::from(!rep.passed()));
+}
+
+// ---------------------------------------------------------------------------
+// Notes — frame-anchored review notes (ADR-0018)
+// ---------------------------------------------------------------------------
+
+fn run_notes(cmd: notes::NotesCmd) -> anyhow::Result<()> {
+    use cairn_tl::notes::{csv, NoteSet};
+
+    match cmd {
+        notes::NotesCmd::Import {
+            csv: csv_path,
+            out,
+            author,
+            rate,
+        } => {
+            let text = std::fs::read_to_string(&csv_path)
+                .map_err(|e| anyhow::anyhow!("{csv_path}: {e}"))?;
+            let set = csv::import(&text, &author, i128::from(rate)).map_err(|errs| {
+                anyhow::anyhow!(
+                    "csv import: {} bad row(s): {}",
+                    errs.len(),
+                    errs.iter()
+                        .map(|e| format!("line {}: {}", e.line, e.reason))
+                        .collect::<Vec<_>>()
+                        .join("; ")
+                )
+            })?;
+            let out = out.unwrap_or_else(|| {
+                format!(
+                    "{}.notes.json",
+                    csv_path.strip_suffix(".csv").unwrap_or(&csv_path)
+                )
+            });
+            let bytes = set.to_json().map_err(|e| anyhow::anyhow!("{e}"))?;
+            std::fs::write(&out, bytes).map_err(|e| anyhow::anyhow!("cannot write {out}: {e}"))?;
+            println!("imported {} notes → {out}", set.len());
+            Ok(())
+        }
+        notes::NotesCmd::List { file } => {
+            let bytes = std::fs::read(&file).map_err(|e| anyhow::anyhow!("{file}: {e}"))?;
+            let set = NoteSet::from_json(&bytes).map_err(|e| anyhow::anyhow!("{file}: {e}"))?;
+            let mut rows: Vec<_> = set.notes.values().collect();
+            rows.sort_by_key(|n| (n.anchor.frame, n.id.clone()));
+            println!(
+                "{:<8} {:<18} {:<10} {:<9} BODY",
+                "FRAME", "TC", "AUTHOR", "STATUS"
+            );
+            for n in rows {
+                println!(
+                    "{:<8} {:<18} {:<10} {:<9} {}",
+                    n.anchor.frame,
+                    csv::timecode(n.anchor.frame, n.anchor.rate),
+                    n.author,
+                    n.status.as_str(),
+                    n.body
+                );
+            }
+            Ok(())
+        }
+        notes::NotesCmd::Export { file, out } => {
+            let bytes = std::fs::read(&file).map_err(|e| anyhow::anyhow!("{file}: {e}"))?;
+            let set = NoteSet::from_json(&bytes).map_err(|e| anyhow::anyhow!("{file}: {e}"))?;
+            let csv_text = csv::export(&set);
+            match out {
+                Some(path) => {
+                    std::fs::write(&path, csv_text)
+                        .map_err(|e| anyhow::anyhow!("cannot write {path}: {e}"))?;
+                    println!("exported {} notes → {path}", set.len());
+                }
+                None => print!("{csv_text}"),
+            }
+            Ok(())
+        }
+        notes::NotesCmd::Merge {
+            base,
+            ours,
+            theirs,
+            out,
+        } => {
+            let read = |p: &str| -> anyhow::Result<NoteSet> {
+                let bytes = std::fs::read(p).map_err(|e| anyhow::anyhow!("{p}: {e}"))?;
+                NoteSet::from_json(&bytes).map_err(|e| anyhow::anyhow!("{p}: {e}"))
+            };
+            let b = read(&base)?;
+            let o = read(&ours)?;
+            let t = read(&theirs)?;
+            let m = cairn_tl::notes::merge_notes(&b, &o, &t);
+            let out = out.unwrap_or_else(|| {
+                format!(
+                    "{}.merged.notes.json",
+                    ours.strip_suffix(".notes.json").unwrap_or(&ours)
+                )
+            });
+            let bytes = m.merged.to_json().map_err(|e| anyhow::anyhow!("{e}"))?;
+            std::fs::write(&out, bytes).map_err(|e| anyhow::anyhow!("cannot write {out}: {e}"))?;
+            println!("merged {} notes → {out}", m.merged.len());
+            if m.conflicts.is_empty() {
+                println!("conflicts: none");
+            } else {
+                println!("CONFLICTS ({}): a human decides:", m.conflicts.len());
+                for c in &m.conflicts {
+                    println!("  anchor {}:", c.anchor);
+                    println!("    ours:   [{}] {}", c.ours.author, c.ours.body);
+                    println!("    theirs: [{}] {}", c.theirs.author, c.theirs.body);
+                    println!("    reason: {}", c.reason);
+                }
+                std::process::exit(1);
+            }
+            Ok(())
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Lock/Unlock — bin-locking write authority (ADR-0014 local pens; the
+// "keep your hands off my sequence" contract). Exit 2 when ALREADY held.
+// ---------------------------------------------------------------------------
+
+fn run_lock(home: &std::path::Path, project: &str, path: &str) -> anyhow::Result<()> {
+    let store = cairn_store::Store::open(home, std::sync::Arc::new(cairn_core::clock::WallClock))
+        .map_err(|e| anyhow::anyhow!("store: {e}"))?;
+    // held by a LIVE process? (this machine's truth; the daemon heartbeats the
+    // server-side pen — a dead process's row is reaped by the keepalive)
+    if let Some((token, _expires)) = store.get_lease(path) {
+        let holder = store.list_leases_pid().into_iter().find(|r| r.path == path);
+        let pid_live = holder
+            .as_ref()
+            .and_then(|r| r.pid)
+            .map(cairn_store::db::process_alive)
+            .unwrap_or(true);
+        let proj_ok = holder.as_ref().and_then(|r| r.project_id.clone());
+        if pid_live && proj_ok.as_deref() != Some("") && proj_ok != Some(project.to_string()) {
+            eprintln!("LOCKED by another project on this machine (token {token})");
+            std::process::exit(2);
+        }
+    }
+    // device id from the logged-in identity (falls back to a fresh id when
+    // unlocked — the lock still works, it just names an anonymous device)
+    let device = crate::projects::load_identity(&store)
+        .map(|i| i.device_id)
+        .unwrap_or_else(cairn_core::ids::new_device_id);
+    let now_ms = <cairn_core::clock::WallClock as cairn_core::clock::SystemClock>::now_millis(
+        &cairn_core::clock::WallClock,
+    );
+    let expires = now_ms + cairn_sync::LEASE_TTL_MS as i64;
+    let token = u64::try_from(now_ms).unwrap_or(1).max(1);
+    store
+        .put_lease_pid(
+            path,
+            token,
+            expires,
+            Some(i64::from(std::process::id())),
+            Some(project),
+            Some(&device),
+        )
+        .map_err(|e| anyhow::anyhow!("lock: {e}"))?;
+    println!(
+        "locked: {project}/{path} (device {device}, TTL {}s)",
+        cairn_sync::LEASE_TTL_MS / 1000
+    );
+    Ok(())
+}
+
+fn run_unlock(home: &std::path::Path, project: &str, path: &str) -> anyhow::Result<()> {
+    let store = cairn_store::Store::open(home, std::sync::Arc::new(cairn_core::clock::WallClock))
+        .map_err(|e| anyhow::anyhow!("store: {e}"))?;
+    store
+        .drop_lease(path)
+        .map_err(|e| anyhow::anyhow!("unlock: {e}"))?;
+    println!("unlocked: {project}/{path}");
+    Ok(())
 }

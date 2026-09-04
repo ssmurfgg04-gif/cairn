@@ -11,11 +11,13 @@ use cairn_core::{CairnError, ErrorKind};
 use cairn_store::state::LocalState;
 use cairn_store::{Cas, HeaderCache, Store};
 
+use crate::peer::PeerSource;
 use crate::plane::Plane;
 use crate::workspace::workspace_dir;
 use cairn_core::normalize::Transform;
 
-/// Hydration counters (doctor/status surface).
+/// Hydration counters (doctor/status surface). Peer-sourced block counts are
+/// surfaced by the swarm stats (blocks_fetched) — the daemon reports both.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct HydrateStats {
     pub materialized: u64,
@@ -27,8 +29,11 @@ pub struct HydrateStats {
 /// Materialize every journal-known file that is missing on disk for `project_id`.
 /// Deterministic (rows iterate in path order). Local CAS is consulted first; misses go to
 /// the plane (signed object GET) and are mirrored into the local CAS on arrival.
+/// When a [`PeerSource`] is supplied, swarm peers are consulted FIRST (ADR-0017 §7:
+/// LAN-speed blocks, zero cloud egress).
 pub async fn materialize_missing(
     plane: &dyn Plane,
+    peer: Option<&dyn PeerSource>,
     store: &Store,
     cas: &Cas,
     headers: &HeaderCache,
@@ -63,6 +68,7 @@ pub async fn materialize_missing(
         // update to a locally-clean file — the pull side of convergence).
         let bytes = hydrate_one(
             plane,
+            peer,
             cas,
             tenant,
             &hash_hex,
@@ -142,6 +148,7 @@ fn millis_to_systemtime(ms: i64) -> std::time::SystemTime {
 #[allow(clippy::implicit_hasher)] // cache is caller-local; hasher choice is not a contract
 pub async fn hydrate_one(
     plane: &dyn Plane,
+    peer: Option<&dyn PeerSource>,
     cas: &Cas,
     tenant: &str,
     manifest_hash_hex: &str,
@@ -151,6 +158,7 @@ pub async fn hydrate_one(
     let mut out = Vec::new();
     hydrate_one_into(
         plane,
+        peer,
         cas,
         tenant,
         manifest_hash_hex,
@@ -174,6 +182,7 @@ pub async fn hydrate_one(
 #[allow(clippy::implicit_hasher)] // cache is caller-local; hasher choice is not a contract
 pub async fn hydrate_one_into<W: std::io::Write>(
     plane: &dyn Plane,
+    peer: Option<&dyn PeerSource>,
     cas: &Cas,
     tenant: &str,
     manifest_hash_hex: &str,
@@ -240,16 +249,44 @@ pub async fn hydrate_one_into<W: std::io::Write>(
     // CAS stores raw chunk content exactly like the push path does). The verified CAS
     // put IS the read-back path — no in-RAM mirror of the whole file (the old
     // `local_raw` HashMap duplicated every fetched byte and defeated the point).
+    //
+    // PEER-FIRST (ADR-0017 §7): the swarm warms ALL missing hashes up front (the
+    // pre-walk — parallel scheduling starts immediately), then each chunk tries
+    // peers before the cloud plane. `peer_may_have` is a fast local check; a
+    // no-holder chunk falls straight to the plane with zero added latency.
     let entries =
         manifest.flatten_with(&mut |child: &Hash| manifest_cache.get(&child.hex()).cloned());
+    if let Some(peer) = peer {
+        let missing: Vec<Hash> = entries
+            .iter()
+            .map(|e| e.chunk_hash)
+            .filter(|h| !cas.contains(h))
+            .collect();
+        if !missing.is_empty() {
+            peer.warm_blocks(&missing).await;
+        }
+    }
     for e in &entries {
         let h = e.chunk_hash;
         if cas.contains(&h) {
             continue;
         }
-        let stored = plane.fetch_object(tenant, &h.hex()).await?;
-        let raw = decompress_chunk(&stored, policy, None)?;
-        cas.put(&h, &raw)?; // BLAKE3-verified before landing (I2)
+        let mut from_peer = false;
+        if let Some(peer) = peer {
+            if peer.peer_may_have(&h) {
+                if let Some(raw) = peer.fetch_peer_block(&h).await {
+                    // hash-verified by the swarm AND by the CAS put (I2 twice —
+                    // the peer is outside every trust boundary)
+                    cas.put(&h, &raw)?;
+                    from_peer = true;
+                }
+            }
+        }
+        if !from_peer {
+            let stored = plane.fetch_object(tenant, &h.hex()).await?;
+            let raw = decompress_chunk(&stored, policy, None)?;
+            cas.put(&h, &raw)?; // BLAKE3-verified before landing (I2)
+        }
     }
 
     // Stream assembly. The resolver hands serialized manifest bytes to
@@ -430,14 +467,14 @@ mod tests {
             .unwrap();
         // journal row exists but the device is offline: local CAS has nothing
         let plane = MemPlane { objects };
-        let stats = materialize_missing(&plane, &store, &cas, &headers, "t1", "p1")
+        let stats = materialize_missing(&plane, None, &store, &cas, &headers, "t1", "p1")
             .await
             .unwrap();
         assert_eq!(stats.materialized, 1);
         let got = std::fs::read(ws.join("media/clip.mov")).unwrap();
         assert_eq!(got, content, "byte-identical materialization");
         // second run: already local → no-op
-        let stats2 = materialize_missing(&plane, &store, &cas, &headers, "t1", "p1")
+        let stats2 = materialize_missing(&plane, None, &store, &cas, &headers, "t1", "p1")
             .await
             .unwrap();
         assert_eq!(stats2.materialized, 0);
@@ -505,7 +542,7 @@ mod tests {
             })
             .unwrap();
         let plane = MemPlane { objects };
-        let stats = materialize_missing(&plane, &store, &cas, &headers, "t1", "p1")
+        let stats = materialize_missing(&plane, None, &store, &cas, &headers, "t1", "p1")
             .await
             .unwrap();
         assert_eq!(stats.materialized, 1);
@@ -519,5 +556,169 @@ mod tests {
             cairn_core::normalize::decompress_inner(&got, cairn_core::normalize::Transform::Gzip)
                 .unwrap();
         assert_eq!(back, inner, "payload must round-trip exactly");
+    }
+
+    /// In-memory PeerSource: answers from a block map — the swarm's test twin.
+    struct MemPeer {
+        blocks: std::collections::HashMap<cairn_core::hash::Hash, Vec<u8>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::peer::PeerSource for MemPeer {
+        fn peer_may_have(&self, h: &cairn_core::hash::Hash) -> bool {
+            self.blocks.contains_key(h)
+        }
+        async fn fetch_peer_block(&self, h: &cairn_core::hash::Hash) -> Option<Vec<u8>> {
+            self.blocks.get(h).cloned()
+        }
+        async fn warm_blocks(&self, _hashes: &[cairn_core::hash::Hash]) {}
+    }
+
+    #[tokio::test]
+    async fn peer_first_hydration_pulls_blocks_from_the_swarm() {
+        // ADR-0017 §7: chunks a peer holds come from the peer, chunks it
+        // doesn't come from the plane — one file, both paths exercised.
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalStore::open(dir.path(), Arc::new(WallClock)).unwrap();
+        let conn = store.conn_handle();
+        let cas = Cas::open(&dir.path().join("blobs"), conn.clone()).unwrap();
+        let headers = HeaderCache::new(conn.clone());
+        let ws = dir.path().join("workspace");
+        std::fs::create_dir_all(&ws).unwrap();
+        store
+            .meta_set("workspace:p1", ws.to_str().unwrap())
+            .unwrap();
+
+        // varied content (FastCDC needs entropy to find cut points — uniform
+        // test data produced ONE 3MB chunk and defeated the split-transport
+        // assertion)
+        let mut seed = 0x2545F491u64;
+        let content: Vec<u8> = (0..12 * 1024 * 1024u32)
+            .map(|_| {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                (seed & 0xFF) as u8
+            })
+            .collect();
+        let spans = FastCdc::cut(&content);
+        let entries: Vec<ManifestEntry> = spans
+            .iter()
+            .map(|s| ManifestEntry {
+                offset: s.offset,
+                len: s.len,
+                chunk_hash: Hash::of(
+                    &content[s.offset as usize..(s.offset + u64::from(s.len)) as usize],
+                ),
+            })
+            .collect();
+        let manifest = Manifest::build(entries, compress::Compression::Zstd3, None);
+        let (mh, mbytes) = manifest.serialize();
+
+        let flat = manifest.flatten();
+        assert!(flat.len() >= 2, "test needs a multi-chunk file");
+        // peer holds the FIRST half of the chunks; the plane holds everything
+        let peer_holds = flat.len() / 2;
+        let mut plane_objects = std::collections::HashMap::new();
+        plane_objects.insert(mh.hex(), mbytes.clone());
+        let mut peer_blocks = std::collections::HashMap::new();
+        for (i, e) in flat.iter().enumerate() {
+            let raw = &content[e.offset as usize..(e.offset + u64::from(e.len)) as usize];
+            let stored = compress_chunk(raw, compress::Compression::Zstd3, None).unwrap();
+            plane_objects.insert(e.chunk_hash.hex(), stored);
+            if i < peer_holds {
+                peer_blocks.insert(e.chunk_hash, raw.to_vec());
+            }
+        }
+        store
+            .put_file(&cairn_store::FileRow {
+                path: "media/broll.mov".into(),
+                project_id: "p1".into(),
+                manifest_hash: Some(mh.hex()),
+                size: content.len() as u64,
+                mode: "file".into(),
+                mtime: 1,
+                local_state: LocalState::Synced.as_str().into(),
+            })
+            .unwrap();
+        let plane = MemPlane {
+            objects: plane_objects,
+        };
+        let peer = MemPeer {
+            blocks: peer_blocks,
+        };
+        let stats = materialize_missing(&plane, Some(&peer), &store, &cas, &headers, "t1", "p1")
+            .await
+            .unwrap();
+        assert_eq!(stats.materialized, 1);
+        let got = std::fs::read(ws.join("media/broll.mov")).unwrap();
+        assert_eq!(got, content, "byte-identical through BOTH transports");
+    }
+
+    #[tokio::test]
+    async fn plane_fallback_when_peer_lacks_every_block() {
+        // the cloud-fallback contract: a swarm with nothing relevant adds
+        // zero latency (may_have = false short-circuits) and the plane serves
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalStore::open(dir.path(), Arc::new(WallClock)).unwrap();
+        let conn = store.conn_handle();
+        let cas = Cas::open(&dir.path().join("blobs"), conn.clone()).unwrap();
+        let headers = HeaderCache::new(conn.clone());
+        let ws = dir.path().join("workspace");
+        std::fs::create_dir_all(&ws).unwrap();
+        store
+            .meta_set("workspace:p1", ws.to_str().unwrap())
+            .unwrap();
+
+        let mut seed = 0x9E3779B97F4A7C15u64;
+        let content: Vec<u8> = (0..1024 * 1024u32)
+            .map(|_| {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                (seed & 0xFF) as u8
+            })
+            .collect();
+        let spans = FastCdc::cut(&content);
+        let entries: Vec<ManifestEntry> = spans
+            .iter()
+            .map(|s| ManifestEntry {
+                offset: s.offset,
+                len: s.len,
+                chunk_hash: Hash::of(
+                    &content[s.offset as usize..(s.offset + u64::from(s.len)) as usize],
+                ),
+            })
+            .collect();
+        let manifest = Manifest::build(entries, compress::Compression::Zstd3, None);
+        let (mh, mbytes) = manifest.serialize();
+        let mut objects = std::collections::HashMap::new();
+        objects.insert(mh.hex(), mbytes.clone());
+        for e in manifest.flatten() {
+            let raw = &content[e.offset as usize..(e.offset + u64::from(e.len)) as usize];
+            let stored = compress_chunk(raw, compress::Compression::Zstd3, None).unwrap();
+            objects.insert(e.chunk_hash.hex(), stored);
+        }
+        store
+            .put_file(&cairn_store::FileRow {
+                path: "media/plain.mov".into(),
+                project_id: "p1".into(),
+                manifest_hash: Some(mh.hex()),
+                size: content.len() as u64,
+                mode: "file".into(),
+                mtime: 1,
+                local_state: LocalState::Synced.as_str().into(),
+            })
+            .unwrap();
+        let plane = MemPlane { objects };
+        let peer = MemPeer {
+            blocks: std::collections::HashMap::new(), // empty swarm
+        };
+        let stats = materialize_missing(&plane, Some(&peer), &store, &cas, &headers, "t1", "p1")
+            .await
+            .unwrap();
+        assert_eq!(stats.materialized, 1);
+        let got = std::fs::read(ws.join("media/plain.mov")).unwrap();
+        assert_eq!(got, content);
     }
 }
