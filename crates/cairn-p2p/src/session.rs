@@ -44,6 +44,10 @@ const MSG_CHUNK: u8 = 0x43;
 const MSG_EOF: u8 = 0x45;
 const MSG_NAK: u8 = 0x4E;
 const MSG_DENY: u8 = 0x44;
+/// Live-presence telemetry (ADR-0023): opaque app JSON (playhead/drag/
+/// selection), strictly bounded — this is a coordination channel, NOT a data
+/// channel. Oversized payloads are refused at decode.
+const MSG_PRESENCE: u8 = 0x50;
 
 /// Max block-data bytes per CHUNK fragment (keeps encrypted datagrams ≈ MTU).
 pub(crate) const MAX_FRAG_DATA: usize = 1200;
@@ -81,6 +85,12 @@ pub(crate) enum PeerMsg {
     Nak { hash: [u8; 32], idxs: Vec<u16> },
     /// "I don't have it" — the want moves to another holder.
     Deny { hash: [u8; 32] },
+    /// Ephemeral live-presence telemetry (ADR-0023 §2): an opaque, bounded
+    /// app payload (editor name, playhead frame, rate, action). Rides the
+    /// same encrypted session frames as block traffic — direct or relay —
+    /// and is NEVER persisted, reassembled, or retried. Loss-tolerant by
+    /// design (the next heartbeat supersedes).
+    Presence { payload: Vec<u8> },
 }
 
 impl PeerMsg {
@@ -139,6 +149,17 @@ impl PeerMsg {
                 out.push(MSG_DENY);
                 out.extend_from_slice(hash);
             }
+            PeerMsg::Presence { payload } => {
+                out.push(MSG_PRESENCE);
+                // len-checked at construction AND decode: presence is small
+                // telemetry; a payload near MAX_FRAG_DATA is a bug or abuse
+                out.extend_from_slice(
+                    &u16::try_from(payload.len())
+                        .unwrap_or(u16::MAX)
+                        .to_be_bytes(),
+                );
+                out.extend_from_slice(payload);
+            }
         }
         out
     }
@@ -196,6 +217,19 @@ impl PeerMsg {
             MSG_DENY => Some(PeerMsg::Deny {
                 hash: p.get(0..32)?.try_into().ok()?,
             }),
+            MSG_PRESENCE => {
+                let plen = u16::from_be_bytes(p.get(0..2)?.try_into().ok()?) as usize;
+                // bounded by MAX_FRAG_DATA: presence is telemetry, not a data
+                // channel — a fat "presence" payload is refused outright
+                if plen > MAX_FRAG_DATA {
+                    return None;
+                }
+                let payload = p.get(2..2 + plen)?.to_vec();
+                if payload.len() != plen {
+                    return None;
+                }
+                Some(PeerMsg::Presence { payload })
+            }
             _ => None,
         }
     }

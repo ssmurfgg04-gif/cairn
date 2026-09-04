@@ -84,6 +84,7 @@ fn cfg(signal: SocketAddr, node: &str, project: &str, force_relay: bool) -> Swar
         node_id: Some(node.to_string()),
         stun: None,
         force_relay,
+        presence: false,
     }
 }
 
@@ -636,4 +637,99 @@ async fn spawn_keyed(
     )
     .await
     .expect("swarm spawn")
+}
+
+/// ADR-0023 — live presence over a REAL session: a broadcasts a playhead
+/// event, b receives it through the same encrypted pipe as block traffic,
+/// and the disabled-by-default contract is pinned (no flag → no traffic).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn presence_broadcasts_reach_peers_and_default_off() {
+    init_tracing();
+    let signal = SignalServer::spawn("127.0.0.1:0".parse().unwrap(), KEY)
+        .await
+        .expect("signal spawn");
+    let sig_addr = signal.local_addr;
+
+    // Both nodes with presence ON (the opt-in case).
+    let mut on_cfg = cfg(sig_addr, "pres-a", "pres", false);
+    on_cfg.presence = true;
+    let a = Swarm::spawn(on_cfg, Arc::new(MapServe::default()))
+        .await
+        .expect("a spawn");
+    let mut on_cfg_b = cfg(sig_addr, "pres-b", "pres", false);
+    on_cfg_b.presence = true;
+    let b = Swarm::spawn(on_cfg_b, Arc::new(MapServe::default()))
+        .await
+        .expect("b spawn");
+
+    // session establishes
+    wait_until(
+        || a.stats().peers == 1 && b.stats().peers == 1,
+        "presence pair session",
+        Duration::from_secs(10),
+    )
+    .await;
+
+    // b subscribes BEFORE a broadcasts
+    let mut rx = b.subscribe_presence();
+    let sent = br#"{"editor":"alice","frame":1080,"rate":24,"action":"playhead"}"#;
+    let reached = a.broadcast_presence(sent);
+    assert_eq!(reached, 1, "one session peer reached");
+
+    // the event lands at b (encrypted, authenticated, verbatim)
+    let ev = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+        .await
+        .expect("presence event within 5s")
+        .expect("channel alive");
+    assert_eq!(ev.payload, sent.to_vec());
+    assert_eq!(
+        ev.from,
+        a.node_id().to_string(),
+        "event carries the sender id"
+    );
+    assert_eq!(b.stats().presence_events, 1, "counter incremented");
+
+    // snapshot agrees with the channel
+    let snap = b.presence_snapshot();
+    assert_eq!(snap.len(), 1);
+    assert_eq!(snap[0].payload, sent.to_vec());
+
+    // the OFF contract: a third node with presence disabled hears nothing
+    // (inbound dropped at the door) and its own broadcast reaches nobody.
+    let c = spawn(sig_addr, "pres-c", "pres", Arc::new(MapServe::default())).await;
+    wait_until(
+        || a.stats().peers == 2 && c.stats().peers == 2,
+        "c joins the swarm",
+        Duration::from_secs(10),
+    )
+    .await;
+    assert!(!c.presence_enabled());
+    assert_eq!(
+        c.broadcast_presence(b"{}"),
+        0,
+        "disabled node broadcasts nothing"
+    );
+    a.broadcast_presence(br#"{"editor":"alice","frame":1081}"#);
+    // c's snapshot stays empty — the flag is a door, not a filter
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        c.presence_snapshot().is_empty(),
+        "disabled node accepts nothing"
+    );
+    // but b still receives (a and b both opted in; c is silent, not blocking)
+    let ev2 = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+        .await
+        .expect("second presence event")
+        .expect("channel alive");
+    assert_eq!(ev2.payload, br#"{"editor":"alice","frame":1081}"#.to_vec());
+
+    // oversize broadcast is refused, never panics, reaches nobody
+    let fat = vec![0u8; 1300];
+    assert_eq!(a.broadcast_presence(&fat), 0);
+    assert!(a.stats().peers >= 1, "swarm unaffected by the refusal");
+
+    a.shutdown();
+    b.shutdown();
+    c.shutdown();
+    signal.task.abort();
 }
