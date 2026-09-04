@@ -486,6 +486,7 @@ name = "cairn-sync"
 version = "4.0.0"
 dependencies = [
  "async-trait",
+ "blake3",
  "cairn-core",
  "cairn-proto",
  "cairn-store",

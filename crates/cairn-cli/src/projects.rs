@@ -84,6 +84,13 @@ pub struct ProjView {
 
 pub struct ProjectRuntime {
     pub project_id: String,
+    /// Local store namespace for this root (plain project id for the
+    /// default root, `<project_id>#<root_id>` for additional roots —
+    /// ADR-0019 §2). The RUNTIMES registry key equals this.
+    pub local_ns: String,
+    /// Journal authorship for this root (`<device_id>#<root_id>` when
+    /// namespaced): own-op suppression and conflict-copy naming.
+    pub author_id: String,
     pub workspace: PathBuf,
     pub view: RwLock<ProjView>,
     /// Paths hydrated recently — watcher echoes are suppressed ONLY while the on-disk
@@ -291,8 +298,15 @@ pub async fn attach(
         cairn_sync::workspace::project_id_from_name(&name)
     });
 
-    // durable binding first (I2: the ack reflects committed state)
-    set_workspace(&store, &pid, root_path)?;
+    // durable binding first (I2: the ack reflects committed state).
+    // Round 15 multi-root (ADR-0019 §2): each attached directory gets a
+    // root_id; the FIRST (legacy) root keeps the plain namespace and plain
+    // device authorship (byte-compatible upgrade), additional roots get
+    // `pid#rid` namespaces + `dev#rid` authors so cross-root entries are
+    // applied, not suppressed as own-ops.
+    let root_id = cairn_sync::workspace::ensure_root_id(&store, &pid, root_path)?;
+    let ns = cairn_sync::workspace::local_ns(&pid, &root_id);
+    cairn_sync::workspace::set_workspace_ns(&store, &ns, root_path)?;
     save_identity(
         &store,
         &Identity {
@@ -308,7 +322,7 @@ pub async fn attach(
 
     let ca_pem = identity.tls_ca.as_ref().map(|c| c.as_bytes().to_vec());
 
-    let existing = RUNTIMES.read().await.get(&pid).cloned();
+    let existing = RUNTIMES.read().await.get(&ns).cloned();
     if let Some(rt) = existing {
         // already attached: just refresh the workspace binding + identity
         rt.stop();
@@ -325,7 +339,9 @@ pub async fn attach(
 
     let rt = Arc::new(ProjectRuntime {
         project_id: pid.clone(),
-        workspace: workspace_dir(&store, &pid),
+        local_ns: ns.clone(),
+        author_id: cairn_sync::workspace::author_id(&identity.device_id, &root_id),
+        workspace: workspace_dir(&store, &ns),
         view: RwLock::new(ProjView {
             state: "syncing".into(),
             ..ProjView::default()
@@ -337,7 +353,7 @@ pub async fn attach(
         swarm: Mutex::new(None),
         abort: tokio::sync::watch::channel(false).0,
     });
-    RUNTIMES.write().await.insert(pid.clone(), Arc::clone(&rt));
+    RUNTIMES.write().await.insert(ns.clone(), Arc::clone(&rt));
     let root2 = root_path.to_path_buf();
     let pid2 = pid.clone();
     let id2 = identity.clone();
@@ -352,8 +368,28 @@ pub async fn attach(
 /// Detach: stop the loop, clear the binding (files on disk are untouched).
 pub async fn detach(home: &Path, project_id: &str) -> Result<(), CairnError> {
     let store = Store::open(home, Arc::new(WallClock))?;
-    if let Some(rt) = RUNTIMES.write().await.remove(project_id) {
-        rt.stop();
+    // round 15: a project may carry several roots (pid + pid#rid keys) —
+    // detach stops them all and clears every root registration
+    let mut guard = RUNTIMES.write().await;
+    let keys: Vec<String> = guard
+        .keys()
+        .filter(|k| {
+            *k == project_id
+                || k.starts_with(&format!(
+                    "{project_id}{}",
+                    cairn_sync::workspace::ROOT_NS_SEP
+                ))
+        })
+        .cloned()
+        .collect();
+    for k in keys {
+        if let Some(rt) = guard.remove(&k) {
+            rt.stop();
+        }
+    }
+    drop(guard);
+    for b in cairn_sync::workspace::list_roots(&store, project_id) {
+        let _ = cairn_sync::workspace::clear_root(&store, project_id, &b.root_id);
     }
     #[cfg(windows)]
     {
@@ -641,8 +677,12 @@ async fn run_loop(
     let headers = HeaderCache::with_read_pool(conn.clone(), &store.root().join("db.sqlite"), 4);
     let engine = Engine {
         tenant_id: identity.tenant_id.clone(),
+        // server journal scope stays the PROJECT; the local namespace and
+        // journal authorship are per-root (ADR-0019 §2)
         project_id: pid.clone(),
         device_id: identity.device_id.clone(),
+        local_ns: rt.local_ns.clone(),
+        author_id: rt.author_id.clone(),
         store: store.clone(),
         cas,
         outbox: Outbox::new(conn.clone()),
@@ -709,7 +749,7 @@ async fn run_loop(
     }
 
     // initial scan: marks everything new/changed dirty (idempotent, resumable)
-    let stats = scan::scan_project(store, &pid)?;
+    let stats = scan::scan_project(store, &rt.local_ns)?;
     tracing::info!(
         project = %pid,
         files = stats.files_seen,
@@ -806,7 +846,7 @@ async fn run_loop(
             let counter = rt.sweep_counter.fetch_add(1, Ordering::Relaxed);
             match cairn_sync::scan::reconcile_sweep(
                 store,
-                &pid,
+                &rt.local_ns,
                 &rt.workspace,
                 counter,
                 sweep_files,
@@ -848,7 +888,7 @@ async fn run_loop(
         // brand-new local files (watcher saw an unknown path): rescan is idempotent and
         // only inserts rows for genuinely new/changed content
         if rt.rescan_requested.swap(false, Ordering::Relaxed) {
-            match scan::scan_project(store, &pid) {
+            match scan::scan_project(store, &rt.local_ns) {
                 Ok(s) => tracing::debug!(project = %pid, new = s.new_dirty, "rescan complete"),
                 Err(e) => tracing::warn!(project = %pid, "rescan failed: {e}"),
             }
@@ -862,7 +902,7 @@ async fn run_loop(
             &engine.cas,
             &engine.headers,
             &identity.tenant_id,
-            &pid,
+            &rt.local_ns, // rows + workspace are the root's local namespace
         )
         .await;
         match (pass, hydr) {

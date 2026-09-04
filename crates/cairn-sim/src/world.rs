@@ -73,6 +73,8 @@ fn open_device(
         tenant_id: tenant.into(),
         project_id: project.into(),
         device_id: id.into(),
+        local_ns: project.into(),
+        author_id: id.into(),
         store,
         cas,
         outbox,
@@ -580,6 +582,239 @@ mod w5_tests {
                 b"seed+A-live-edit",
                 "original path must converge to A's version on BOTH devices (device {i})"
             );
+        }
+    }
+}
+
+/// Round 15 (ADR-0019 §2) — the multi-root contract: ONE login/store/daemon
+/// home, TWO attached directories of the SAME project. The second root runs
+/// in the `p1#<rid>` namespace with `dev1#<rid>` authorship; own-op
+/// suppression must only skip SAME-root entries, so the two roots converge
+/// through the single server journal exactly like two physical devices —
+/// the case that previously required two CAIRN_HOMEs + two daemons.
+#[cfg(test)]
+mod multoroot_tests {
+    use super::*;
+    use cairn_sync::workspace;
+
+    async fn boot_roots() -> (
+        Arc<cairn_server::ServerState>,
+        tempfile::TempDir,
+        tempfile::TempDir,
+        tempfile::TempDir,
+        tempfile::TempDir,
+    ) {
+        let server_dir = tempfile::tempdir().unwrap();
+        let state = server_state(server_dir.path()).await;
+        sqlx_insert(
+            &state,
+            "INSERT OR IGNORE INTO tenants(id, created_at) VALUES('t1',0)",
+        )
+        .await;
+        sqlx_insert(
+            &state,
+            "INSERT OR IGNORE INTO projects(tenant_id, project_id, created_at) VALUES('t1','p1',0)",
+        )
+        .await;
+        let home = tempfile::tempdir().unwrap();
+        let dir_a = tempfile::tempdir().unwrap();
+        let dir_b = tempfile::tempdir().unwrap();
+        // server_dir MUST be returned: dropping it deletes the sqlite file —
+        // pooled connections opened later would recreate an EMPTY db (the
+        // parallel-only "no such table: chunks" flake this test caught)
+        (state, server_dir, home, dir_a, dir_b)
+    }
+
+    fn engine_for(
+        home: &std::path::Path,
+        state: Arc<cairn_server::ServerState>,
+        pid: &str,
+        root_id: &str,
+    ) -> cairn_sync::Engine {
+        let store = Store::open(home, Arc::new(cairn_core::clock::WallClock)).unwrap();
+        let conn = store.conn_handle();
+        let cas = Cas::open(&home.join("blobs"), conn.clone()).unwrap();
+        let outbox = Outbox::new(conn.clone());
+        let headers = HeaderCache::new(conn);
+        let ns = workspace::local_ns(pid, root_id);
+        cairn_sync::Engine {
+            tenant_id: "t1".into(),
+            project_id: pid.into(),
+            device_id: "dev1".into(),
+            local_ns: ns.clone(),
+            author_id: workspace::author_id("dev1", root_id),
+            store,
+            cas,
+            outbox,
+            headers,
+            plane: Arc::new(InProcPlane {
+                state,
+                tenant_id: "t1".into(),
+                device_id: workspace::author_id("dev1", root_id),
+                faults: Arc::new(Faults::default()),
+            }),
+            dicts: cairn_core::compress::DictRegistry::new(),
+            gate: cairn_sync::Gate::new(),
+        }
+    }
+
+    fn dirty_row(
+        engine: &cairn_sync::Engine,
+        ns: &str,
+        path: &str,
+        abs: &std::path::Path,
+        len: u64,
+    ) {
+        let meta = std::fs::metadata(abs).unwrap();
+        engine
+            .store
+            .put_file(&FileRow {
+                path: path.into(),
+                project_id: ns.into(),
+                manifest_hash: None,
+                size: len,
+                mode: "file".into(),
+                mtime: cairn_sync::scan::mtime_millis(&meta),
+                local_state: LocalState::Dirty.as_str().into(),
+            })
+            .unwrap();
+    }
+
+    async fn pass(engine: &mut cairn_sync::Engine, ns: &str) {
+        engine.sync_pass().await.expect("sync pass");
+        cairn_sync::hydrate::materialize_missing(
+            engine.plane.as_ref(),
+            None,
+            &engine.store,
+            &engine.cas,
+            &engine.headers,
+            "t1",
+            ns,
+        )
+        .await
+        .expect("materialize");
+    }
+
+    #[tokio::test]
+    async fn one_home_two_roots_converge() {
+        let (state, _server_dir, home, dir_a, dir_b) = boot_roots().await;
+        // attach root A (default — plain namespace) and root B (r1)
+        let store = Store::open(home.path(), Arc::new(cairn_core::clock::WallClock)).unwrap();
+        let ra = workspace::ensure_root_id(&store, "p1", dir_a.path()).unwrap();
+        let rb = workspace::ensure_root_id(&store, "p1", dir_b.path()).unwrap();
+        assert_eq!(ra, "");
+        assert_eq!(rb.len(), 8, "second attach must be namespaced");
+        workspace::set_workspace_ns(&store, &workspace::local_ns("p1", &ra), dir_a.path()).unwrap();
+        let ns_b = workspace::local_ns("p1", &rb);
+        workspace::set_workspace_ns(&store, &ns_b, dir_b.path()).unwrap();
+        drop(store);
+
+        let mut a = engine_for(home.path(), Arc::clone(&state), "p1", &ra);
+        let mut b = engine_for(home.path(), state, "p1", &rb);
+        let ns_a = workspace::local_ns("p1", &ra);
+
+        // (1) A authors a file; B pulls it — the entry is authored by plain
+        // `dev1`, B's author is `dev1#r1`, so it MUST apply (the pre-round-15
+        // behavior skipped it as an "own op" — the cursor stuck, B stayed empty)
+        std::fs::write(dir_a.path().join("alpha.txt"), b"from-root-a").unwrap();
+        dirty_row(&a, &ns_a, "alpha.txt", &dir_a.path().join("alpha.txt"), 10);
+        pass(&mut a, &ns_a).await;
+        pass(&mut b, &ns_b).await;
+        assert_eq!(
+            std::fs::read(dir_b.path().join("alpha.txt")).unwrap(),
+            b"from-root-a",
+            "root B must converge on A's entry (own-op suppression is per root)"
+        );
+
+        // (2) B authors a file; A pulls it (author `dev1#r1` ≠ `dev1`)
+        std::fs::write(dir_b.path().join("beta.txt"), b"from-root-b").unwrap();
+        dirty_row(&b, &ns_b, "beta.txt", &dir_b.path().join("beta.txt"), 10);
+        pass(&mut b, &ns_b).await;
+        pass(&mut a, &ns_a).await;
+        assert_eq!(
+            std::fs::read(dir_a.path().join("beta.txt")).unwrap(),
+            b"from-root-b",
+            "root A must converge on B's entry"
+        );
+
+        // (3) convergence is quiet: two more passes each side, journal stays
+        // bounded (no own-op livelock, no echo re-push)
+        let journal_before = journal_len(&a).await;
+        pass(&mut a, &ns_a).await;
+        pass(&mut b, &ns_b).await;
+        pass(&mut a, &ns_a).await;
+        let journal_after = journal_len(&a).await;
+        assert_eq!(
+            journal_before, journal_after,
+            "quiet passes must not append"
+        );
+
+        // (4) cursors progressed per root and are INDEPENDENT (different
+        // author keys — B's pull cursor is not A's)
+        let ca = a.store.get_cursor(&a.author_id, &ns_a);
+        let cb = b.store.get_cursor(&b.author_id, &ns_b);
+        assert!(ca >= journal_after, "A's cursor covers the journal");
+        assert!(cb >= journal_after, "B's cursor covers the journal");
+
+        // (5) the W5 two-device contract still holds on ONE home: an
+        // undiscovered local edit in B survives A's push (no clobber)
+        std::fs::write(dir_b.path().join("alpha.txt"), b"b-local!").unwrap();
+        // bump mtime so the drift is unambiguous (edit-discovery lag)
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(2);
+        std::fs::File::options()
+            .append(true)
+            .open(dir_b.path().join("alpha.txt"))
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+        std::fs::write(dir_a.path().join("alpha.txt"), b"a-live--").unwrap();
+        dirty_row(&a, &ns_a, "alpha.txt", &dir_a.path().join("alpha.txt"), 10);
+        pass(&mut a, &ns_a).await;
+        // B: pull guard re-dirties + forks; push appends with the fork
+        // lineage; server CONFLICT -> copy; re-pinned replay re-delivers
+        pass(&mut b, &ns_b).await;
+        // settle both sides
+        pass(&mut b, &ns_b).await;
+        pass(&mut a, &ns_a).await;
+        // A's version wins the original path on BOTH roots (deterministic
+        // conflict rule); B's bytes survive in a conflict copy
+        assert_eq!(
+            std::fs::read(dir_a.path().join("alpha.txt")).unwrap(),
+            b"a-live--"
+        );
+        assert_eq!(
+            std::fs::read(dir_b.path().join("alpha.txt")).unwrap(),
+            b"a-live--",
+            "original path converges on root B too"
+        );
+        let copies: Vec<_> = std::fs::read_dir(dir_b.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains("(conflict"))
+            .collect();
+        assert!(
+            !copies.is_empty(),
+            "B's local bytes survive as a conflict copy"
+        );
+    }
+
+    async fn journal_len(engine: &cairn_sync::Engine) -> u64 {
+        use cairn_sync::plane::Plane;
+        let mut n = 0u64;
+        let mut cursor = 0u64;
+        loop {
+            let batch = engine
+                .plane
+                .fetch_batch("t1", "p1", cursor, 512)
+                .await
+                .expect("fetch");
+            let got = batch.len();
+            if got == 0 {
+                return n;
+            }
+            cursor = batch[got - 1].seq;
+            n += got as u64;
         }
     }
 }
