@@ -17,3 +17,4 @@ Cargo.lock.orig
 # golden-corpus bytes are reproducible via `cairn-x corpus-gen`; only manifest.json is committed
 crates/cairn-core/corpus/**/*.dat
 .dashboard-smoke/
+real-corpus-report.json
