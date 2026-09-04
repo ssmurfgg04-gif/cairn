@@ -173,6 +173,14 @@ async fn session(State(p): State<Portal>, UrlPath(token): UrlPath<String>) -> Re
         .versions_for(&link)
         .iter()
         .map(|v| {
+            // honest proxy state: a promised proxy that is not on disk yet
+            // (still generating, pruned) falls back to full-res serving —
+            // the player shows a chip instead of a dead screen
+            let proxy_ready = v
+                .proxy_rel
+                .as_ref()
+                .map(|pr| root.join(pr.trim_start_matches(['/', '\\'])).is_file())
+                .unwrap_or(false);
             json!({
                 "number": v.number,
                 "label": v.label,
@@ -183,6 +191,7 @@ async fn session(State(p): State<Portal>, UrlPath(token): UrlPath<String>) -> Re
                 "media": v.media_rel,
                 "proxy": v.proxy_rel,
                 "has_proxy": v.proxy_rel.is_some(),
+                "proxy_ready": proxy_ready,
                 "timeline_fingerprint": v.timeline_fingerprint,
                 "published_by": v.published_by,
                 "published_at": v.published_at,
@@ -292,6 +301,15 @@ async fn comment(
         return err(StatusCode::FORBIDDEN, "viewer links cannot comment");
     }
     let version = v["version"].as_u64().unwrap_or(0) as u32;
+    // visibility: a latest_only link may only touch versions it can see
+    // (404, not 403 — never confirm the existence of hidden versions)
+    if !file
+        .versions_for(&link)
+        .iter()
+        .any(|vv| vv.number == version)
+    {
+        return err(StatusCode::NOT_FOUND, "no such version");
+    }
     let Some(vn) = file.version(version) else {
         return err(StatusCode::NOT_FOUND, "no such version");
     };
@@ -351,6 +369,14 @@ async fn resolve(
         return err(StatusCode::FORBIDDEN, "viewer links cannot resolve");
     }
     let version = v["version"].as_u64().unwrap_or(0) as u32;
+    // visibility: a latest_only link may only touch versions it can see
+    if !file
+        .versions_for(&link)
+        .iter()
+        .any(|vv| vv.number == version)
+    {
+        return err(StatusCode::NOT_FOUND, "no such version");
+    }
     if file.version(version).is_none() {
         return err(StatusCode::NOT_FOUND, "no such version");
     }
@@ -424,22 +450,40 @@ async fn media(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
-    let Some((root, file, _link)) = p.resolve(&token).await else {
+    let Some((root, file, link)) = p.resolve(&token).await else {
         return err(StatusCode::NOT_FOUND, "link not found or expired");
     };
     let Ok(version) = version_str.parse::<u32>() else {
         return err(StatusCode::BAD_REQUEST, "version must be a number");
     };
+    // visibility: a latest_only link may only stream versions it can see
+    // (404, not 403 — never confirm the existence of hidden versions)
+    if !file
+        .versions_for(&link)
+        .iter()
+        .any(|vv| vv.number == version)
+    {
+        return err(StatusCode::NOT_FOUND, "no such version");
+    }
     let Some(vn) = file.version(version) else {
         return err(StatusCode::NOT_FOUND, "no such version");
     };
-    let rel = if q.get("full").map(|f| f == "1").unwrap_or(false) {
+    let full = q.get("full").map(|f| f == "1").unwrap_or(false);
+    let rel = if full {
         vn.media_rel.as_str()
     } else {
         vn.stream_rel()
     };
-    let Some(path) = contained(&root, rel) else {
-        return err(StatusCode::NOT_FOUND, "media not available");
+    // resolve with fallback: a promised proxy that is not on disk (still
+    // generating, cache pruned) must never black-screen a guest — serve
+    // the original media instead
+    let path = match contained(&root, rel).filter(|p| p.is_file()) {
+        Some(p) => p,
+        None if !full && vn.proxy_rel.is_some() => match contained(&root, &vn.media_rel) {
+            Some(p) if p.is_file() => p,
+            _ => return err(StatusCode::NOT_FOUND, "media not available"),
+        },
+        _ => return err(StatusCode::NOT_FOUND, "media not available"),
     };
     let meta = match tokio::fs::metadata(&path).await {
         Ok(m) => m,
@@ -673,5 +717,115 @@ mod tests {
         let pres = body["presence"].as_array().unwrap();
         assert_eq!(pres.len(), 1);
         assert_eq!(pres[0]["reviewer"], "jane");
+    }
+
+    /// The guest-link leak the first dogfood run flagged: a `latest_only`
+    /// link must not be able to stream, comment on, or resolve hidden
+    /// older versions — the routes used `version()` directly.
+    #[tokio::test]
+    async fn latest_only_links_cannot_touch_hidden_versions() {
+        let (p, root, _full_token) = setup();
+        // publish v2, then mint a latest_only link (sees only v2)
+        let mut f = Store::load(&root).unwrap().unwrap();
+        f.publish(ReviewVersion {
+            number: 0,
+            label: "v2".into(),
+            media_rel: "cuts/v2.mp4".into(),
+            proxy_rel: None,
+            fps_num: 24,
+            fps_den: 1,
+            frames: 100,
+            timeline_fingerprint: None,
+            snapshot: None,
+            published_by: "editor".into(),
+            published_at: 2,
+        });
+        std::fs::create_dir_all(root.join("cuts")).unwrap();
+        std::fs::write(root.join("cuts/v2.mp4"), vec![7u8; 1000]).unwrap();
+        let t_latest = f.add_link(GuestRole::Commenter, "client".into(), 0, true, 1);
+        Store::save(&root, &f).unwrap();
+
+        // session: only v2 visible
+        let s = session(State(p.clone()), UrlPath(t_latest.clone())).await;
+        let body = serde_json::from_slice::<serde_json::Value>(
+            &axum::body::to_bytes(s.into_body(), 1024 * 1024)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(body["versions"].as_array().unwrap().len(), 1);
+        assert_eq!(body["versions"][0]["number"], 2);
+
+        // media for hidden v1: 404
+        let r = media(
+            State(p.clone()),
+            UrlPath((t_latest.clone(), "1".into())),
+            Query(HashMap::new()),
+            HeaderMap::new(),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::NOT_FOUND);
+        // media for visible v2: 200
+        let r2 = media(
+            State(p.clone()),
+            UrlPath((t_latest.clone(), "2".into())),
+            Query(HashMap::new()),
+            HeaderMap::new(),
+        )
+        .await;
+        assert_eq!(r2.status(), StatusCode::OK);
+
+        // comment on hidden v1: 404 (not FORBIDDEN — never confirm it exists)
+        let body1 = json!({"version": 1, "frame": 5, "body": "x", "author": "j"});
+        let r3 = comment(
+            State(p.clone()),
+            UrlPath(t_latest.clone()),
+            Some(Json(body1)),
+        )
+        .await;
+        assert_eq!(r3.status(), StatusCode::NOT_FOUND);
+        // resolve on hidden v1: 404
+        let body2 = json!({"version": 1, "id": "nope", "status": "RESOLVED"});
+        let r4 = resolve(State(p), UrlPath(t_latest), Some(Json(body2))).await;
+        assert_eq!(r4.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// A promised proxy that is not on disk must fall back to the original
+    /// media (guests see the cut, not a dead player) — the "guest link
+    /// 403/black screen" dogfood bug.
+    #[tokio::test]
+    async fn missing_proxy_falls_back_to_full_media() {
+        let (p, root, token) = setup();
+        std::fs::create_dir_all(root.join("cuts")).unwrap();
+        std::fs::write(root.join("cuts/v1.mp4"), vec![9u8; 50_000]).unwrap();
+        // promise a proxy that does not exist
+        let mut f = Store::load(&root).unwrap().unwrap();
+        f.versions[0].proxy_rel = Some("proxies/v1.mp4".into());
+        Store::save(&root, &f).unwrap();
+
+        // session reports proxy not ready
+        let s = session(State(p.clone()), UrlPath(token.clone())).await;
+        let body = serde_json::from_slice::<serde_json::Value>(
+            &axum::body::to_bytes(s.into_body(), 1024 * 1024)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(body["versions"][0]["has_proxy"], true);
+        assert_eq!(body["versions"][0]["proxy_ready"], false);
+
+        // media still serves (the original), with the original's bytes
+        let r = media(
+            State(p),
+            UrlPath((token, "1".into())),
+            Query(HashMap::new()),
+            HeaderMap::new(),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(r.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        assert_eq!(bytes.len(), 50_000);
     }
 }

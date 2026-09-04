@@ -500,16 +500,22 @@ pub mod review_cmd {
             #[arg(long)]
             media: String,
             /// Lightweight proxy, RELATIVE to the root (served to guests
-            /// first; see `cairn proxy`)
+            /// first). When omitted, one is GENERATED via the proxy
+            /// pipeline if ffmpeg is available; --no-proxy skips that.
             #[arg(long)]
             proxy: Option<String>,
-            /// Frame rate: "24", "25", "23.976", or an exact rational
-            /// "24000/1001"
-            #[arg(long, default_value = "24")]
-            fps: String,
-            /// Total frames of the cut
+            /// Skip automatic proxy generation
             #[arg(long)]
-            frames: u64,
+            no_proxy: bool,
+            /// Frame rate: "24", "25", "23.976", or an exact rational
+            /// "24000/1001". Default: probed from the media (ffprobe);
+            /// 24 when probing is impossible.
+            #[arg(long)]
+            fps: Option<String>,
+            /// Total frames of the cut. Default: probed from the media —
+            /// required when ffprobe cannot read it.
+            #[arg(long)]
+            frames: Option<u64>,
             /// Version label shown to clients
             #[arg(long, default_value = "")]
             label: String,
@@ -1734,6 +1740,7 @@ fn run_review(cmd: review_cmd::ReviewCmd) -> anyhow::Result<()> {
             title,
             media,
             proxy,
+            no_proxy,
             fps,
             frames,
             label,
@@ -1747,9 +1754,70 @@ fn run_review(cmd: review_cmd::ReviewCmd) -> anyhow::Result<()> {
                 &members::acting_device(None),
                 cairn_core::rbac::Permission::ManageReview,
             )?;
-            let fps = review::parse_fps(&fps)
+            // rate + duration: explicit flags win, ffprobe fills the rest,
+            // honest failure when neither knows (a guessed frame count
+            // corrupts every comment timecode after it — dogfood #1)
+            let probed = review::probe_media(&Path::new(&root).join(&media));
+            let fps_spec = match (&fps, &probed) {
+                (Some(f), _) => f.clone(),
+                (None, Some((n, d, _))) => {
+                    println!("probed {media}: {n}/{d} fps");
+                    format!("{n}/{d}")
+                }
+                (None, None) => "24".to_string(),
+            };
+            let frames_v = match (frames, &probed) {
+                (Some(f), _) => f,
+                (None, Some((_, _, fr))) => {
+                    println!("probed {media}: {fr} frames");
+                    *fr
+                }
+                (None, None) => anyhow::bail!(
+                    "cannot determine the cut's frame count: pass --frames \
+                     (ffprobe could not read {media})"
+                ),
+            };
+            let fps = review::parse_fps(&fps_spec)
                 .map_err(|e| anyhow::anyhow!("--fps: {e}"))
                 .unwrap();
+            // proxy: explicit > generated > none (guests then stream the
+            // full file — publish never fails on a transcode problem)
+            let proxy_rel = match proxy {
+                Some(p) => Some(p),
+                None if !no_proxy => {
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis() as i64)
+                        .unwrap_or(0);
+                    match cairn_proxy::pipeline::generate(
+                        Path::new(&root),
+                        &media,
+                        &cairn_proxy::model::ProxyProfile::review(),
+                        &cairn_proxy::transcode::FfmpegTranscoder,
+                        now,
+                    ) {
+                        Ok(entry) => {
+                            println!(
+                                "proxy: {} ({} bytes, {:.1}% of source)",
+                                entry.proxy_rel,
+                                entry.bytes,
+                                100.0 * entry.bytes as f64
+                                    / std::fs::metadata(Path::new(&root).join(&media))
+                                        .map(|m| m.len().max(1) as f64)
+                                        .unwrap_or(1.0)
+                            );
+                            Some(entry.proxy_rel)
+                        }
+                        Err(e) => {
+                            println!(
+                                "note: no proxy generated ({e}) — guests stream the full file"
+                            );
+                            None
+                        }
+                    }
+                }
+                None => None,
+            };
             let timeline_fp = timeline.map(|p| {
                 let (tl, _) = load_timeline_sidecar(&p)
                     .map_err(|e| anyhow::anyhow!("timeline {p}: {e}"))
@@ -1760,15 +1828,16 @@ fn run_review(cmd: review_cmd::ReviewCmd) -> anyhow::Result<()> {
                 Path::new(&root),
                 title.as_deref(),
                 &media,
-                proxy.as_deref(),
+                proxy_rel.as_deref(),
                 fps,
-                frames,
+                frames_v,
                 &label,
                 timeline_fp.as_deref(),
                 snapshot.as_deref(),
                 &by,
             )?;
             println!("published v{n} to the review stack");
+            println!("next: cairn review link --note 'client' (mint a guest link)");
         }
         ReviewCmd::Link {
             root,
