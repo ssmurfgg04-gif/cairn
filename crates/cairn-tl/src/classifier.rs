@@ -24,6 +24,27 @@ pub mod class {
     pub const C8: u8 = 8; // INSERT both, same slot: auto-with-note
     pub const C9: u8 = 9; // TRACK_REMOVE vs ops inside: HUMAN
     pub const C10: u8 = 10; // structural mismatch: REFUSE
+                            // Round 20 (ADR-0023), semantic policy ONLY: frame-disjoint re-cuts of
+                            // the same element auto-merge with a note. Distinct from C3 (which stays
+                            // HUMAN in the default conservative policy) so telemetry can tell the two
+                            // apart without ambiguity.
+    pub const C11: u8 = 11; // semantic: different edges of the same clip: auto-with-note
+}
+
+/// Merge policy (ADR-0023): which interacting pairs escalate to a human.
+/// The policy NEVER defaults to semantic — every editor opts in themselves
+/// (`--semantic` on tl-merge, or the per-device `semantic_merge` flag on the
+/// daemon surface). Conservative is bit-for-bit the Round-19 behavior.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub enum Policy {
+    /// Default. Any same-creative-parameter pair (C3) is withheld for a human.
+    #[default]
+    Conservative,
+    /// Zero-touch semantic: frame-disjoint edits to the same element
+    /// (a head-only re-cut vs a tail-only re-cut) auto-merge as C11.
+    /// Same-edge edits are still C3/HUMAN — "one cut at 00:01:23, the other at
+    /// 00:01:24" still interrupts the editor.
+    Semantic,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -174,11 +195,11 @@ fn op_in_base_track(op: &Op, base_track: usize) -> bool {
     }
 }
 
-/// Classify an INTERACTING pair. Total by construction: every arm is explicit
-/// and the final arm is a guarded C0 for genuinely disjoint shapes (the
-/// interaction precondition makes reaching it a bug — the tests assert the
-/// reachable arm set exactly).
-pub fn classify_pair(ours: &Op, theirs: &Op) -> PairVerdict {
+/// Classify an INTERACTING pair under a [`Policy`]. Total by construction:
+/// every arm is explicit and the final arm is a guarded C0 for genuinely
+/// disjoint shapes (the interaction precondition makes reaching it a bug —
+/// the tests assert the reachable arm set exactly).
+pub fn classify_pair(ours: &Op, theirs: &Op, policy: Policy) -> PairVerdict {
     use Verdict::{Auto, AutoNote, Human};
     let (o, t) = (kind_of(ours), kind_of(theirs));
     let pair = (o, t);
@@ -231,6 +252,17 @@ pub fn classify_pair(ours: &Op, theirs: &Op) -> PairVerdict {
         (K::Trim, K::Trim) => {
             if identical(ours, theirs) {
                 PairVerdict { class: class::C6, verdict: Auto, note: "identical trims — applied once".into(), once: true }
+            } else if policy == Policy::Semantic && frame_disjoint_edges(ours, theirs) {
+                // ADR-0023: ours re-cut the head, theirs re-cut the tail (or
+                // vice versa) — different frames of the same clip, both edits
+                // are mechanically composable. AutoNote so the report still
+                // shows exactly what the machine decided on the editor's behalf.
+                PairVerdict {
+                    class: class::C11,
+                    verdict: AutoNote,
+                    note: "frame-disjoint re-cuts (different edges of the same clip) — both apply, semantic policy".into(),
+                    once: false,
+                }
             } else {
                 PairVerdict {
                     class: class::C3,
@@ -458,6 +490,34 @@ fn kind_of(op: &Op) -> K {
     }
 }
 
+/// Frame-disjoint trims: one side touched ONLY the in-edge (head), the other
+/// ONLY the out-edge (tail). The deltas are declarative and base-free, so
+/// this is exact — no silent-loss hole. Both edges changed by one side, or
+/// the SAME edge changed by both, is NOT disjoint (that is C3).
+fn frame_disjoint_edges(ours: &Op, theirs: &Op) -> bool {
+    match (ours, theirs) {
+        (
+            Op::Trim {
+                in_delta: i1,
+                out_delta: o1,
+                ..
+            },
+            Op::Trim {
+                in_delta: i2,
+                out_delta: o2,
+                ..
+            },
+        ) => {
+            let ours_head_only = !i1.is_zero() && o1.is_zero();
+            let theirs_tail_only = i2.is_zero() && !o2.is_zero();
+            let ours_tail_only = i1.is_zero() && !o1.is_zero();
+            let theirs_head_only = !i2.is_zero() && o2.is_zero();
+            (ours_head_only && theirs_tail_only) || (ours_tail_only && theirs_head_only)
+        }
+        _ => false,
+    }
+}
+
 fn same_target(ours: &Op, theirs: &Op) -> bool {
     match (ours, theirs) {
         (
@@ -561,41 +621,71 @@ mod tests {
 
     #[test]
     fn table_total_and_correct() {
+        // every existing call pins the CONSERVATIVE policy: Round-19
+        // behavior must not drift by one bit when the policy lands.
         // C6: remove both
-        let v = classify_pair(&remove(Side::Ours), &remove(Side::Theirs));
+        let v = classify_pair(
+            &remove(Side::Ours),
+            &remove(Side::Theirs),
+            Policy::Conservative,
+        );
         assert_eq!((v.class, v.verdict), (class::C6, Verdict::Auto));
         // C7: remove vs trim
-        let v = classify_pair(&remove(Side::Ours), &trim(Side::Theirs, 4, 0));
+        let v = classify_pair(
+            &remove(Side::Ours),
+            &trim(Side::Theirs, 4, 0),
+            Policy::Conservative,
+        );
         assert_eq!((v.class, v.verdict), (class::C7, Verdict::Human));
-        // C3: trim vs trim different
-        let v = classify_pair(&trim(Side::Ours, 4, 0), &trim(Side::Theirs, 0, 4));
+        // C3: trim vs trim different (frame-disjoint edges — still HUMAN
+        // under the default policy; this is the opt-in line)
+        let v = classify_pair(
+            &trim(Side::Ours, 4, 0),
+            &trim(Side::Theirs, 0, 4),
+            Policy::Conservative,
+        );
         assert_eq!((v.class, v.verdict), (class::C3, Verdict::Human));
         // trim vs trim identical → auto-once
-        let v = classify_pair(&trim(Side::Ours, 4, 0), &trim(Side::Theirs, 4, 0));
+        let v = classify_pair(
+            &trim(Side::Ours, 4, 0),
+            &trim(Side::Theirs, 4, 0),
+            Policy::Conservative,
+        );
         assert_eq!((v.class, v.verdict), (class::C6, Verdict::Auto));
         // C2: different attr keys
         let v = classify_pair(
             &attr(Side::Ours, AttrKind::Name, "a"),
             &attr(Side::Theirs, AttrKind::Enabled, "false"),
+            Policy::Conservative,
         );
         assert_eq!((v.class, v.verdict), (class::C2, Verdict::Auto));
         // C3: same key different values
         let v = classify_pair(
             &attr(Side::Ours, AttrKind::Name, "a"),
             &attr(Side::Theirs, AttrKind::Name, "b"),
+            Policy::Conservative,
         );
         assert_eq!((v.class, v.verdict), (class::C3, Verdict::Human));
         // same key same value → once
         let v = classify_pair(
             &attr(Side::Ours, AttrKind::Name, "a"),
             &attr(Side::Theirs, AttrKind::Name, "a"),
+            Policy::Conservative,
         );
         assert_eq!((v.class, v.verdict), (class::C6, Verdict::Auto));
         // C8: insert vs insert same slot
-        let v = classify_pair(&insert(Side::Ours, "X"), &insert(Side::Theirs, "Y"));
+        let v = classify_pair(
+            &insert(Side::Ours, "X"),
+            &insert(Side::Theirs, "Y"),
+            Policy::Conservative,
+        );
         assert_eq!((v.class, v.verdict), (class::C8, Verdict::AutoNote));
         // identical inserts → once
-        let v = classify_pair(&insert(Side::Ours, "X"), &insert(Side::Theirs, "X"));
+        let v = classify_pair(
+            &insert(Side::Ours, "X"),
+            &insert(Side::Theirs, "X"),
+            Policy::Conservative,
+        );
         assert_eq!((v.class, v.verdict), (class::C6, Verdict::Auto));
         // C5: move vs trim
         let mv = |side: Side| Op::Move {
@@ -605,10 +695,14 @@ mod tests {
             to: TrackLoc::Base(0),
             slot: Slot::EndOf { track: 0 },
         };
-        let v = classify_pair(&mv(Side::Ours), &trim(Side::Theirs, 4, 0));
+        let v = classify_pair(
+            &mv(Side::Ours),
+            &trim(Side::Theirs, 4, 0),
+            Policy::Conservative,
+        );
         assert_eq!((v.class, v.verdict), (class::C5, Verdict::Auto));
         // C4: move vs move same target
-        let v = classify_pair(&mv(Side::Ours), &mv(Side::Theirs));
+        let v = classify_pair(&mv(Side::Ours), &mv(Side::Theirs), Policy::Conservative);
         assert_eq!((v.class, v.verdict), (class::C4, Verdict::Auto));
         // C4: move vs move different target
         let mv2 = Op::Move {
@@ -618,8 +712,74 @@ mod tests {
             to: TrackLoc::Base(0),
             slot: Slot::Before { track: 0, index: 0 },
         };
-        let v = classify_pair(&mv(Side::Ours), &mv2);
+        let v = classify_pair(&mv(Side::Ours), &mv2, Policy::Conservative);
         assert_eq!((v.class, v.verdict), (class::C4, Verdict::Human));
+    }
+
+    #[test]
+    fn semantic_policy_auto_merges_frame_disjoint_trims() {
+        // the 100x case (ADR-0023): ours re-cuts the head, theirs re-cuts
+        // the tail of the SAME clip — both apply, no human, but a note.
+        let v = classify_pair(
+            &trim(Side::Ours, 4, 0),
+            &trim(Side::Theirs, 0, 4),
+            Policy::Semantic,
+        );
+        assert_eq!((v.class, v.verdict), (class::C11, Verdict::AutoNote));
+        assert!(!v.once, "both edges apply — never deduped");
+        // mirrored direction
+        let v = classify_pair(
+            &trim(Side::Ours, 0, 9),
+            &trim(Side::Theirs, 2, 0),
+            Policy::Semantic,
+        );
+        assert_eq!((v.class, v.verdict), (class::C11, Verdict::AutoNote));
+    }
+
+    #[test]
+    fn semantic_policy_still_escalates_same_edge_and_mixed_trims() {
+        // "one cut at 00:01:23, the other cut at 00:01:24": both sides
+        // re-cut the SAME edge — HUMAN under every policy.
+        let v = classify_pair(
+            &trim(Side::Ours, 4, 0),
+            &trim(Side::Theirs, 2, 0),
+            Policy::Semantic,
+        );
+        assert_eq!((v.class, v.verdict), (class::C3, Verdict::Human));
+        let v = classify_pair(
+            &trim(Side::Ours, 0, 4),
+            &trim(Side::Theirs, 0, 2),
+            Policy::Semantic,
+        );
+        assert_eq!((v.class, v.verdict), (class::C3, Verdict::Human));
+        // one side touched BOTH edges → not disjoint, still HUMAN
+        let v = classify_pair(
+            &trim(Side::Ours, 4, 4),
+            &trim(Side::Theirs, 0, 2),
+            Policy::Semantic,
+        );
+        assert_eq!((v.class, v.verdict), (class::C3, Verdict::Human));
+        // identical trims remain C6-once under the semantic policy too
+        let v = classify_pair(
+            &trim(Side::Ours, 4, 0),
+            &trim(Side::Theirs, 4, 0),
+            Policy::Semantic,
+        );
+        assert_eq!((v.class, v.verdict), (class::C6, Verdict::Auto));
+        // C3 attr conflicts are NOT relaxed by the semantic policy
+        let v = classify_pair(
+            &attr(Side::Ours, AttrKind::Name, "a"),
+            &attr(Side::Theirs, AttrKind::Name, "b"),
+            Policy::Semantic,
+        );
+        assert_eq!((v.class, v.verdict), (class::C3, Verdict::Human));
+        // C7 remove-vs-edit is NOT relaxed either
+        let v = classify_pair(
+            &remove(Side::Ours),
+            &trim(Side::Theirs, 0, 2),
+            Policy::Semantic,
+        );
+        assert_eq!((v.class, v.verdict), (class::C7, Verdict::Human));
     }
 
     #[test]
@@ -651,7 +811,7 @@ mod tests {
             out_delta: Rational::new(1, 24).unwrap(),
         };
         assert!(interacts(&tr, &inside));
-        let v = classify_pair(&tr, &inside);
+        let v = classify_pair(&tr, &inside, Policy::Conservative);
         assert_eq!((v.class, v.verdict), (class::C9, Verdict::Human));
     }
 }

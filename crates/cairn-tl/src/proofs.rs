@@ -270,23 +270,30 @@ fn classifier_body(ours_kind: u8) {
     let ours = bounded_op(ours_kind, Side::Ours, a, b);
     let theirs = bounded_op(theirs_kind, Side::Theirs, a, b);
 
-    // interacting pairs classify (no panic, total match)
+    // interacting pairs classify (no panic, total match) — under BOTH
+    // policies (Round 20/ADR-0023: the semantic policy adds the C11 arm;
+    // concrete loop keeps the state space unchanged)
     if interacts(&ours, &theirs) {
-        let v = classify_pair(&ours, &theirs);
-        // class code is in the C0–C10 wire range
-        assert!(v.class <= 10, "class must be a legal C0–C10 code");
-        // verdict is one of the four closed variants (exhaustive by type;
-        // assert the discriminant so CBMC sees the closed set)
-        let discr = match v.verdict {
-            crate::classifier::Verdict::Auto => 0,
-            crate::classifier::Verdict::AutoNote => 1,
-            crate::classifier::Verdict::Human => 2,
-            crate::classifier::Verdict::Refuse => 3,
-        };
-        assert!(discr <= 3);
-        // destructors are out of scope for this proof (move 3):
-        // skip drop glue for the verdict's note String.
-        std::mem::forget(v);
+        for policy in [
+            crate::classifier::Policy::Conservative,
+            crate::classifier::Policy::Semantic,
+        ] {
+            let v = classify_pair(&ours, &theirs, policy);
+            // class code is in the C0–C11 wire range
+            assert!(v.class <= 11, "class must be a legal C0–C11 code");
+            // verdict is one of the four closed variants (exhaustive by type;
+            // assert the discriminant so CBMC sees the closed set)
+            let discr = match v.verdict {
+                crate::classifier::Verdict::Auto => 0,
+                crate::classifier::Verdict::AutoNote => 1,
+                crate::classifier::Verdict::Human => 2,
+                crate::classifier::Verdict::Refuse => 3,
+            };
+            assert!(discr <= 3);
+            // destructors are out of scope for this proof (move 3):
+            // skip drop glue for the verdict's note String.
+            std::mem::forget(v);
+        }
     } else {
         // disjoint pairs never classify (C0 by definition — the caller treats
         // them as one-sided auto-apply)

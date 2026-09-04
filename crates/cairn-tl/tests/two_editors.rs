@@ -438,3 +438,145 @@ fn track_remove_vs_track_rename_escalates() {
     // V2 kept (removal withheld, deletion never wins silently)
     assert_eq!(merged.tracks.children.len(), 2);
 }
+
+// ---- Round 20 / ADR-0023: the zero-touch semantic policy (opt-in only) ----
+
+use cairn_tl::merge::{merge_with, MergeOptions};
+
+/// THE 100x scenario: Editor A re-cuts the head of a clip, Editor B re-cuts
+/// the tail of the SAME clip. Conservative (default): C3 conflict, human.
+/// Semantic (opt-in): C11 auto-merge — both edges apply, outcome Notes.
+#[test]
+fn semantic_head_vs_tail_recut_auto_merges() {
+    let mut base = doc(vec![("V1", vec![clip("Hero", "hero", 0, 96)])]);
+    stamp(&mut base);
+    let mut a = base.clone();
+    let mut b = base.clone();
+    // Editor A: head re-cut — in point 6 frames later
+    a.tracks.children[0].children[0].source_range = Some(TimeRange {
+        start: tv(6, 24),
+        duration: tv(90, 24),
+    });
+    // Editor B: tail re-cut — 8 frames off the end
+    b.tracks.children[0].children[0].source_range = Some(TimeRange {
+        start: tv(0, 24),
+        duration: tv(88, 24),
+    });
+
+    // default policy: bit-for-bit the Round-19 behavior — conflict
+    let (_, conservative) = merge(&base, &a, &b).unwrap();
+    assert_eq!(conservative.outcome, Outcome::Conflicts);
+    assert!(!conservative.semantic);
+    assert_eq!(conservative.to_json()["policy"], "conservative");
+
+    // opt-in semantic policy: auto-merge with a note
+    let (merged, report) = merge_with(&base, &a, &b, &MergeOptions { semantic: true }).unwrap();
+    assert_eq!(
+        report.outcome,
+        Outcome::Notes,
+        "frame-disjoint re-cuts auto-merge under the semantic policy"
+    );
+    assert!(report.semantic);
+    let j = report.to_json();
+    assert_eq!(j["policy"], "semantic");
+    assert_eq!(j["histogram"]["C11"], 1);
+    // BOTH edits composed exactly: in 6, 96 - 6 - 8 = 82
+    let hero = &merged.tracks.children[0].children[0];
+    assert_eq!(hero.source_range.as_ref().unwrap().start.value.num, 6);
+    assert_eq!(hero.source_range.as_ref().unwrap().duration.value.num, 82);
+}
+
+/// The interruption rule: "one cut at 00:01:23, the other at 00:01:24" —
+/// both sides re-cut the SAME edge. Human, under EVERY policy.
+#[test]
+fn semantic_same_edge_recut_still_conflicts() {
+    let mut base = doc(vec![("V1", vec![clip("Hero", "hero", 0, 96)])]);
+    stamp(&mut base);
+    let mut a = base.clone();
+    let mut b = base.clone();
+    // both re-cut the HEAD, differently (A cuts 6, B cuts 10)
+    a.tracks.children[0].children[0].source_range = Some(TimeRange {
+        start: tv(6, 24),
+        duration: tv(90, 24),
+    });
+    b.tracks.children[0].children[0].source_range = Some(TimeRange {
+        start: tv(10, 24),
+        duration: tv(86, 24),
+    });
+    for options in [
+        MergeOptions { semantic: false },
+        MergeOptions { semantic: true },
+    ] {
+        let (merged, report) = merge_with(&base, &a, &b, &options).unwrap();
+        assert_eq!(
+            report.outcome,
+            Outcome::Conflicts,
+            "same-edge re-cuts escalate under every policy"
+        );
+        // base kept (both withheld)
+        assert_eq!(
+            merged.tracks.children[0].children[0]
+                .source_range
+                .as_ref()
+                .unwrap()
+                .duration
+                .value
+                .num,
+            96
+        );
+    }
+}
+
+/// The full customer pitch in one timeline: A moves the clip to another
+/// track (C2, always auto), B grades it (C2, always auto), AND B also
+/// re-cuts the tail while A re-cut the head (C11, semantic only). Under
+/// semantic the whole thing converges with zero human interrupts.
+#[test]
+fn semantic_full_pitch_move_grade_and_disjoint_recuts() {
+    let mut base = doc(vec![
+        ("V1", vec![clip("Hero", "hero", 0, 96)]),
+        ("V2", vec![]),
+    ]);
+    stamp(&mut base);
+    let mut a = base.clone();
+    let mut b = base.clone();
+
+    // A: move Hero V1 -> V2
+    let hero = a.tracks.children[0].children.remove(0);
+    a.tracks.children[1].children.push(hero);
+    // A also re-cuts the head
+    a.tracks.children[1].children[0].source_range = Some(TimeRange {
+        start: tv(6, 24),
+        duration: tv(90, 24),
+    });
+
+    // B: grade + tail re-cut (on B's V1 copy)
+    b.tracks.children[0].children[0].effects = vec![Effect {
+        schema: "Effect.1".into(),
+        name: "warm-grade".into(),
+        effect_name: "org.color.warm".into(),
+        enabled: true,
+        metadata: JsonMap::new(),
+        extra: JsonMap::new(),
+    }];
+    b.tracks.children[0].children[0].source_range = Some(TimeRange {
+        start: tv(0, 24),
+        duration: tv(88, 24),
+    });
+
+    // conservative: the trim pair escalates (move/grade auto, trims C3)
+    let (_, conservative) = merge(&base, &a, &b).unwrap();
+    assert_eq!(conservative.outcome, Outcome::Conflicts);
+
+    // semantic: everything lands — Notes only
+    let (merged, report) = merge_with(&base, &a, &b, &MergeOptions { semantic: true }).unwrap();
+    assert_eq!(report.outcome, Outcome::Notes);
+    // Hero ended up on V2 (A's move won positionally), graded by B,
+    // head-cut by A and tail-cut by B: in=6, dur=96-6-8=82
+    let v2 = &merged.tracks.children[1];
+    assert_eq!(v2.children.len(), 1);
+    let hero = &v2.children[0];
+    assert_eq!(hero.effects.len(), 1);
+    assert_eq!(hero.source_range.as_ref().unwrap().start.value.num, 6);
+    assert_eq!(hero.source_range.as_ref().unwrap().duration.value.num, 82);
+}

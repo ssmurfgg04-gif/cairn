@@ -56,12 +56,17 @@ pub struct MergeReport {
     pub histogram: BTreeMap<u8, usize>,
     pub verdicts: Vec<VerdictRecord>,
     pub stats: MergeStats,
+    /// The policy this merge ran under (ADR-0023). A C11 verdict can only
+    /// appear when this is `true`; the JSON form records it explicitly so a
+    /// merge artifact is self-describing.
+    pub semantic: bool,
 }
 
 impl MergeReport {
     /// Machine-readable report JSON (`.cairn-timeline/reports/<seq>.json`).
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
+            "policy": if self.semantic { "semantic" } else { "conservative" },
             "outcome": match self.outcome {
                 Outcome::Clean => "clean",
                 Outcome::Notes => "notes",
@@ -90,12 +95,46 @@ impl MergeReport {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MergeRefusal(pub String);
 
-/// Merge three timelines. Which side is "ours" is decided by the CALLER
-/// (fencing-token policy, SPEC §8 — the save under the surviving fence).
+/// Merge policy knobs (ADR-0023). Defaults are bit-for-bit the Round-19
+/// behavior: conservative, zero-touch OFF. Every editor opts into semantic
+/// themselves — never a project-wide or role-wide default.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MergeOptions {
+    /// Zero-touch semantic merge: frame-disjoint edits to the same element
+    /// (a head-only vs a tail-only re-cut) auto-merge (C11) instead of
+    /// escalating C3. `false` by default.
+    pub semantic: bool,
+}
+
+impl MergeOptions {
+    fn policy(&self) -> classifier::Policy {
+        if self.semantic {
+            classifier::Policy::Semantic
+        } else {
+            classifier::Policy::Conservative
+        }
+    }
+}
+
+/// Merge three timelines under the default (conservative) policy.
+/// Which side is "ours" is decided by the CALLER (fencing-token policy,
+/// SPEC §8 — the save under the surviving fence).
 pub fn merge(
     base: &Timeline,
     ours: &Timeline,
     theirs: &Timeline,
+) -> Result<(Timeline, MergeReport), MergeRefusal> {
+    merge_with(base, ours, theirs, &MergeOptions::default())
+}
+
+/// Merge three timelines with an explicit policy (ADR-0023). The report
+/// records the policy so a merge artifact is self-describing: a C11 verdict
+/// can only exist under `"policy": "semantic"`.
+pub fn merge_with(
+    base: &Timeline,
+    ours: &Timeline,
+    theirs: &Timeline,
+    options: &MergeOptions,
 ) -> Result<(Timeline, MergeReport), MergeRefusal> {
     let base_f = identity::flatten(base);
     let ours_f = identity::flatten(ours);
@@ -110,6 +149,7 @@ pub fn merge(
         outcome: Outcome::Clean,
         histogram: BTreeMap::new(),
         verdicts: Vec::new(),
+        semantic: options.semantic,
         stats: MergeStats {
             ops_ours: ours_ops.len(),
             ops_theirs: theirs_ops.len(),
@@ -126,7 +166,7 @@ pub fn merge(
             if !classifier::interacts(o, t) {
                 continue;
             }
-            let v = classifier::classify_pair(o, t);
+            let v = classifier::classify_pair(o, t, options.policy());
             *report.histogram.entry(v.class).or_insert(0) += 1;
             report.verdicts.push(VerdictRecord {
                 class: v.class,
@@ -174,7 +214,7 @@ pub fn merge(
         working.assemble()
     };
 
-    merge_timeline_fields(base, ours, theirs, &mut report, merged_final(&merged));
+    let merged = merge_timeline_fields(base, ours, theirs, &mut report, merged);
 
     report.outcome = if report.verdicts.iter().any(|v| v.verdict == Verdict::Human) {
         Outcome::Conflicts
@@ -195,18 +235,14 @@ pub fn merge(
     Ok((merged, report))
 }
 
-fn merged_final(t: &Timeline) -> &Timeline {
-    t
-}
-
 fn merge_timeline_fields(
     base: &Timeline,
     ours: &Timeline,
     theirs: &Timeline,
     report: &mut MergeReport,
-    merged: &Timeline,
+    mut merged: Timeline,
 ) -> Timeline {
-    let mut out = merged.clone();
+    let out = &mut merged;
     let conflict = |note: String, report: &mut MergeReport| {
         *report.histogram.entry(classifier::class::C3).or_insert(0) += 1;
         report.verdicts.push(VerdictRecord {
@@ -250,7 +286,7 @@ fn merge_timeline_fields(
     } else if theirs.global_start_time != base.global_start_time {
         out.global_start_time = theirs.global_start_time;
     }
-    out
+    merged
 }
 
 /// One materialized item: element + merge identity + base origin (None for
