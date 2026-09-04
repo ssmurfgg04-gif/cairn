@@ -22,6 +22,8 @@
 //! in `target/release/bundle/`. HKCU Run registration stays with
 //! install.ps1 (cairn-tray autostart), per ADR-0016.
 
+#![deny(unsafe_code)]
+
 // The window's job is to exist; everything else lives in the served page.
 fn main() {
     tauri::Builder::default()
