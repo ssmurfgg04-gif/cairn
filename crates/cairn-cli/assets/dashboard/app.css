@@ -42,6 +42,9 @@
 
 html { color-scheme: light; }
 
+/* the hidden attribute must win over author display rules */
+[hidden] { display: none !important; }
+
 body {
   background: var(--paper);
   color: var(--ink);

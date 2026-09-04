@@ -30,6 +30,10 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html { color-scheme: dark; }
 
+/* the hidden attribute must win over author display rules (icon-btn svg,
+   notfound, composer, wave all set display) */
+[hidden] { display: none !important; }
+
 body {
   background: var(--bg);
   color: var(--ink);
