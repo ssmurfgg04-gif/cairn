@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 cairn-tl = { path = "../cairn-tl" }
 cairn-core = { path = "../cairn-core" }
+cairn-p2p = { path = "../cairn-p2p" }
 cairn-store = { path = "../cairn-store" }
 cairn-fs-win = { path = "../cairn-fs-win" }
 cairn-sync = { path = "../cairn-sync" }
@@ -19,6 +20,7 @@ cairn-proto = { path = "../cairn-proto" }
 cairn-server = { path = "../cairn-server" }
 tonic = { workspace = true }
 prost = { workspace = true }
+async-trait = { workspace = true }
 tokio-stream = "0.1"
 tokio = { workspace = true }
 clap = { workspace = true }

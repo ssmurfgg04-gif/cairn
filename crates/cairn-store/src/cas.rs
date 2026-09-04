@@ -161,6 +161,25 @@ impl Cas {
         ))
     }
 
+    /// Enumerate every locally-owned chunk hash in hash order (deterministic).
+    /// The swarm's HAVE bloom is built from this (ADR-0017 §6: the serving set
+    /// is the blobs table, not the file rows).
+    pub fn list_hashes(&self) -> Vec<Hash> {
+        let Ok(db) = self.db.lock() else {
+            return Vec::new(); // poisoned lock: advertise nothing, serve nothing
+        };
+        let Ok(mut stmt) = db.prepare("SELECT hash FROM blobs ORDER BY hash") else {
+            return Vec::new();
+        };
+        stmt.query_map([], |r| r.get::<_, String>(0))
+            .map(|rows| {
+                rows.filter_map(|r| r.ok())
+                    .filter_map(|hex| Hash::from_hex(&hex))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// Local GC: evict least-recently-used unpinned chunks down to `target_bytes`.
     /// Returns evicted hashes. Pinned chunks are never touched (SPEC §10).
     pub fn evict_to(&self, target_bytes: u64) -> Result<Vec<String>, CairnError> {

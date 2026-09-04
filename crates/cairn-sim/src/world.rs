@@ -476,6 +476,7 @@ mod w5_tests {
             engine.sync_pass().await.expect("sync pass");
             cairn_sync::hydrate::materialize_missing(
                 engine.plane.as_ref(),
+                None, // sim: plane-only hydration (swarm transport is ADR-0017, sim-side TBD)
                 &engine.store,
                 &engine.cas,
                 &engine.headers,
