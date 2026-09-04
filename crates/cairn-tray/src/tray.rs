@@ -37,7 +37,8 @@ use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::Shell::{
     SHBrowseForFolderW, SHGetPathFromIDListW, ShellExecuteW, Shell_NotifyIconW, BROWSEINFOW,
-    NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
+    NIF_ICON, NIF_INFO, NIF_MESSAGE, NIF_TIP, NIIF_ERROR, NIIF_INFO, NIM_ADD, NIM_DELETE,
+    NIM_MODIFY, NOTIFYICONDATAW, NOTIFY_ICON_INFOTIP_FLAGS,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreateIconFromResourceEx, CreatePopupMenu, CreateWindowExW, DefWindowProcW,
@@ -130,13 +131,69 @@ impl LiveStatus {
 /// Shared tray state (status worker thread → message loop).
 struct Shared {
     status: Mutex<LiveStatus>,
+    /// last status the balloon pass SAW — transitions, not polls, drive
+    /// notifications (a 3 s cadence of "syncing… syncing…" is noise)
+    prev_status: Mutex<Option<LiveStatus>>,
     /// set after `connect…` runs so the next poll re-reads eagerly
     poll_now: AtomicBool,
+}
+
+/// Balloon (tray toast) emission rules — the "push" the tray never had:
+/// * daemon LOST or a NEW error: red, always
+/// * sync COMPLETED (in-flight chunks drained to zero with files known):
+///   one quiet info balloon — the "I'm alive and done" moment
+/// * anything else (still syncing, still up, error unchanged): silence
+/// Returns (title, body, NIIF level).
+fn notify_transition(
+    prev: Option<&LiveStatus>,
+    now: &LiveStatus,
+) -> Option<(&'static str, String, NOTIFY_ICON_INFOTIP_FLAGS)> {
+    let prev = prev?;
+    if prev.daemon_up && !now.daemon_up {
+        return Some((
+            "Cairn",
+            "daemon unreachable — restart it from your terminal".into(),
+            NIIF_ERROR,
+        ));
+    }
+    if !prev.daemon_up && !now.daemon_up {
+        return None; // still down: the tooltip carries it
+    }
+    let new_error = now
+        .last_error
+        .as_deref()
+        .or_else(|| {
+            if now.project_state.as_deref() == Some("error") {
+                Some("project in error")
+            } else {
+                None
+            }
+        })
+        .filter(|e| Some(*e) != prev.last_error.as_deref());
+    if let Some(e) = new_error {
+        let body: String = e.chars().take(200).collect();
+        return Some(("Cairn — attention", body, NIIF_ERROR));
+    }
+    let drained = now.daemon_up
+        && now.pending_outbox == Some(0)
+        && now.project_state.as_deref() == Some("synced")
+        && now.files_synced.unwrap_or(0) > 0
+        && (prev.pending_outbox.unwrap_or(0) > 0
+            || prev.project_state.as_deref() != Some("synced"));
+    if drained {
+        return Some((
+            "Cairn",
+            format!("all files synced ({} files)", now.files_synced.unwrap_or(0)),
+            NIIF_INFO,
+        ));
+    }
+    None
 }
 
 pub fn run() {
     let shared = Arc::new(Shared {
         status: Mutex::new(LiveStatus::default()),
+        prev_status: Mutex::new(None),
         poll_now: AtomicBool::new(true),
     });
 
@@ -298,6 +355,37 @@ fn set_tip(nid: &mut NOTIFYICONDATAW, tip: &str) {
     nid.szTip = buf;
 }
 
+/// Wide-copy with a budget (balloon text 255, title 63 — never truncate
+/// mid-surrogate).
+fn set_wide(dst: &mut [u16], s: &str) {
+    let budget = dst.len().saturating_sub(1);
+    let mut n = 0usize;
+    for (i, unit) in s.encode_utf16().enumerate() {
+        if i >= budget {
+            break;
+        }
+        dst[i] = unit;
+        n = i + 1;
+    }
+    dst[n] = 0;
+}
+
+/// Fire the balloon toast (Windows renders it as a toast for tray apps
+/// without a toast identity — the zero-dependency path).
+unsafe fn show_balloon(hwnd: HWND, title: &str, body: &str, level: NOTIFY_ICON_INFOTIP_FLAGS) {
+    let mut nid = NOTIFYICONDATAW {
+        cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
+        hWnd: hwnd,
+        uID: 1,
+        uFlags: NIF_INFO,
+        dwInfoFlags: level,
+        ..Default::default()
+    };
+    set_wide(&mut nid.szInfo, body);
+    set_wide(&mut nid.szInfoTitle, title);
+    let _ = Shell_NotifyIconW(NIM_MODIFY, &nid);
+}
+
 unsafe fn load_cairn_icon() -> HICON {
     // Embedded .ico bytes → icon. CreateIconFromResourceEx expects the icon
     // RESOURCE bits: the bytes AFTER the ICONDIR+ICONDIRENTRY header (the
@@ -365,6 +453,14 @@ unsafe extern "system" fn wnd_proc(
         WM_STATUS => {
             if let Some(shared) = shared_of(hwnd) {
                 if let Ok(st) = shared.status.lock() {
+                    // transition detection FIRST (it needs the previous state
+                    // before we overwrite it), then the tooltip update
+                    let toast = shared.prev_status.lock().ok().and_then(|mut prev| {
+                        let now = st.clone();
+                        let t = notify_transition(prev.as_ref(), &now);
+                        *prev = Some(now);
+                        t
+                    });
                     let mut nid = NOTIFYICONDATAW {
                         cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
                         hWnd: hwnd,
@@ -374,6 +470,9 @@ unsafe extern "system" fn wnd_proc(
                     };
                     set_tip(&mut nid, &st.summary());
                     let _ = Shell_NotifyIconW(NIM_MODIFY, &nid);
+                    if let Some((title, body, level)) = toast {
+                        show_balloon(hwnd, title, &body, level);
+                    }
                 }
             }
             LRESULT(0)

@@ -1296,7 +1296,7 @@ mod tests {
         )
         .await;
         assert!(r.is_ok());
-        assert!(crate::audit::AuditFile::load(&root).unwrap().len() == 1);
+        assert_eq!(crate::audit::AuditFile::load(&root).unwrap().len(), 1);
 
         // corrupt members.json: fail closed (precondition), never open
         std::fs::create_dir_all(root.join(".cairn")).unwrap();

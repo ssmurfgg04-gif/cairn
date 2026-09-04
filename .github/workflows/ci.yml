@@ -51,6 +51,25 @@ jobs:
           prefix-key: win-cross
       - run: cargo check --target x86_64-pc-windows-msvc -p cairn-shell-ext -p cairn-tray
 
+  # ADR-0022: the Tauri 2 native window (crates/cairn-app — a STANDALONE
+  # package: its dep tree is Tauri's and the workspace's linux gates have
+  # no webkit2gtk). windows-latest ships WebView2, so this is the only
+  # place the window crate compiles in CI; `cargo check` is the gate, the
+  # NSIS bundle is a local release step (`cargo tauri build`).
+  tauri-check:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: crates/cairn-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/cairn-app
+          prefix-key: tauri
+      - run: cargo check
+
   # WO6-9 security sweep: RustSec advisories + the repo's own gate script
   # (secret-shape scan, unsafe policy, path-traversal gates, TLS fail-closed, I3).
   security:

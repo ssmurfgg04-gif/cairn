@@ -1,0 +1,27 @@
+[package]
+name = "cairn-app"
+version = "4.0.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "Cairn native window (Tauri 2): the local console at 127.0.0.1:17778 in the OS webview — ~6 MB wrapper, no bundled browser"
+publish = false
+
+# Standalone ON PURPOSE (workspace `exclude`): the workspace gates run on
+# Linux runners without webkit2gtk, and this crate's dependency tree is
+# Tauri's, not ours. `cargo check -p cairn-app` runs on the windows CI job
+# (tauri-check) where WebView2 is present; macOS builds against WKWebView.
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+
+# keep the binary honest and tiny: no plugins, no updater, no shell-open,
+# no custom protocol — the window is a viewport onto the daemon's
+# loopback console, nothing else
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true
+panic = "abort"

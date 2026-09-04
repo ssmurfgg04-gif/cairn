@@ -20,6 +20,29 @@ Legend: ✅ implemented + tests green · 🟨 implemented, platform-gated / hard
 | M8 | onboarding e2e; doctor; THIRD_PARTY complete; beta runbook | ✅ (docs/runbook-beta.md; onboarding e2e) |
 
 
+
+## Round 18 (2026-09-04) — dogfood → RBAC → window (ADR-0022)
+
+The three-leg directive, in the stated order: live the review loop and
+fix what feels off; enforce the 7-role matrix at the daemon's ctl
+boundary; wrap the hardened flow in the native window. Plus the 12-point
+UI audit and the WAN wiring gap.
+
+| Item | Status | Evidence |
+|---|---|---|
+| Dogfood: the full review loop live | ✅ | `scripts/dogfood_review.sh`: 26 assertions with real ffmpeg media (23.976 + 25 fps, audio) — publish (auto-probe, auto-proxy) → guest link → session/comment/resolve through the portal → export-markers FCP7+OTIO; the 25 fps drift regression and latest_only isolation included. |
+| TC drift (dogfood #1) | ✅ | export-markers used a hardcoded 24: 25 fps markers drifted 1.7 s/min, 23.976 carried ntsc=FALSE. Now the version's TRUE rational (fcpxml_rate_fields + notes_to_otio_at; PAL ntsc=FALSE, 1001 ntsc=TRUE, OTIO carries the rate, frame index unchanged). 3 regression tests. |
+| Guest leak + dead player (dogfood #2/#3) | ✅ | latest_only links could media/comment/resolve HIDDEN versions — all routes now enforce versions_for (404, never confirm existence). Missing proxy fell back: full-res serving + honest proxy_ready chip in the player. |
+| Proxy generation (dogfood #4/#5) | ✅ | odd-height sources FAILED x264 (-2 only evened width) — both axes even + setsar=1, real-ffmpeg regression test; publish auto-probes fps/frames via ffprobe (hand counts corrupted TC bounds) and auto-generates the proxy at a 720p review profile (was 95.5% of source at the 1080 default; 27.9% in the dogfood run). |
+| Daemon-side RBAC | ✅ | rbac_guard() in every mutating ctl handler (attach/detach/set-flag/snapshot/restore/pin/unpin/recall) + the dashboard's HTTP equivalents; acting device = the daemon's enrolled identity; members.json is the authority; corrupt members fail CLOSED. New permissions: AttachRoot / DetachRoot / ManageFlags. |
+| Synced audit ledger | ✅ | `.cairn/audit.json` — a synced project file; content-derived ids (same decision on two machines merges to one entry), bounded to 500 newest, atomic writes; the dashboard Team tab renders the trail. "The audit log is fiction" fixed by making it travel the journal. |
+| Native window (Tauri 2) | ✅/🟨 | `crates/cairn-app`: OS webview on 127.0.0.1:17778, no plugins/IPC/updater; workspace-excluded standalone (linux gates have no webkit) with a `tauri-check` windows-latest CI job. NSIS bundle + tray launch wiring on a real box: next round. |
+| UI audit (12 points) | ✅ | nav renamed Locks/Versions + displayNames; onboarding hero ONLY on the empty state (VLM round-1 verdict applied); Files tab with per-file synced/syncing/conflict/pinned/placeholder badges + meter; Team tab (roster, my role, join-code invite, audit trail); search (/) across projects/files/reviews; quota meter + >95% warning; honest update chip; ? help overlay + g-key nav + scroll-spy; i18n EN/DE/JA/ZH (~90 keys) + language switcher; non-blocking fonts; review portal ? key map + proxy chip. |
+| VLM design review | ✅ | two rounds on live headless-Chromium screenshots (download/round18-ui/): round 1 produced the wizard-removal + weight/contrast fixes; round 2 graded 8/9/8 "hire-worthy". |
+| WAN p2p wiring | ✅/🟨 | the swarm had STUN+punch+relay but SwarmConfig.stun was always None — dormant by omission. Default public STUN list now resolved at swarm join; `--swarm-stun/--swarm-no-stun` persists to swarm/stun; runbook docs/runbooks/wan-p2p.md (VPS signal+relay, NAT-class expectations). Live WAN leg: needs the VPS. |
+| Tray balloon toasts | ✅ | transition-driven (daemon lost / NEW error / sync drained to zero), silence otherwise — never a poll cadence of noise; NIF_INFO balloons render as Windows toasts. Windows-target cross-check clean. |
+| Shell-ext "Open (default editor)" | ✅ | context verb 3 executes the file's own association (never a hard-coded NLE path); cross-checked for the windows target. |
+
 ## Round 17 (2026-09-04) — the design system (ADR-0021): pretty is a feature
 
 The Round-16 verdict was "the gap is not code, it's design system." Round 17

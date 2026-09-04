@@ -170,6 +170,38 @@ pub fn fresh_txid(seed_material: &[u8]) -> [u8; 12] {
     t
 }
 
+/// Public STUN servers tried in order for WAN NAT discovery (one UDP
+/// datagram per attempt — the same egress class as the signal server
+/// itself, which the swarm already talks to). Cloudflare first: anycast,
+/// no-logging terms, port 3478. Override or disable per-home with the
+/// `swarm/stun` store meta ("host:port" or "off").
+pub const DEFAULT_SERVERS: &[&str] = &[
+    "stun.cloudflare.com:3478",
+    "stun.l.google.com:19302",
+    "stun.nextcloud.com:3478",
+];
+
+/// Resolve the first default server DNS can answer (bounded, best
+/// effort). `None` keeps the swarm on signal-server-observed candidates
+/// only — discovery is an enhancement, never a dependency.
+pub async fn resolve_default() -> Option<SocketAddr> {
+    for host in DEFAULT_SERVERS {
+        match tokio::net::lookup_host(host).await {
+            Ok(mut addrs) => {
+                if let Some(a) = addrs.next() {
+                    tracing::debug!(stun = *host, resolved = %a, "default stun server resolved");
+                    return Some(a);
+                }
+            }
+            Err(e) => tracing::debug!(stun = *host, error = %e, "stun dns failed"),
+        }
+    }
+    tracing::warn!(
+        "no default STUN server resolved — WAN punch falls back to signal-observed candidates"
+    );
+    None
+}
+
 /// One Binding round-trip over a synced socket: send, await the matching
 /// response (bounded), return the reflexive address. Non-matching datagrams
 /// (late responses from earlier transactions) are skipped, not fatal.

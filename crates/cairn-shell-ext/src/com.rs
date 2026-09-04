@@ -22,7 +22,8 @@
 
 use std::cell::RefCell;
 use std::ffi::c_void;
-use std::path::PathBuf;
+use std::os::windows::ffi::OsStrExt;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -487,6 +488,12 @@ unsafe extern "system" fn menu_invoke_command(
             project: info.project_id,
             label: String::new(),
         },
+        // "open in the NLE that owns this file's association" — the
+        // right-click the reference shells never gave media people
+        3 => {
+            open_file_default(&first);
+            return S_OK;
+        }
         _ => return E_INVALIDARG,
     };
     run_cairn(&action);
@@ -519,6 +526,21 @@ unsafe fn run_cairn(action: &MenuAction) {
     sei.lpFile = PCWSTR(file_w.as_ptr());
     sei.lpParameters = PCWSTR(params_w.as_ptr());
     sei.nShow = 0; // SW_HIDE: the CLI is quiet on success
+    let _ = ShellExecuteExW(&mut sei);
+}
+
+/// Open a project file with its SYSTEM DEFAULT handler — for media that
+/// is whatever NLE owns the association (.prproj -> Premiere, .drp ->
+/// Resolve). We execute the association, never a hard-coded editor path,
+/// so this stays correct on machines we have never seen.
+unsafe fn open_file_default(path: &Path) {
+    let verb_w = wide("open");
+    let file_w: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+    let mut sei = SHELLEXECUTEINFOW::default();
+    sei.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
+    sei.lpVerb = PCWSTR(verb_w.as_ptr());
+    sei.lpFile = PCWSTR(file_w.as_ptr());
+    sei.nShow = 5; // SW_SHOW: the editor should actually appear
     let _ = ShellExecuteExW(&mut sei);
 }
 

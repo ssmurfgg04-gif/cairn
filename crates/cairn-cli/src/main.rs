@@ -291,6 +291,16 @@ pub enum Cmd {
         /// fingerprint; the code still gates admission).
         #[arg(long)]
         swarm_mdns: bool,
+        /// STUN server for WAN NAT discovery (two studios across the
+        /// internet). Persisted in the home store (`swarm/stun`), so it
+        /// survives restarts. Default: the public server list, tried in
+        /// order (stun.cloudflare.com first).
+        #[arg(long)]
+        swarm_stun: Option<String>,
+        /// Disable STUN discovery entirely (punch via signal-observed
+        /// candidates only; relay still works). Persists.
+        #[arg(long)]
+        swarm_no_stun: bool,
     },
     /// AAF/OMF handoff ledger (ADR-0020 §6): bind exports to picture lock
     Handoff {
@@ -732,7 +742,39 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
             swarm_join_code,
             swarm_dev_key,
             swarm_mdns,
+            swarm_stun,
+            swarm_no_stun,
         } => {
+            // WAN NAT discovery override persists in the home store (the
+            // swarm join reads it later; durable like swarm/signal)
+            if swarm_no_stun {
+                if swarm_stun.is_some() {
+                    return Err(anyhow::anyhow!(
+                        "--swarm-stun and --swarm-no-stun are mutually exclusive"
+                    ));
+                }
+                if let Ok(store) = cairn_store::Store::open(
+                    &home,
+                    std::sync::Arc::new(cairn_core::clock::WallClock),
+                ) {
+                    let _ = store.meta_set("swarm/stun", "off");
+                }
+                tracing::info!("stun discovery disabled (persisted; swarm/stun=off)");
+            } else if let Some(stun) = swarm_stun {
+                // validate early — a typo should fail the flag, not the swarm
+                if !(stun.contains(':') || stun.contains(',')) {
+                    return Err(anyhow::anyhow!(
+                        "--swarm-stun expects host:port (got {stun})"
+                    ));
+                }
+                if let Ok(store) = cairn_store::Store::open(
+                    &home,
+                    std::sync::Arc::new(cairn_core::clock::WallClock),
+                ) {
+                    let _ = store.meta_set("swarm/stun", &stun);
+                }
+                tracing::info!(stun = %stun, "stun server pinned (persisted)");
+            }
             let swarm_signal = if swarm_mdns {
                 // zero-config LAN join: browse for the beacon that matches
                 // the join code's fingerprint (ADR-0019 §4)

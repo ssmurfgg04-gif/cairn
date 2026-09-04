@@ -1,0 +1,37 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "cairn",
+  "version": "4.0.0",
+  "identifier": "studio.cairn.app",
+  "build": {},
+  "app": {
+    "windows": [
+      {
+        "title": "cairn — local console",
+        "url": "http://127.0.0.1:17778/",
+        "label": "console",
+        "width": 1440,
+        "height": 1000,
+        "minWidth": 980,
+        "minHeight": 640,
+        "center": true,
+        "resizable": true,
+        "dragDropEnabled": false
+      }
+    ],
+    "security": {
+      "csp": null
+    },
+    "trayIcon": null
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "app"],
+    "icon": ["icons/cairn.ico"],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "embed"
+      }
+    }
+  }
+}
