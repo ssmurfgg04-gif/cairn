@@ -4,73 +4,105 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cairn Review</title>
+<meta name="theme-color" content="#0b0c0f">
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect x="9" y="3.5" width="6" height="4" rx="1.2" fill="%232f9bff"/><rect x="6.5" y="9" width="11" height="4" rx="1.2" fill="%2365b3ff"/><rect x="3.5" y="14.5" width="17" height="4" rx="1.2" fill="%23f2f3f5"/></svg>'>
 <link rel="stylesheet" href="/assets/review.css">
 </head>
 <body>
 <div id="app" class="shell">
   <aside class="rail">
     <div class="brand">
-      <div class="mark"></div>
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <rect x="9" y="3.5" width="6" height="4" rx="1.2" opacity="0.6"/>
+        <rect x="6.5" y="9" width="11" height="4" rx="1.2" opacity="0.8"/>
+        <rect x="3.5" y="14.5" width="17" height="4" rx="1.2"/>
+      </svg>
       <div class="word">cairn<span> review</span></div>
     </div>
     <div id="meta" class="meta">
       <div class="meta-title" id="title">—</div>
       <div class="meta-sub" id="linknote"></div>
     </div>
-    <nav class="stack" id="versions"></nav>
+    <div>
+      <div class="rail-label">versions</div>
+      <nav class="stack" id="versions" aria-label="versions"></nav>
+    </div>
     <div class="rail-foot">
-      <div class="presence-title">in the room</div>
+      <div class="rail-label">in the room</div>
       <ul id="presence" class="presence"></ul>
     </div>
   </aside>
 
   <main class="stage">
     <div class="viewport" id="viewport">
-      <video id="video" preload="metadata" playsinline></video>
+      <div class="zoomer" id="zoomer">
+        <video id="video" preload="metadata" playsinline></video>
+      </div>
+      <div class="zoom-hud" id="zoom-hud" hidden>100%</div>
       <div class="notfound" id="notfound" hidden>
         <div class="nf-title">This link is not available</div>
         <div class="nf-body">It may have expired or been revoked. Ask your editor for a fresh link.</div>
       </div>
-      <div class="pinlayer" id="pins"></div>
     </div>
 
     <div class="transport">
       <div class="tc-row">
+        <button class="icon-btn accent" id="play" aria-label="play or pause">
+          <svg id="ic-play" width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4 2.5v11l9-5.5-9-5.5z"/></svg>
+          <svg id="ic-pause" width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" hidden><path d="M4 2.5h3v11H4zM9 2.5h3v11H9z"/></svg>
+        </button>
         <div class="tc" id="tc">00:00:00:00</div>
-        <div class="dur" id="dur"></div>
+        <div class="tc-sub" id="framesub">frame 0 / —</div>
         <div class="hint" id="fps"></div>
+        <button class="icon-btn" id="mute" aria-label="mute or unmute">
+          <svg id="ic-vol" width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2 6v4h3l4 3V3L5 6H2z"/><path d="M11 5.5a3.5 3.5 0 0 1 0 5" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/></svg>
+          <svg id="ic-muted" width="15" height="15" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" hidden><path d="M2 6v4h3l4 3V3L5 6H2z"/><path d="M10.5 6.5l4 3M14.5 6.5l-4 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+        </button>
+        <input type="range" id="volume" class="volume" min="0" max="1" step="0.05" value="1" aria-label="volume">
+        <button class="icon-btn text" id="toggle-proxy" hidden>full res</button>
+        <button class="icon-btn text" id="zoom" aria-label="cycle zoom level">1x</button>
+        <button class="icon-btn" id="full" aria-label="toggle fullscreen">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4"/></svg>
+        </button>
       </div>
       <div class="scrub" id="scrub">
+        <canvas id="wave" class="wave" height="30" hidden aria-hidden="true"></canvas>
         <div class="scrub-track" id="track">
+          <div class="scrub-buffer" id="buffer"></div>
           <div class="scrub-fill" id="fill"></div>
           <div class="scrub-head" id="head"></div>
           <div id="marklayer" class="marklayer"></div>
         </div>
       </div>
-      <div class="controls">
-        <button class="btn" id="play" aria-label="play or pause">space</button>
-        <div class="spacer"></div>
-        <button class="btn" id="prevf" aria-label="previous frame">step back</button>
-        <button class="btn" id="nextf" aria-label="next frame">step fwd</button>
-        <div class="spacer"></div>
-        <button class="btn" id="toggle-proxy" hidden>full res</button>
+      <div class="keys">
+        <span><kbd>space</kbd> play</span>
+        <span><kbd>&#8592;</kbd><kbd>&#8594;</kbd> step frame</span>
+        <span><kbd>J</kbd><kbd>K</kbd><kbd>L</kbd> shuttle</span>
+        <span><kbd>N</kbd> add note</span>
+        <span><kbd>F</kbd> fullscreen</span>
       </div>
     </div>
-
-    <section class="notes">
-      <header class="notes-head">
-        <div class="notes-title">notes</div>
-        <div class="notes-count" id="ncount">0</div>
-      </header>
-      <ol id="comments" class="comments"></ol>
-      <form class="composer" id="composer" hidden>
-        <input id="author" class="author" placeholder="your name" maxlength="40" autocomplete="name">
-        <textarea id="body" class="body" placeholder="Note at this frame — be specific" maxlength="2000" rows="2"></textarea>
-        <button class="btn primary" id="submit" type="submit">add note</button>
-      </form>
-      <div class="viewer-note" id="viewer-note" hidden>view-only link — notes are off</div>
-    </section>
   </main>
+
+  <aside class="notes">
+    <header class="notes-head">
+      <div class="notes-title">notes</div>
+      <div class="notes-count" id="ncount">0</div>
+      <div class="filters" id="filters">
+        <button type="button" class="chip active" data-filter="all">all</button>
+        <button type="button" class="chip" data-filter="OPEN">open</button>
+        <button type="button" class="chip" data-filter="RESOLVED">done</button>
+      </div>
+    </header>
+    <ol id="comments" class="comments"></ol>
+    <form class="composer" id="composer" hidden>
+      <div class="composer-head">note at <span class="composer-tc" id="composer-tc">00:00:00:00</span></div>
+      <input id="author" class="author" placeholder="your name" maxlength="40" autocomplete="name" spellcheck="false">
+      <textarea id="body" class="body" placeholder="Be specific — &#8220;tighten after the cut&#8221; beats &#8220;looks off&#8221;" maxlength="2000" rows="2"></textarea>
+      <button class="btn primary" id="submit" type="submit">add note</button>
+    </form>
+    <div class="viewer-note" id="viewer-note" hidden>view-only link — notes are off</div>
+  </aside>
 </div>
 <script src="/assets/review.js"></script>
 </body>

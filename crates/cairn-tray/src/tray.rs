@@ -84,25 +84,35 @@ struct LiveStatus {
 }
 
 impl LiveStatus {
+    /// The tooltip is the product's "I'm alive" light (ADR-0021 §4): it must
+    /// read like plain English, not a log line. Errors are truncated so the
+    /// 128-char NOTIFYICONDATAW tip budget is never the thing that mangles it.
     fn summary(&self) -> String {
         if !self.daemon_up {
             return "Cairn — daemon not running".into();
         }
+        let clip = |s: &str| -> String {
+            if s.chars().count() > 72 {
+                s.chars().take(72).collect::<String>() + "…"
+            } else {
+                s.to_string()
+            }
+        };
         match (self.project_state.as_deref(), self.last_error.as_deref()) {
-            (Some("error"), Some(e)) => format!("Cairn — error: {e}"),
-            (Some("error"), None) => "Cairn — error".into(),
+            (Some("error"), Some(e)) => format!("Cairn — attention: {}", clip(e)),
+            (Some("error"), None) => "Cairn — attention: project in error".into(),
             (Some("syncing"), _) => format!(
                 "Cairn — syncing{}",
                 self.pending_outbox
-                    .map(|p| format!(" ({p} pending)"))
+                    .map(|p| format!(" — {p} chunk{} in flight", if p == 1 { "" } else { "s" }))
                     .unwrap_or_default()
             ),
             (Some("synced"), _) => format!(
-                "Cairn — synced ({} files){}",
+                "Cairn — all files synced ({} files){}",
                 self.files_synced.unwrap_or(0),
                 self.server_reachable
                     .filter(|r| !*r)
-                    .map(|_| " · offline")
+                    .map(|_| " · offline from server")
                     .unwrap_or_default()
             ),
             (Some(s), _) => format!("Cairn — {s}"),

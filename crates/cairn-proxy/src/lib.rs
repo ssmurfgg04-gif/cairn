@@ -20,6 +20,9 @@
 //! * The **review portal streams the proxy first** (cairn-review
 //!   `ReviewVersion::stream_rel`); `?full=1` opts into the original.
 
+// Pure Rust: transcoders are subprocess drivers (ffmpeg), never FFI.
+#![forbid(unsafe_code)]
+
 pub mod model;
 pub mod pipeline;
 pub mod transcode;

@@ -27,6 +27,9 @@
 //! them like any other file, which is the whole trick: review state rides
 //! the same encrypted P2P transport, with zero cloud bytes.
 
+// Pure Rust: axum + tokio, no FFI anywhere.
+#![forbid(unsafe_code)]
+
 pub mod http;
 pub mod model;
 pub mod store;

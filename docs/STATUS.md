@@ -20,6 +20,29 @@ Legend: ✅ implemented + tests green · 🟨 implemented, platform-gated / hard
 | M8 | onboarding e2e; doctor; THIRD_PARTY complete; beta runbook | ✅ (docs/runbook-beta.md; onboarding e2e) |
 
 
+## Round 17 (2026-09-04) — the design system (ADR-0021): pretty is a feature
+
+The Round-16 verdict was "the gap is not code, it's design system." Round 17
+closes it with one token set across three surfaces — the reference app's language
+(aurora, glass, one blue, DM Sans, the .22/.68/.35/1 easing) at taste-skill
+discipline (one accent, hairlines, tabular numerals, honest states, no slop).
+Zero new Rust surface behavior; the review portal gains the missing Frame.io
+player mechanics.
+
+| Item | Status | Evidence |
+|---|---|---|
+| Dashboard redesign (light) | ✅ | `dashboard/app.css` rewritten on ADR-0021 tokens: drifting aurora fields (~0.1 alpha), glass cards (`blur(18px)` + hairline), blue `#087cff` with AA-safe `#0059d1` for text/buttons, staggered rise-in, breathing status dot, tabular stat numerals, restyled tables/flags/doctor, skeleton shimmer, reduced-motion + mobile collapse. `index.html`: brand mark (inline SVG cairn stack) + favicon + onboarding hero. |
+| Onboarding rail | ✅ | `1/3 Connect → 2/3 Sync → 3/3 Ready` over REAL fields (roots attached → cursor>0 + outbox=0 → healthy + zero conflicts); auto-dismisses only when the system is actually ready; CTA focuses the real attach input. No fake progress states. |
+| Honest-data hardening | ✅ | every server string HTML-escaped before `innerHTML` (paths, error strings); storage stats moved to the REAL `/api/v1/storage` endpoint with the disk line; I1 gauge handles the daemon's honest `null`. |
+| Review portal redesign (dark) | ✅ | 3-column shell (versions / player / notes), collapsing responsive; dark tokens + 2% aurora; glass transport bar; big tabular TC + `frame N / total`; buffered-range bar; marker pins that scale on hover; version cards with latest/proxy badges; avatar initials in presence and notes; open/done comment filters; composer with live "note at TC" chip tracking the playhead. |
+| Player mechanics | ✅ | J/K/L shuttle (L native ×2..×8; J synthetic rewind ticker — negative playbackRate is not portable; K stops), arrows step frames (shift ×10, ↑/↓ ~1s, Home/End), N focuses composer, M mute, F fullscreen; zoom 1x/2x/4x with clamped drag-pan, dblclick toggle, HUD; click-vs-drag threshold so play toggle never fights panning; volume + mute persisted per browser. |
+| Honest waveform | ✅ | canvas peaks drawn ONLY from actually-decoded audio when the media is ≤ 40 MiB (HEAD content-length gate); decode failure hides the canvas — no fake bars ever; played region tints accent; redraws on resize/dpr. |
+| Tray tooltip | ✅ | plain-English states ("all files synced (N files)", "syncing — N chunks in flight", "attention: …" clipped to 72 chars for the 128-wchar tip budget) on the existing 3 s NIM_MODIFY path. |
+| Gates | ✅ | `node --check` both JS files; every `getElementById` cross-checked against markup (zero dangling IDs); `cargo fmt` clean; windows-target check on cairn-tray; cairn-cli (7) + cairn-review (17) + cairn-proxy (11) test suites green (assets are `include_str!` — compile = ship). |
+| CI un-red | ✅ | The one failing job on 8a48ba7 was `security` — the sweep's unsafe-policy gate flagged the round-16 crates; `#![forbid(unsafe_code)]` added to cairn-proxy + cairn-review (both pure Rust, verified: compile + all tests still green; local sweep now PASS; cargo-audit itself was already green in CI). kani + nle-matrix were green on 8a48ba7. |
+
+
+
 ## Round 16 (2026-09-04) — the Frame.io five: review loop, proxies, RBAC, handoff (ADR-0020)
 
 The product-shaped critique: editors need client NOTES, not faster sync. Round 16

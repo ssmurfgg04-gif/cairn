@@ -4,19 +4,27 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>cairn — local console</title>
+<meta name="theme-color" content="#f5f6f8">
+<link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect x="9" y="3.5" width="6" height="4" rx="1.2" fill="%23087cff"/><rect x="6.5" y="9" width="11" height="4" rx="1.2" fill="%230059d1"/><rect x="3.5" y="14.5" width="17" height="4" rx="1.2" fill="%230a0a0a"/></svg>'>
 <link rel="stylesheet" href="/assets/app.css">
 </head>
 <body>
 <div class="frame">
   <aside class="side">
     <div class="brand">
-      <span class="brand-mark">▲</span>
+      <span class="brand-mark" aria-hidden="true">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+          <rect x="9" y="3.5" width="6" height="4" rx="1.2" opacity="0.75"/>
+          <rect x="6.5" y="9" width="11" height="4" rx="1.2" opacity="0.88"/>
+          <rect x="3.5" y="14.5" width="17" height="4" rx="1.2"/>
+        </svg>
+      </span>
       <div>
         <h1 class="brand-name">cairn</h1>
         <p class="brand-sub">local console</p>
       </div>
     </div>
-    <nav class="nav" id="nav">
+    <nav class="nav" id="nav" aria-label="console sections">
       <a href="#overview" class="nav-item is-active">Overview</a>
       <a href="#projects" class="nav-item">Projects</a>
       <a href="#activity" class="nav-item">Activity</a>
@@ -47,32 +55,69 @@
       </div>
     </header>
 
+    <section id="onboarding" class="card onboarding" hidden>
+      <div class="ob-head">
+        <div>
+          <h3 class="ob-title">Get your studio syncing</h3>
+          <p class="ob-sub">Three steps — the tray turns green when you are done.</p>
+        </div>
+      </div>
+      <div class="ob-steps">
+        <div class="ob-step" id="ob-step-1">
+          <span class="ob-num">1</span>
+          <div>
+            <p class="ob-name">Connect a folder</p>
+            <p class="ob-desc">Attach the project folder your edit lives in.</p>
+          </div>
+        </div>
+        <div class="ob-step" id="ob-step-2">
+          <span class="ob-num">2</span>
+          <div>
+            <p class="ob-name">First sync</p>
+            <p class="ob-desc">Files are chunked and sent to your peers — watch the outbox drain.</p>
+          </div>
+        </div>
+        <div class="ob-step" id="ob-step-3">
+          <span class="ob-num">3</span>
+          <div>
+            <p class="ob-name">Ready to edit</p>
+            <p class="ob-desc">Green dot means every save is journaled and safe.</p>
+          </div>
+        </div>
+      </div>
+      <div class="ob-cta">
+        <button type="button" class="btn btn-primary" id="ob-cta-attach">Attach a folder</button>
+        <button type="button" class="btn" id="ob-cta-guide" hidden>Open the guide</button>
+        <span class="note" id="ob-note" style="margin-top:0"></span>
+      </div>
+    </section>
+
     <section id="overview" class="grid">
       <article class="card card-wide">
         <h3 class="card-title">Sync state</h3>
         <div class="stat-row">
           <div class="stat">
-            <p class="stat-num mono" id="stat-pending">0</p>
+            <p class="stat-num" id="stat-pending">0</p>
             <p class="stat-label">outbox pending</p>
           </div>
           <div class="stat">
-            <p class="stat-num mono" id="stat-cursor">0</p>
+            <p class="stat-num" id="stat-cursor">0</p>
             <p class="stat-label">journal cursor</p>
           </div>
           <div class="stat">
-            <p class="stat-num mono" id="stat-files">0</p>
+            <p class="stat-num" id="stat-files">0</p>
             <p class="stat-label">files known</p>
           </div>
           <div class="stat">
-            <p class="stat-num mono" id="stat-conflicts">0</p>
+            <p class="stat-num" id="stat-conflicts">0</p>
             <p class="stat-label">conflict copies</p>
           </div>
         </div>
-        <p class="note" id="overview-note">The daemon watches attached roots, chunks content with FastCDC, and appends every save to the server-linearized journal.</p>
+        <p class="note">The daemon watches attached roots, chunks content with FastCDC, and appends every save to the server-linearized journal.</p>
       </article>
       <article class="card">
         <h3 class="card-title">Hydration (I1)</h3>
-        <p class="stat-num mono" id="stat-i1">—</p>
+        <p class="stat-num" id="stat-i1">—</p>
         <p class="stat-label">first byte, cached</p>
         <div class="meter"><div class="meter-fill" id="i1-meter"></div></div>
         <p class="note">target &lt; 50 ms · measured from the header cache</p>
@@ -82,14 +127,14 @@
     <section id="projects" class="card">
       <h3 class="card-title">Attached projects</h3>
       <div class="action-row">
-        <input id="attach-root" class="input mono" type="text" placeholder="/path/to/workspace — attach a root">
-        <input id="attach-project" class="input mono" type="text" placeholder="project id (optional)">
-        <button type="button" class="btn" id="btn-attach">attach</button>
+        <input id="attach-root" class="input" type="text" placeholder="/path/to/workspace — attach a root" spellcheck="false">
+        <input id="attach-project" class="input" type="text" placeholder="project id (optional)" spellcheck="false">
+        <button type="button" class="btn btn-primary" id="btn-attach">attach</button>
       </div>
       <table class="table">
-        <thead><tr><th>project</th><th>root</th><th>state</th><th>files</th><th>outbox</th><th>last error</th><th>actions</th></tr></thead>
+        <thead><tr><th>project</th><th>root</th><th>state</th><th class="num">files</th><th class="num">outbox</th><th>last error</th><th>actions</th></tr></thead>
         <tbody id="project-body">
-          <tr><td colspan="7" class="empty">No attached projects — attach a root above or via `cairn attach`.</td></tr>
+          <tr><td colspan="7" class="empty">No attached projects — attach a root above or via <code>cairn attach</code>.</td></tr>
         </tbody>
       </table>
     </section>
@@ -97,7 +142,7 @@
     <section id="activity" class="card">
       <h3 class="card-title">Journal activity</h3>
       <table class="table">
-        <thead><tr><th>seq</th><th>path</th><th>state</th><th>size</th></tr></thead>
+        <thead><tr><th class="num">seq</th><th>path</th><th>state</th><th class="num">size</th></tr></thead>
         <tbody id="activity-body">
           <tr><td colspan="4" class="empty">No entries yet — saves appear here as they are journaled.</td></tr>
         </tbody>
@@ -121,18 +166,17 @@
       </div>
     </section>
 
-
     <section id="snapshots" class="card">
       <h3 class="card-title">Snapshots</h3>
       <p class="note">Snapshots fold from the journal every 5,000 entries, every 24h, on demand, or at project close.</p>
       <div class="action-row">
-        <select id="snapshot-project" class="input mono"></select>
-        <input id="snapshot-label" class="input mono" type="text" placeholder="label (e.g. before color pass)">
+        <select id="snapshot-project" class="input"></select>
+        <input id="snapshot-label" class="input" type="text" placeholder="label (e.g. before color pass)" spellcheck="false">
         <button type="button" class="btn" id="btn-snapshot">create snapshot</button>
         <button type="button" class="btn btn-ghost" id="btn-snapshots-refresh">refresh</button>
       </div>
       <table class="table">
-        <thead><tr><th>commit</th><th>label</th><th>seq</th><th>author</th><th>actions</th></tr></thead>
+        <thead><tr><th>commit</th><th>label</th><th class="num">seq</th><th>author</th><th>actions</th></tr></thead>
         <tbody id="snapshot-body">
           <tr><td colspan="5" class="empty">Snapshots list is served by the storage server after the first fold.</td></tr>
         </tbody>
@@ -143,12 +187,12 @@
       <h3 class="card-title">Pins</h3>
       <p class="note">Pinned files are recalled into local storage and exempt from LRU eviction.</p>
       <div class="action-row">
-        <select id="pin-project" class="input mono"></select>
-        <input id="pin-path" class="input mono" type="text" placeholder="relative path to pin (e.g. scene.prproj)">
+        <select id="pin-project" class="input"></select>
+        <input id="pin-path" class="input" type="text" placeholder="relative path to pin (e.g. scene.prproj)" spellcheck="false">
         <button type="button" class="btn" id="btn-pin">pin</button>
       </div>
       <table class="table">
-        <thead><tr><th>path</th><th>size</th><th>state</th><th>actions</th></tr></thead>
+        <thead><tr><th>path</th><th class="num">size</th><th>state</th><th>actions</th></tr></thead>
         <tbody id="pin-body">
           <tr><td colspan="4" class="empty">No pins on this machine.</td></tr>
         </tbody>
@@ -159,8 +203,8 @@
       <h3 class="card-title">Recall jobs</h3>
       <p class="note">Recall materializes files from the bucket into local storage (progress per job).</p>
       <div class="action-row">
-        <select id="recall-project" class="input mono"></select>
-        <input id="recall-path" class="input mono" type="text" placeholder="one path (optional — whole project if empty)">
+        <select id="recall-project" class="input"></select>
+        <input id="recall-path" class="input" type="text" placeholder="one path (optional — whole project if empty)" spellcheck="false">
         <button type="button" class="btn" id="btn-recall">start recall</button>
       </div>
       <div id="recall-jobs" class="recall-jobs">
@@ -172,19 +216,19 @@
       <h3 class="card-title">Local storage</h3>
       <div class="stat-row">
         <div class="stat">
-          <p class="stat-num mono" id="stat-blobs">0</p>
+          <p class="stat-num" id="stat-blobs">0</p>
           <p class="stat-label">local chunks</p>
         </div>
         <div class="stat">
-          <p class="stat-num mono" id="stat-bytes">0</p>
+          <p class="stat-num" id="stat-bytes">0</p>
           <p class="stat-label">bytes cached</p>
         </div>
         <div class="stat">
-          <p class="stat-num mono" id="stat-pinned">0</p>
+          <p class="stat-num" id="stat-pinned">0</p>
           <p class="stat-label">pinned chunks</p>
         </div>
       </div>
-      <p class="note">NLE media caches belong on local scratch; pinned chunks are never evicted.</p>
+      <p class="note" id="storage-note">NLE media caches belong on local scratch; pinned chunks are never evicted.</p>
     </section>
 
     <section id="flags" class="card">
@@ -199,7 +243,7 @@
     </section>
 
     <footer class="foot">
-      <p class="meta">cairn v4 · content-addressed sync & storage for video teams · loopback only</p>
+      <p class="meta">cairn v4 · content-addressed sync &amp; storage for video teams · loopback only</p>
     </footer>
   </main>
 </div>
