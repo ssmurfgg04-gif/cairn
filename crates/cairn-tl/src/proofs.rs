@@ -24,6 +24,17 @@
 //!    in shard `ours`), so sharding loses no coverage — each CBMC job
 //!    explores 11 pairs instead of 121, and kani.yml gives every shard its
 //!    own GitHub runner.
+//! 3. DESTRUCTORS OUT OF SCOPE: with construction stubbed, live runner
+//!    evidence (run 33842890616, round 14) showed the remaining blowup was
+//!    CBMC exploring `drop_in_place` for the ops' `String`/`BTreeMap`/
+//!    `serde_json::Value` fields — allocator machinery, not merge logic;
+//!    even `interacts`-only harnesses ground on it. The harnesses now
+//!    `mem::forget` the ops (and the verdict) after asserting — the Kani
+//!    standard move when drop glue is not part of the property. This scopes
+//!    out only "destructors don't panic/leak"; totality, panic-freedom of
+//!    `interacts`/`classify_pair` themselves, class range, verdict closure,
+//!    and symmetry keep their full meaning. Real destructor behavior stays
+//!    pinned by the ordinary test suites, which drop ops in every test.
 //!
 //! Stub soundness (why the proof statements are unchanged): within the
 //! bounded model the classifier never branches on string or JSON CONTENT —
@@ -201,10 +212,17 @@ fn classifier_body(ours_kind: u8) {
             crate::classifier::Verdict::Refuse => 3,
         };
         assert!(discr <= 3);
+        // destructors are out of scope for this proof (module doc, move 3):
+        // skip drop glue for the verdict's note String.
+        std::mem::forget(v);
     } else {
         // disjoint pairs never classify (C0 by definition — the caller treats
         // them as one-sided auto-apply)
     }
+    // destructors are out of scope for this proof (module doc, move 3):
+    // skip the String/BTreeMap/Value drop glue of the ops themselves.
+    std::mem::forget(ours);
+    std::mem::forget(theirs);
 }
 
 // 11 shards: ours-kind concrete 0..=10 (Remove, Move, Trim, Attr, MarkerAdd,
@@ -289,6 +307,9 @@ fn symmetry_body(ka: u8) {
     let ours = bounded_op(ka, Side::Ours, a, b);
     let theirs = bounded_op(kb, Side::Theirs, a, b);
     assert_eq!(interacts(&ours, &theirs), interacts(&theirs, &ours));
+    // destructors are out of scope for this proof (module doc, move 3).
+    std::mem::forget(ours);
+    std::mem::forget(theirs);
 }
 
 #[cfg(kani)]
