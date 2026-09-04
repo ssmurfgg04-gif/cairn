@@ -264,6 +264,13 @@ async fn ensure_swarm(
             node_id: Some(identity.device_id.clone()),
             stun: stun_server,
             force_relay: false,
+            // ADR-0023: live presence rides the swarm ONLY when this device's
+            // editor flipped their own flag (default false — read per join so
+            // the flip takes effect on the next attach/swarm join).
+            presence: store
+                .meta_get("flag:live_presence")
+                .map(|v| v == "true")
+                .unwrap_or(false),
         },
         serving,
     )

@@ -103,6 +103,12 @@ pub enum Permission {
     Verify,
     Snapshot,
     Restore,
+    /// See other editors' live presence (playhead/selection telemetry,
+    /// ADR-0023). Everyone gets it — presence is coordination, not power;
+    /// the per-device `live_presence` flag (default OFF) is the real gate.
+    /// Broadcasting your own presence uses the same permission (symmetry:
+    /// if you can't be seen, you don't send).
+    ViewPresence,
 }
 
 /// The matrix. `true` = allowed. Column order mirrors `Permission`.
@@ -128,6 +134,7 @@ const MATRIX: &[(Role, &[Permission])] = &[
             Permission::Verify,
             Permission::Snapshot,
             Permission::Restore,
+            Permission::ViewPresence,
         ],
     ),
     (
@@ -148,6 +155,7 @@ const MATRIX: &[(Role, &[Permission])] = &[
             Permission::DetachRoot,
             Permission::Verify,
             Permission::Snapshot,
+            Permission::ViewPresence,
         ],
     ),
     (
@@ -164,6 +172,7 @@ const MATRIX: &[(Role, &[Permission])] = &[
             Permission::DetachRoot,
             Permission::Verify,
             Permission::Snapshot,
+            Permission::ViewPresence,
         ],
     ),
     (
@@ -176,6 +185,7 @@ const MATRIX: &[(Role, &[Permission])] = &[
             Permission::AttachRoot,
             Permission::Verify,
             Permission::Snapshot,
+            Permission::ViewPresence,
         ],
     ),
     (
@@ -188,6 +198,7 @@ const MATRIX: &[(Role, &[Permission])] = &[
             Permission::Comment,
             Permission::AttachRoot,
             Permission::Verify,
+            Permission::ViewPresence,
         ],
     ),
     (
@@ -200,9 +211,17 @@ const MATRIX: &[(Role, &[Permission])] = &[
             Permission::Comment,
             Permission::AttachRoot,
             Permission::Verify,
+            Permission::ViewPresence,
         ],
     ),
-    (Role::Reviewer, &[Permission::Read, Permission::Comment]),
+    (
+        Role::Reviewer,
+        &[
+            Permission::Read,
+            Permission::Comment,
+            Permission::ViewPresence,
+        ],
+    ),
 ];
 
 /// May `role` do `perm`?
@@ -313,6 +332,22 @@ mod tests {
         assert!(allows(Role::Editor, Permission::LockFile));
         assert!(allows(Role::Editor, Permission::EditTimeline));
         assert!(!allows(Role::Editor, Permission::LockTimeline));
+        // Round 20 (ADR-0023): presence is coordination — EVERY role sees it
+        // (the per-device live_presence flag, default OFF, is the real gate)
+        for r in [
+            Role::Owner,
+            Role::LeadEditor,
+            Role::Editor,
+            Role::Assistant,
+            Role::Colorist,
+            Role::SoundDesigner,
+            Role::Reviewer,
+        ] {
+            assert!(
+                allows(r, Permission::ViewPresence),
+                "{r:?} must see live presence"
+            );
+        }
     }
 
     #[test]

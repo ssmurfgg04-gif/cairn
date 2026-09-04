@@ -50,4 +50,4 @@ pub mod swarm;
 
 pub use crypto::NodeKey;
 pub use join::{JoinCode, JoinCodeError};
-pub use swarm::{ServeBlocks, Swarm, SwarmConfig, SwarmStats};
+pub use swarm::{PresenceEvent, ServeBlocks, Swarm, SwarmConfig, SwarmStats};

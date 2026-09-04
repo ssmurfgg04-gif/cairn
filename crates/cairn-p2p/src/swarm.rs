@@ -91,6 +91,12 @@ pub struct SwarmConfig {
     pub stun: Option<SocketAddr>,
     /// Skip punching entirely — always route via the relay (tests/strict NATs).
     pub force_relay: bool,
+    /// Live presence telemetry (ADR-0023 §2): broadcast/accept ephemeral
+    /// presence events on the existing encrypted sessions. **Default-able to
+    /// false everywhere — presence is OFF unless an editor turns it on for
+    /// THEIR device.** When false: no broadcasts, inbound Presence messages
+    /// are dropped, no subscriber channels exist.
+    pub presence: bool,
 }
 
 /// The local node's block-store view (implemented over the Cas by callers).
@@ -130,7 +136,30 @@ pub struct SwarmStats {
     pub stun_resolved: bool,
     pub punch_attempts: u64,
     pub punch_successes: u64,
+    /// Inbound live-presence events accepted since spawn (0 when the
+    /// presence flag is off — the flag is observable, not just behavioral).
+    pub presence_events: u64,
 }
+
+/// One inbound live-presence event (ADR-0023 §2). `payload` is the peer's
+/// app JSON, verbatim; interpreting it is the daemon's job (the swarm is a
+/// transport, not a schema).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PresenceEvent {
+    /// Sending node id (the device id string).
+    pub from: String,
+    /// App payload bytes (bounded by the session codec to 1200).
+    pub payload: Vec<u8>,
+    /// Reception time (ms since swarm spawn).
+    pub at_ms: u64,
+}
+
+/// Presence entries older than this leave the snapshot (the heartbeat cadence
+/// is ~0.5–2 s; 15 s means ~10 missed beats before an editor "disappears").
+const PRESENCE_TTL: Duration = Duration::from_secs(15);
+/// Presence broadcast channel capacity — subscribers that fall further
+/// behind get `Lagged` and resnapshot (presence is a signal, not a log).
+const PRESENCE_CHAN: usize = 256;
 
 // ---- internal state -----------------------------------------------------------
 
@@ -220,6 +249,7 @@ struct Stats {
     stun_resolved: AtomicBool,
     punch_attempts: AtomicU64,
     punch_successes: AtomicU64,
+    presence_events: AtomicU64,
 }
 
 /// Hashes currently being waited on by `fetch_block` callers (the wakeup
@@ -241,6 +271,9 @@ struct State {
     /// certainly not a transient network blip — surface a loud hint covering
     /// the two real causes: signal unreachable, or the join code is wrong.
     register_fails: u32,
+    /// Latest presence payload per peer (ADR-0023) — the LAST event wins,
+    /// stale entries pruned by [`presence_snapshot`] and the periodic pass.
+    presence: HashMap<Vec<u8>, (Instant, Vec<u8>)>,
 }
 
 impl State {
@@ -273,6 +306,12 @@ struct Inner {
     assign_rr: AtomicU64,
     stats: Stats,
     done: watch::Sender<bool>,
+    /// ADR-0023: presence fanout. The sender half lives here even when
+    /// disabled — a channel with zero subscribers and zero sends costs
+    /// nothing; the flag gates every send/accept path.
+    presence_tx: tokio::sync::broadcast::Sender<PresenceEvent>,
+    presence_enabled: bool,
+    started: Instant,
 }
 
 /// A running swarm node. Clone-safe handle; [`Swarm::shutdown`] stops the loops.
@@ -313,6 +352,9 @@ impl Swarm {
             assign_rr: AtomicU64::new(0),
             stats: Stats::default(),
             done: watch::channel(false).0,
+            presence_tx: tokio::sync::broadcast::channel(PRESENCE_CHAN).0,
+            presence_enabled: cfg.presence,
+            started: Instant::now(),
         });
 
         if let Some(server) = cfg.stun {
@@ -508,7 +550,73 @@ impl Swarm {
             stun_resolved: self.inner.stats.stun_resolved.load(Ordering::Relaxed),
             punch_attempts: self.inner.stats.punch_attempts.load(Ordering::Relaxed),
             punch_successes: self.inner.stats.punch_successes.load(Ordering::Relaxed),
+            presence_events: self.inner.stats.presence_events.load(Ordering::Relaxed),
         }
+    }
+
+    // ---- Live presence (ADR-0023 §2) --------------------------------------
+
+    /// Broadcast one presence event (app JSON, ≤ 1200 bytes) to every
+    /// session peer — direct or relay, same encrypted pipe as blocks.
+    /// Returns the peer count reached; `0` when presence is disabled or the
+    /// payload exceeds the bound (never a panic, never a partial frame).
+    pub fn broadcast_presence(&self, payload: &[u8]) -> usize {
+        if !self.inner.presence_enabled || payload.len() > crate::session::MAX_FRAG_DATA {
+            return 0;
+        }
+        let targets: Vec<Vec<u8>> = {
+            let st = self.inner.state.lock().expect("swarm state lock");
+            st.peers
+                .iter()
+                .filter(|(_, p)| p.session.is_some())
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+        let msg = PeerMsg::Presence {
+            payload: payload.to_vec(),
+        };
+        for id in &targets {
+            send_msg(self.inner_ref(), id, &msg);
+        }
+        targets.len()
+    }
+
+    /// Subscribe to inbound presence events. Lagging subscribers get
+    /// `Lagged` and should call [`Swarm::presence_snapshot`] to resync.
+    /// When presence is disabled the channel simply never fires.
+    #[must_use]
+    pub fn subscribe_presence(&self) -> tokio::sync::broadcast::Receiver<PresenceEvent> {
+        self.inner.presence_tx.subscribe()
+    }
+
+    /// Recent presence per peer (last event wins, entries older than
+    /// [`PRESENCE_TTL`] pruned). Sorted by peer id for deterministic output.
+    #[must_use]
+    pub fn presence_snapshot(&self) -> Vec<PresenceEvent> {
+        let mut st = self.inner.state.lock().expect("swarm state lock");
+        st.presence.retain(|_, (at, _)| at.elapsed() < PRESENCE_TTL);
+        let at_ms = self.inner.started.elapsed().as_millis() as u64;
+        let mut out: Vec<PresenceEvent> = st
+            .presence
+            .iter()
+            .map(|(id, (_, payload))| PresenceEvent {
+                from: id_str(id),
+                payload: payload.clone(),
+                at_ms,
+            })
+            .collect();
+        out.sort_by(|a, b| a.from.cmp(&b.from));
+        out
+    }
+
+    /// Is presence enabled on this node? (The flag, observable.)
+    #[must_use]
+    pub fn presence_enabled(&self) -> bool {
+        self.inner.presence_enabled
+    }
+
+    fn inner_ref(&self) -> &Arc<Inner> {
+        &self.inner
     }
 
     /// Stop all loops (idempotent).
@@ -895,6 +1003,25 @@ fn handle_msg(inner: &Arc<Inner>, peer_id: &[u8], msg: PeerMsg) {
             hash,
             peer: peer_id.to_vec(),
         }),
+        PeerMsg::Presence { payload } => {
+            // ADR-0023: ephemeral telemetry. Off → dropped at the door (no
+            // state growth, no channel send, nothing observable). On →
+            // last-event-wins map + fanout to subscribers.
+            if inner.presence_enabled {
+                let at_ms = inner.started.elapsed().as_millis() as u64;
+                {
+                    let mut st = inner.state.lock().expect("swarm state lock");
+                    st.presence
+                        .insert(peer_id.to_vec(), (Instant::now(), payload.clone()));
+                }
+                inner.stats.presence_events.fetch_add(1, Ordering::Relaxed);
+                let _ = inner.presence_tx.send(PresenceEvent {
+                    from: id_str(peer_id),
+                    payload,
+                    at_ms,
+                });
+            }
+        }
     }
 
     for a in actions {
@@ -1646,4 +1773,51 @@ fn retransmit(inner: &Arc<Inner>, peer_id: &[u8], hash: &[u8; 32], idxs: &[u16])
             tokio::task::yield_now().await;
         }
     });
+}
+
+/// Node id bytes → id string. Node ids are `NodeKey::node_id()` strings
+/// (device ids); lossy decode keeps a hostile/garbled peer from failing the
+/// whole presence path.
+fn id_str(id: &[u8]) -> String {
+    String::from_utf8_lossy(id).into_owned()
+}
+
+#[cfg(test)]
+mod presence_tests {
+    use super::*;
+
+    #[test]
+    fn presence_msg_codec_roundtrip_and_bounds() {
+        use crate::session::PeerMsg;
+        let msg = PeerMsg::Presence {
+            payload: br#"{"editor":"alice","frame":1234,"rate":24,"action":"playhead"}"#.to_vec(),
+        };
+        let enc = msg.encode();
+        assert_eq!(PeerMsg::decode(&enc), Some(msg));
+        // empty payload round-trips
+        let empty = PeerMsg::Presence {
+            payload: Vec::new(),
+        };
+        assert_eq!(PeerMsg::decode(&empty.encode()), Some(empty));
+        // oversized payload is REFUSED at decode (the bound is the contract)
+        let fat = vec![0x41u8; 1201];
+        let fat_msg = PeerMsg::Presence { payload: fat };
+        let enc = fat_msg.encode();
+        assert_eq!(PeerMsg::decode(&enc), None, ">1200B presence refused");
+        // a well-formed 1200B payload is accepted
+        let ok = vec![0x41u8; 1200];
+        let ok_msg = PeerMsg::Presence { payload: ok };
+        assert_eq!(PeerMsg::decode(&ok_msg.encode()), Some(ok_msg));
+        // presence map prunes stale entries via TTL logic
+        let mut st = State::default();
+        let stale_at = Instant::now()
+            .checked_sub(PRESENCE_TTL + Duration::from_secs(1))
+            .expect("ttl fits in Instant range");
+        st.presence.insert(vec![1, 2, 3], (stale_at, b"x".to_vec()));
+        st.presence
+            .insert(vec![4, 5, 6], (Instant::now(), b"y".to_vec()));
+        st.presence.retain(|_, (at, _)| at.elapsed() < PRESENCE_TTL);
+        assert_eq!(st.presence.len(), 1, "stale presence pruned");
+        assert!(st.presence.contains_key(&vec![4, 5, 6]));
+    }
 }
