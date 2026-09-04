@@ -158,3 +158,35 @@ file association (never a hard-coded NLE path).
   launch wiring on a real Windows box, `cairn update check` writing the
   update meta the dashboard now reads, and waveform peaks for >40 MiB
   media (server-side peaks) remain.
+
+## Round 19 addendum (2026-09-05) — ledger updates
+
+Closed by round 19 (the "surpass" round):
+
+* **Tray launch wiring**: the tray's "Open Console" launches
+  cairn-app.exe (beside the tray, then the per-user install spots) with
+  the browser fallback — and `install.ps1` + `release.yml` now build,
+  verify, ship, and install the NSIS bundle (`cairn-window-*-setup.exe`,
+  SHA256-checked, `/S` silent, per-user), so the tray actually has
+  something to find. The remaining box: a real Windows host run (CI's
+  installer-gate asserts the file lands; a human still owes the
+  look-and-feel pass).
+* **NLE panel**: `GET /api/v1/markers` (loopback, the SAME payload body
+  as the CLI export — fcpxml/otio/csv) + the Premiere UXP panel
+  (`crates/cairn-cli/assets/uxp-panel/`). The CLI/HTTP/panel triangle
+  cannot disagree by construction. Still honest: verified against the
+  loopback API + a mock daemon, not yet inside a real Premiere host;
+  timeline-DOM marker push (the eventual "compiled panel" meaning) is
+  the follow-up.
+* **WAN observability**: NAT success-rate counters (stun_resolved /
+  punch_attempts / punch_successes, pair-level so successes ≤ attempts
+  by construction) surfaced as the 60 s daemon heartbeat, the
+  `/api/v1/status` swarm array, and the runbook's reading guide — the
+  numbers a real VPS rollout needs before believing the NAT-class table.
+* **Onboarding**: the zero-root hero rebuilt as the dark-studio aurora
+  stage (the reference onboarding's language, warm-dark translation) —
+  VLM-verified through two rounds.
+
+Still open (unchanged): synced `.cairn*` state (the round's biggest
+honest correction above), `cairn update check` wiring, server-side
+waveform peaks, the human Resolve import run.
