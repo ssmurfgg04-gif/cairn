@@ -21,6 +21,23 @@ Legend: ✅ implemented + tests green · 🟨 implemented, platform-gated / hard
 
 
 
+## Round 19 (2026-09-05) — the "surpass" round: aurora hero, installer ships the window, NAT metrics, the NLE panel
+
+The directive: four legs to go past the reference tool — the onboarding
+aurora (UI), the native-window installer path, WAN observability, and
+the NLE marker bridge — plus the remaining UI-audit polish.
+
+| Item | Status | Evidence |
+|---|---|---|
+| Onboarding hero — the dark studio stage | ✅ | audit #1: the zero-root card rebuilt as the reference onboarding's aurora/glass/progress language translated warm-dark — 860px stage over #141312, three amber fields (blur 18px, 24s+ drift, ~38% alpha), 76px cairn stack, h1 clamp(34,5vw,54), amber primary (VLM: the console blue read default-Bootstrap on the warm stage), cinematic vignette, 82px footer with the 72x3 track + CLI one-liner. Geometry measured exact live (track 72x3, footer 82, stage 860, bg #141312, radius 24). VLM round 1: 8/7/9 "polished, cinematic"; round 2 after fixes: **SHIPPED**. |
+| Files list — Finder feel, honest loading | ✅ | audit #2: 16px cloud+pip state overlays (synced/syncing/conflict/placeholder), doc glyph per row, shimmer skeleton rows on first load/project switch, the 76px dimmed-stack fallback + one plain sentence when the FIRST fetch fails (later failures keep the last truthful rows); dropped the duplicated state-tag column. Live-verified with mock + headless Chromium. |
+| Brand + keyboard polish | ✅ | review portal's notfound gains the 76px stack (error-fallback mark); focus-visible 3px accent-tinted rings on both surfaces; footer `?` help link (the overlay comment finally true). |
+| Native window — the installer path | ✅/🟨 | `install.ps1` 3c: the `cairn-window-*-setup.exe` asset (SHA256-verified, NSIS `/S` silent, per-user) — degrades loudly to the browser console on absence/mismatch; `-AppSetupUrl` pins it for tests. `release.yml` builds the bundle (tauri-cli `--locked`) + `.sha256` and the installer-gate asserts cairn-app.exe on disk. Tray: "Open Console" launches cairn-app (beside the tray, then LOCALAPPDATA spots), browser fallback. tauri.conf: nsis `installMode: currentUser`. Honest gates: windows cross-check clean for tray/shell-ext; the cairn-app local cross-check stops at `llvm-rc` (resource compilation needs a real Windows host) — `tauri-check` in CI is that gate, conf-only diff this round. A real-box NSIS run is the remaining studio leg. |
+| WAN — NAT success-rate metrics | ✅ | SwarmStats gains `stun_resolved` / `punch_attempts` / `punch_successes` (pair-level accounting — our first probe or the peer's probe landing on us — so successes ≤ attempts on every node by construction; the landing event is the DIRECT session establishment, which is where a punch actually succeeds). Three surfaces: 60s daemon heartbeat (greppable, `CAIRN_WAN_LOG_SECS`), `GET /api/v1/status` per-project `swarm` array (honest empty when swarmless), raw counters. Runbook: 1-vCPU VPS sizing + systemd sketch + how to read the rate + the hotel-WiFi tell (stun true + attempts 0 = register path, not NAT). e2e regression: b's direct link must be a counted punch outcome. Live VPS leg: still needs the box. |
+| NLE marker bridge — HTTP + UXP panel | ✅/🟨 | `handoff::markers_payload` — the ONE body behind every export surface (CLI + HTTP): fcpxml/otio/csv (CSV: frame-sorted, RFC-4180 quoting, NDF TC at the note's true rate). `GET /api/v1/markers` on the loopback gateway (read-only, no CORS headers — loopback posture unchanged; UXP's manifest-declared network permission is the panel's path in). `crates/cairn-cli/assets/uxp-panel/`: manifest v4 (premierepro 25+), dark-studio panel (project/version pickers, marker table, FCP7/OTIO/CSV export via the UXP picker, browser-download dev fallback), README with honest scope. Live-verified against the mock daemon (4 markers, exports 200, zero console errors); a real Premiere host + timeline-DOM push is the named follow-up. |
+| The scrub-scare | ✅ (false alarm) | review.css looked like the history scrub ate `[hidden]` (and commit 3bac8bb's title looked the same) — raw bytes (`od -c`) prove both intact: the THIRD occurrence of the output channel's ANSI-eating artifact (the `[m`/`[h` class, rounds 17–18). No tree damage; documented so the next occurrence is recognized instantly. |
+| Gates | ✅ | 471 workspace tests green (470 + markers payload test); fmt + clippy `-D warnings` clean; security sweep PASS; windows cross-checks (tray, shell-ext) clean; mock-portal live smoke + VLM rounds on the hero/panel screenshots (download/round19-ui/). |
+
 ## Round 18 (2026-09-04) — dogfood → RBAC → window (ADR-0022)
 
 The three-leg directive, in the stated order: live the review loop and
