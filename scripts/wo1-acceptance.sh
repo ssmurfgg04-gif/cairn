@@ -230,8 +230,11 @@ B_PID=$!
 wait_port 17779 || { gate fail 3 "device B daemon did not start"; exit 1; }
 CAIRN_HOME="$B_HOME" "$BIN" attach "$ROOT_B" --project p-main --ctl http://127.0.0.1:17779 || { gate fail 3 "attach B rejected"; exit 1; }
 if wait_state "$B_HOME" p-main synced "$N_FILES"; then
-  HA=$(cd "$ROOT_A" && find . -type f -exec sha256sum {} \; | sort | sha256sum | cut -d' ' -f1)
-  HB=$(cd "$ROOT_B" && find . -type f -exec sha256sum {} \; | sort | sha256sum | cut -d' ' -f1)
+  # hash the SYNCED surface: `.cairn*` is documented ignore-list state
+  # (root markers, overlay state, the local audit ledger) — machine-local
+  # by design, so a per-machine audit entry must never fail convergence.
+  HA=$(cd "$ROOT_A" && find . -type f -not -path './.cairn*' -exec sha256sum {} \; | sort | sha256sum | cut -d' ' -f1)
+  HB=$(cd "$ROOT_B" && find . -type f -not -path './.cairn*' -exec sha256sum {} \; | sort | sha256sum | cut -d' ' -f1)
   # byte budget: B attaches an EMPTY folder — it uploads nothing; and A must not
   # re-push anything either (echo suppression + content identity). Uploads must be 0.
   UP3=$(bytes_since "$T3")

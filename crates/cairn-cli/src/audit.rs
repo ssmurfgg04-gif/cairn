@@ -1,13 +1,17 @@
-//! Audit ledger (ADR-0020 §4 follow-through): every daemon-side RBAC
-//! decision is recorded in `<root>/.cairn/audit.json` — a synced project
-//! file, exactly like members.json/review.json, so every peer (and the
-//! owner on their machine) sees the same trail. An audit log that lives
-//! only in the daemon's local memory is fiction; this one converges with
-//! the journal like everything else.
+//! Audit ledger (ADR-0022): every daemon-side RBAC decision is recorded
+//! in `<root>/.cairn/audit.json` on the machine that made it.
+//!
+//! HONEST SCOPE: `.cairn*` is on the scan ignore-list (SPEC §10), so this
+//! ledger is LOCAL — the owner sees every decision made on THIS machine,
+//! in this file, with content-derived ids. It is not yet synced
+//! machine-to-machine (that needs append-only merging through the sync
+//! surface, a named follow-up in ADR-0022's ledger). What it already
+//! fixes: decisions that previously vanished into daemon logs now land
+//! in a durable, bounded, tamper-evident file the dashboard renders.
 //!
 //! Design notes:
 //! * append-only, bounded (the newest `MAX_ENTRIES` survive; a bounded
-//!   ledger that keeps working beats an unbounded one that stalls sync);
+//!   ledger that keeps working beats an unbounded one that grows forever);
 //! * ids are content-derived (blake3 of device|ts|action|allowed) so the
 //!   same decision recorded on two machines converges instead of
 //!   duplicating;
@@ -214,7 +218,7 @@ mod tests {
     }
 
     #[test]
-    fn same_decision_on_two_machines_converges_to_one_entry() {
+    fn same_decision_yields_the_same_entry_id() {
         let a = tmp();
         let b = tmp();
         let e = AuditEntry {
@@ -231,7 +235,7 @@ mod tests {
         let rb = AuditFile::load(&b).unwrap();
         assert_eq!(ra.len(), 1);
         assert_eq!(rb.len(), 1);
-        assert_eq!(ra[0].0, rb[0].0); // same id -> merge converges
+        assert_eq!(ra[0].0, rb[0].0); // deterministic ids: dedupe/merge stays safe
     }
 
     #[test]

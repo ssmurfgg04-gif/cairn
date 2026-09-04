@@ -63,11 +63,17 @@ the dashboard's HTTP equivalents. The acting device is the daemon's
 enrolled identity (the machine is the actor); the project's synced
 `members.json` is the authority; corrupt members fail CLOSED.
 
-The audit ledger (`.cairn/audit.json`) is a SYNCED project file with
-content-derived entry ids — the same decision on two machines converges
-to one entry — bounded to the newest 500, atomically written. "The audit
-log is fiction" is fixed by making the log travel the same journal as
-everything else.
+The audit ledger (`.cairn/audit.json`) records every guard decision on
+the machine that made it — content-derived entry ids, bounded to the
+newest 500, atomic writes, and the dashboard Team tab renders the trail.
+**Honest scope, corrected during this round:** `.cairn*` is on the scan
+ignore-list (SPEC §10), so the ledger is LOCAL per machine — as is the
+round-16 review/members/proxy state, whose "syncs with the project"
+claim was an aspiration the transport never honored. What the ledger
+already fixes: RBAC decisions that vanished into daemon logs now land
+in a durable, bounded file. Machine-to-machine audit (and synced review
+state) needs that state moved to a synced path with append-only
+merge semantics — named in the follow-up ledger below.
 
 ### 3. The window: Tauri 2, standalone on purpose
 
@@ -123,6 +129,12 @@ file association (never a hard-coded NLE path).
 * `cairn-app`'s standalone status means it does not ride the workspace
   gates: the `tauri-check` job is its only compile gate — a red there is
   the contract, not an accident.
+* `.cairn*` is ignore-listed: review/members/proxy/audit state is
+  machine-local TODAY. Moving it to a synced path (append-only merge for
+  the ledger, NoteSet-style convergence for review state) is the round's
+  biggest honest correction and the follow-up with the most product
+  value — the cross-editor comment convergence ADR-0020 promised does
+  not exist yet.
 * The `swarm/stun` meta is a small credentials-free config surface; the
   WAN runbook assumes a VPS for signal+relay (~$5/mo, bandwidth-metered)
   — direct WAN punch is best-effort by NAT class and the relay is the
