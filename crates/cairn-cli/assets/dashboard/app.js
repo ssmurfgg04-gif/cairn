@@ -1,10 +1,26 @@
 /* cairn local console — poll the loopback JSON gateway, render honestly.
    No build step, no framework, no fake data: empty states stay empty until real
-   data exists (taste-skill: no placeholder content). */
+   data exists (taste-skill: no placeholder content). Round 17: every
+   server-provided string is escaped before it touches innerHTML, the onboarding
+   rail reflects real state (roots attached -> outbox drained -> healthy), and the
+   review card reads like a product surface, not a debug log. */
 
 "use strict";
 
 const $ = (id) => document.getElementById(id);
+
+/* ---------- safety: escape server-provided strings for innerHTML ---------- */
+
+function esc(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+/* ---------- formatting ---------- */
 
 function fmtBytes(n) {
   if (!Number.isFinite(n)) return "—";
@@ -22,6 +38,12 @@ function fmtUptime(ms) {
   if (h > 0) return `uptime ${h}h ${m % 60}m`;
   if (m > 0) return `uptime ${m}m ${s % 60}s`;
   return `uptime ${s}s`;
+}
+
+function fmtWhen(ms) {
+  if (!Number.isFinite(ms) || ms <= 0) return "";
+  const d = new Date(ms);
+  return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
 function setChip(el, cls, label) {
@@ -47,6 +69,7 @@ async function postJSON(url, body) {
 /* ---------- selected project (shared by snapshot/pin/recall controls) ---------- */
 
 let PROJECTS = [];
+let HEALTHY = false;
 
 function selectedProject(selectId) {
   const el = $(selectId);
@@ -70,6 +93,50 @@ function fillProjectSelects() {
   }
 }
 
+/* ---------- onboarding rail (1/3 connect -> 2/3 sync -> 3/3 ready) ----------
+   Honest state machine over real fields:
+     1 done  = at least one root attached
+     2 done  = journal has moved AND the outbox is fully drained
+     3 done  = daemon healthy AND no conflicts AND nothing pending
+   The card hides itself only when everything is complete. */
+
+function renderOnboarding() {
+  const card = $("onboarding");
+  if (!card) return;
+  const attached = PROJECTS.length > 0;
+  const pending = Number($("stat-pending").textContent) || 0;
+  const cursor = Number($("stat-cursor").textContent) || 0;
+  const conflicts = Number($("stat-conflicts").textContent) || 0;
+  const synced = attached && cursor > 0 && pending === 0;
+  const ready = attached && synced && HEALTHY && conflicts === 0;
+
+  if (ready && card.dataset.dismissed === "1") { card.hidden = true; return; }
+  if (ready) {
+    card.dataset.dismissed = "1";
+    window.setTimeout(() => { card.hidden = true; }, 1600);
+  } else {
+    card.dataset.dismissed = "0";
+    card.hidden = false;
+  }
+
+  const setStep = (id, state) => {
+    const el = $(id);
+    el.classList.remove("done", "now", "todo");
+    el.classList.add(state);
+    el.querySelector(".ob-num").textContent =
+      state === "done" ? "\u2713" : id.slice(-1);
+  };
+  setStep("ob-step-1", attached ? "done" : "now");
+  setStep("ob-step-2", attached ? (synced ? "done" : "now") : "todo");
+  setStep("ob-step-3", synced ? (ready ? "done" : "now") : "todo");
+
+  const note = $("ob-note");
+  if (!attached) note.textContent = "";
+  else if (!synced) note.textContent = pending > 0 ? `${pending} chunks in flight — the rail advances as they land.` : "first journal entry still pending.";
+  else if (!ready) note.textContent = conflicts > 0 ? `${conflicts} conflict copies need a look (Activity).` : "daemon reports a warning (Doctor).";
+  else note.textContent = "all set — the tray dot is green.";
+}
+
 /* ---------- status header + overview ---------- */
 
 async function refreshStatus() {
@@ -83,10 +150,11 @@ async function refreshStatus() {
     // header title is owned by refreshProjects (real per-project roots)
 
     const healthy = summary.healthy === true;
+    HEALTHY = healthy;
     setChip(
       $("state-chip"),
       healthy ? "is-ok" : "is-warn",
-      healthy ? "healthy" : "degraded"
+      healthy ? "all files synced" : "degraded"
     );
 
     $("stat-pending").textContent = summary.outbox_pending ?? 0;
@@ -101,11 +169,34 @@ async function refreshStatus() {
       const pct = Math.max(4, Math.min(100, (i1 / 50) * 100));
       $("i1-meter").style.width = `${pct}%`;
       $("i1-meter").style.background =
-        i1 < 50 ? "var(--green-fg)" : "var(--red-fg)";
+        i1 < 50 ? "var(--ok)" : "var(--bad)";
+    } else {
+      $("stat-i1").textContent = "—";
+      $("i1-meter").style.width = "0%";
     }
   } catch {
+    HEALTHY = false;
     setChip($("state-chip"), "is-bad", "daemon unreachable");
   }
+}
+
+/* ---------- local storage (separate endpoint) ---------- */
+
+async function refreshStorage() {
+  try {
+    const r = await getJSON("/api/v1/storage");
+    if (r.ok !== true) return;
+    const b = r.blobs || {};
+    $("stat-blobs").textContent = b.count ?? 0;
+    $("stat-bytes").textContent = fmtBytes(b.bytes ?? 0);
+    $("stat-pinned").textContent = b.pinned_count ?? 0;
+    const note = $("storage-note");
+    if (note && r.disk && Number.isFinite(r.disk.free_bytes)) {
+      note.textContent =
+        `${fmtBytes(r.disk.free_bytes)} free of ${fmtBytes(r.disk.total_bytes)} on the store volume — ` +
+        "NLE media caches belong on local scratch; pinned chunks are never evicted.";
+    }
+  } catch { /* store down: stats stay at their last honest value */ }
 }
 
 /* ---------- activity ---------- */
@@ -123,10 +214,10 @@ function renderActivity(entries) {
     const kind = e.kind || "upsert";
     const tag = kind === "delete" ? "bad" : kind === "rename" ? "info" : "ok";
     tr.innerHTML =
-      `<td>${e.seq ?? "—"}</td>` +
-      `<td>${e.path ?? ""}</td>` +
-      `<td><span class="tag ${tag}">${kind}</span></td>` +
-      `<td>${fmtBytes(e.size)}</td>`;
+      `<td class="num">${esc(e.seq ?? "—")}</td>` +
+      `<td>${esc(e.path ?? "")}</td>` +
+      `<td class="sans"><span class="tag ${tag}">${esc(kind)}</span></td>` +
+      `<td class="num">${esc(fmtBytes(e.size))}</td>`;
     body.appendChild(tr);
   }
 }
@@ -147,15 +238,15 @@ function renderLeases(leases) {
     const live = remainMs > 0;
     const tr = document.createElement("tr");
     tr.innerHTML =
-      `<td>${l.path ?? ""}</td>` +
-      `<td>${l.token ?? "—"}</td>` +
-      `<td>${live ? `${Math.ceil(remainMs / 1000)}s` : "expired"}</td>` +
-      `<td><span class="tag ${live ? "ok" : "warn"}">${live ? "held" : "stale"}</span></td>`;
+      `<td>${esc(l.path ?? "")}</td>` +
+      `<td>${esc(l.token ?? "—")}</td>` +
+      `<td class="num">${live ? `${Math.ceil(remainMs / 1000)}s` : "expired"}</td>` +
+      `<td class="sans"><span class="tag ${live ? "ok" : "warn"}">${live ? "held" : "stale"}</span></td>`;
     body.appendChild(tr);
   }
 }
 
-/* ---------- projects (WO6-UI: real ctl parity) ---------- */
+/* ---------- projects ---------- */
 
 function renderProjects(projects) {
   PROJECTS = projects || [];
@@ -164,7 +255,7 @@ function renderProjects(projects) {
   body.innerHTML = "";
   if (!PROJECTS.length) {
     body.innerHTML =
-      '<tr><td colspan="7" class="empty">No attached projects — attach a root above or via `cairn attach`.</td></tr>';
+      '<tr><td colspan="7" class="empty">No attached projects — attach a root above or via <code>cairn attach</code>.</td></tr>';
     return;
   }
   for (const p of PROJECTS) {
@@ -172,16 +263,16 @@ function renderProjects(projects) {
     const stateTag =
       p.state === "error" ? "bad" : p.state === "syncing" ? "info" : "ok";
     const err = p.last_error
-      ? `<span class="tag bad">error</span> ${p.last_error}`
+      ? `<span class="tag bad">error</span> ${esc(p.last_error)}`
       : "—";
     tr.innerHTML =
-      `<td class="mono">${p.project_id}</td>` +
-      `<td>${p.root_path ?? ""}</td>` +
-      `<td><span class="tag ${stateTag}">${p.state ?? "?"}</span></td>` +
-      `<td>${p.files_synced ?? 0}</td>` +
-      `<td>${p.pending_outbox ?? 0}</td>` +
+      `<td>${esc(p.project_id)}</td>` +
+      `<td>${esc(p.root_path ?? "")}</td>` +
+      `<td class="sans"><span class="tag ${stateTag}">${esc(p.state ?? "?")}</span></td>` +
+      `<td class="num">${esc(p.files_synced ?? 0)}</td>` +
+      `<td class="num">${esc(p.pending_outbox ?? 0)}</td>` +
       `<td>${err}</td>` +
-      `<td><button type="button" class="btn btn-ghost" data-detach="${p.project_id}">detach</button></td>`;
+      `<td class="sans"><button type="button" class="btn btn-ghost" data-detach="${esc(p.project_id)}">detach</button></td>`;
     tr.querySelector("[data-detach]").addEventListener("click", async (ev) => {
       if (!confirm(`Detach ${ev.currentTarget.dataset.detach}? Local files stay.`)) return;
       await postJSON("/api/v1/detach", { project_id: ev.currentTarget.dataset.detach });
@@ -218,11 +309,11 @@ function renderSnapshots(snapshots) {
   for (const s of snapshots.slice(0, 10)) {
     const tr = document.createElement("tr");
     tr.innerHTML =
-      `<td class="mono">${(s.commit_hash || "").slice(0, 12)}</td>` +
-      `<td>${s.label || ""}</td>` +
-      `<td>${s.snapshot_seq ?? "—"}</td>` +
-      `<td>${s.author || ""}</td>` +
-      `<td><button type="button" class="btn btn-ghost" data-restore="${s.commit_hash}">restore</button></td>`;
+      `<td>${esc((s.commit_hash || "").slice(0, 12))}</td>` +
+      `<td class="sans">${esc(s.label || "")}</td>` +
+      `<td class="num">${esc(s.snapshot_seq ?? "—")}</td>` +
+      `<td class="sans">${esc(s.author || "")}</td>` +
+      `<td class="sans"><button type="button" class="btn btn-ghost" data-restore="${esc(s.commit_hash)}">restore</button></td>`;
     tr.querySelector("[data-restore]").addEventListener("click", async (ev) => {
       const project = selectedProject("snapshot-project");
       if (!project) return alert("attach a project first");
@@ -260,10 +351,10 @@ function renderPins(pins) {
   for (const p of pins) {
     const tr = document.createElement("tr");
     tr.innerHTML =
-      `<td class="mono">${p.path}</td>` +
-      `<td>${fmtBytes(p.size)}</td>` +
-      `<td><span class="tag ok">${p.state || "pinned"}</span></td>` +
-      `<td><button type="button" class="btn btn-ghost" data-unpin="${p.path}">unpin</button></td>`;
+      `<td>${esc(p.path)}</td>` +
+      `<td class="num">${esc(fmtBytes(p.size))}</td>` +
+      `<td class="sans"><span class="tag ok">${esc(p.state || "pinned")}</span></td>` +
+      `<td class="sans"><button type="button" class="btn btn-ghost" data-unpin="${esc(p.path)}">unpin</button></td>`;
     tr.querySelector("[data-unpin]").addEventListener("click", async (ev) => {
       const project = selectedProject("pin-project");
       if (!project) return;
@@ -299,8 +390,8 @@ function renderRecallJobs() {
     div.className = "recall-job";
     const tag = j.state === "failed" ? "bad" : j.state === "completed" ? "ok" : "info";
     div.innerHTML =
-      `<div class="recall-head"><span class="mono">${id.slice(0, 8)}</span>` +
-      `<span class="tag ${tag}">${j.state}</span></div>` +
+      `<div class="recall-head"><span style="font-family:var(--mono)">${esc(id.slice(0, 8))}</span>` +
+      `<span class="tag ${tag}">${esc(j.state)}</span></div>` +
       `<div class="meter"><div class="meter-fill" style="width:${Math.max(4, Math.round((j.progress || 0) * 100))}%"></div></div>`;
     box.appendChild(div);
   }
@@ -327,9 +418,9 @@ function renderFlags(flags) {
     const div = document.createElement("div");
     div.className = "flag";
     div.innerHTML =
-      `<span class="flag-name">${f.name}</span>` +
-      `<button type="button" data-name="${f.name}" data-next="${on ? "false" : "true"}">` +
-      `${f.name === "placeholder_driver" ? f.value : on ? "enabled" : "disabled"}</button>`;
+      `<span class="flag-name">${esc(f.name)}</span>` +
+      `<button type="button" data-name="${esc(f.name)}" data-next="${on ? "false" : "true"}">` +
+      `${f.name === "placeholder_driver" ? esc(f.value) : on ? "enabled" : "disabled"}</button>`;
     div.querySelector("button").addEventListener("click", async (ev) => {
       const btn = ev.currentTarget;
       await fetch("/api/v1/flags", {
@@ -352,14 +443,12 @@ function renderDoctor(report) {
     const div = document.createElement("div");
     div.className = "check";
     div.innerHTML =
-      `<span class="check-name">${c.name}</span>` +
-      `<span class="check-detail">${c.detail}</span>` +
+      `<span class="check-name">${esc(c.name)}</span>` +
+      `<span class="check-detail">${esc(c.detail)}</span>` +
       `<span class="check-ms">${Number(c.latency_ms).toFixed(1)} ms</span>`;
     box.appendChild(div);
   }
 }
-
-/* ---------- orchestration ---------- */
 
 async function refreshOnce() {
   try {
@@ -368,11 +457,13 @@ async function refreshOnce() {
   } catch { /* daemon down: status chip already reports it */ }
 }
 
+/* ---------- client review ---------- */
+
 function renderReview(rows) {
   const body = document.getElementById("review-body");
   if (!body) return;
   body.textContent = "";
-  const live = rows.filter((r) => r.title !== null && r.title !== undefined);
+  const live = (rows || []).filter((r) => r.title !== null && r.title !== undefined);
   if (!live.length) {
     body.innerHTML =
       '<div class="muted-note">no review sessions — publish one: <code>cairn review publish --media cuts/v1.mp4 --frames N</code></div>';
@@ -381,30 +472,45 @@ function renderReview(rows) {
   for (const r of live) {
     const card = document.createElement("div");
     card.className = "review-project";
+
     const head = document.createElement("div");
     head.className = "review-head";
-    head.innerHTML =
-      '<span class="rv-title"></span> <span class="rv-links"></span>';
-    head.querySelector(".rv-title").textContent = r.title;
-    head.querySelector(".rv-links").textContent =
+    const title = document.createElement("span");
+    title.className = "rv-title";
+    title.textContent = r.title;
+    const links = document.createElement("span");
+    links.className = "rv-links";
+    links.textContent =
       r.live_links + " live link" + (r.live_links === 1 ? "" : "s") +
       (r.expired_links ? " · " + r.expired_links + " expired" : "");
+    head.append(title, links);
     card.appendChild(head);
+
     const versions = document.createElement("div");
     versions.className = "rv-versions";
-    for (const v of r.versions.slice(-4).reverse()) {
+    const ordered = r.versions.slice(-4).reverse();
+    ordered.forEach((v, i) => {
       const row = document.createElement("div");
-      row.className = "rv-row";
-      row.textContent =
-        "v" + v.number + "  " + v.label + "  ·  " + v.duration +
-        "  ·  " + v.frames + "fr  ·  by " + v.published_by +
-        (v.has_proxy ? "  ·  proxy" : "");
+      row.className = "rv-row" + (i === 0 ? " current" : "");
+      const chip = document.createElement("span");
+      chip.className = "rv-v";
+      chip.textContent = "v" + v.number;
+      const meta = document.createElement("span");
+      meta.textContent = `${v.label} · ${v.duration} · ${v.frames} fr · by ${v.published_by}`;
+      row.append(chip, meta);
+      if (v.has_proxy) {
+        const px = document.createElement("span");
+        px.className = "rv-proxy";
+        px.textContent = "proxy";
+        row.append(px);
+      }
       versions.appendChild(row);
-    }
+    });
     card.appendChild(versions);
+
     const notes = document.createElement("div");
     notes.className = "rv-notes";
-    notes.textContent = r.open_notes + " note" + (r.open_notes === 1 ? "" : "s");
+    notes.textContent = r.open_notes + " open note" + (r.open_notes === 1 ? "" : "s");
     card.appendChild(notes);
     body.appendChild(card);
   }
@@ -419,9 +525,13 @@ async function refreshReview() {
   }
 }
 
+/* ---------- orchestration ---------- */
+
 async function refreshAll() {
   await refreshStatus();
   await refreshProjects();
+  renderOnboarding();
+  await refreshStorage();
   try {
     const feed = await getJSON("/api/v1/feed");
     renderActivity(feed.activity);
@@ -446,6 +556,11 @@ $("btn-attach").addEventListener("click", async () => {
   if (!r.ok) alert(`attach failed: ${r.error}`);
   else { $("attach-root").value = ""; $("attach-project").value = ""; }
   refreshAll();
+});
+
+$("ob-cta-attach").addEventListener("click", () => {
+  $("attach-root").focus();
+  $("attach-root").scrollIntoView({ behavior: "smooth", block: "center" });
 });
 
 $("btn-snapshot").addEventListener("click", async () => {
@@ -483,7 +598,7 @@ $("btn-recall").addEventListener("click", async () => {
 
 /* staggered card entry (taste-skill: cascade, never all at once) */
 document.querySelectorAll(".card").forEach((el, i) => {
-  el.style.setProperty("--i", String(i % 6));
+  el.style.setProperty("--i", String(i % 7));
 });
 
 /* nav active state */
