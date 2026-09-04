@@ -911,6 +911,14 @@ async fn run_loop(
     // server-release the reaped tokens. This is what turns a crashed editor's lock
     // into a seconds-long blip instead of a human-gated unlock.
     let mut last_lease_beat = tokio::time::Instant::now();
+    // WAN leg (ADR-0022 §5): 60s NAT-metrics heartbeat — the line the
+    // wan-p2p runbook greps on a VPS box (stun resolved? punches landed?
+    // direct vs relay split?). 0 silences; swarmless daemons log nothing.
+    let wan_log_secs: u64 = std::env::var("CAIRN_WAN_LOG_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(60);
+    let mut last_wan_log = tokio::time::Instant::now();
 
     // Explorer badge layer (P1 #2): derive the root status from sync-loop
     // facts and drive the CfAPI provider-status + error report when it
@@ -955,6 +963,22 @@ async fn run_loop(
                     Ok(_) => {} // disk above target — nothing to do
                     Err(e) => tracing::warn!(project = %pid, "eviction sweep failed: {e}"),
                 }
+            }
+        }
+        if wan_log_secs > 0 && last_wan_log.elapsed().as_secs() >= wan_log_secs {
+            last_wan_log = tokio::time::Instant::now();
+            if let Some(swarm) = rt.swarm.lock().await.as_ref() {
+                let s = swarm.stats();
+                tracing::info!(
+                    project = %pid,
+                    peers = s.peers,
+                    direct = s.direct_links,
+                    relay = s.relay_links,
+                    stun_resolved = s.stun_resolved,
+                    punch_successes = s.punch_successes,
+                    punch_attempts = s.punch_attempts,
+                    "wan heartbeat (NAT success rate = punch_successes / punch_attempts)"
+                );
             }
         }
         if last_sweep.elapsed().as_secs() >= sweep_secs {

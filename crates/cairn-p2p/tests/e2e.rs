@@ -218,6 +218,24 @@ async fn three_nodes_converge() {
         "a served the swarm: {}",
         sa.blocks_served
     );
+    // NAT-metrics contract (round 19): every direct link here WAS a punch
+    // that landed — attempts counted once per peer pair, successes on the
+    // Punching->Direct transition, stun_resolved false because cfg.stun is
+    // None (honest absence, never an invented zero).
+    let sb = b.stats();
+    assert!(
+        sb.punch_attempts >= 1 && sb.punch_successes >= 1,
+        "b's direct link is a counted punch outcome: attempts {} successes {}",
+        sb.punch_attempts,
+        sb.punch_successes
+    );
+    assert!(
+        sb.punch_successes <= sb.punch_attempts,
+        "successes cannot exceed attempts: {}/{}",
+        sb.punch_successes,
+        sb.punch_attempts
+    );
+    assert!(!sb.stun_resolved, "no stun server configured");
     a.shutdown();
     b.shutdown();
     c.shutdown();

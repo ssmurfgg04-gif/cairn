@@ -98,6 +98,7 @@ async fn status(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value
     let home = state.home.as_path();
     let mut last_error: Option<String> = None;
     let summary_projects;
+    let mut swarm_summary = Vec::new();
     {
         let map = crate::projects::RUNTIMES.read().await;
         summary_projects = map.len() as u64;
@@ -105,6 +106,23 @@ async fn status(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value
             let v = rt.view.read().await;
             if let Some(e) = &v.last_error {
                 last_error.get_or_insert_with(|| e.clone());
+            }
+            drop(v);
+            // WAN leg (ADR-0022 §5): per-project NAT metrics — the punch
+            // success rate is the number the wan-p2p runbook reads off a
+            // VPS box. Missing swarm (no --swarm-signal) stays absent, not
+            // zeroed: honest absence over invented zeros.
+            if let Some(swarm) = rt.swarm.lock().await.as_ref() {
+                let s = swarm.stats();
+                swarm_summary.push(json!({
+                    "project": project_id_of(rt),
+                    "peers": s.peers,
+                    "direct_links": s.direct_links,
+                    "relay_links": s.relay_links,
+                    "stun_resolved": s.stun_resolved,
+                    "punch_attempts": s.punch_attempts,
+                    "punch_successes": s.punch_successes,
+                }));
             }
         }
     }
@@ -138,6 +156,8 @@ async fn status(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value
             "hydration_first_byte_ms": serde_json::Value::Null,
             "hydration_note": "no active FUSE/CfAPI mount on this daemon",
         },
+        // per-project swarm/NAT metrics (empty array = no swarm on this daemon)
+        "swarm": swarm_summary,
     }))
 }
 
