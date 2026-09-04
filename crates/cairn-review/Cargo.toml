@@ -1,0 +1,28 @@
+[package]
+name = "cairn-review"
+description = "Client review portal for cairn: version stacks, guest links (no account), frame-accurate comments backed by the cairn-tl NoteSet machinery (sync + three-way merge for free), reviewer presence, and the guest-facing HTTP player. The P2P sync engine carries review state as ordinary .cairn files; the portal is the web surface on top (ADR-0020)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+cairn-tl = { path = "../cairn-tl" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
+
+# http surface (the guest portal)
+axum = { workspace = true }
+tokio = { workspace = true }
+futures = { workspace = true }
+async-trait = { workspace = true }
+bytes = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

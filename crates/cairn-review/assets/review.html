@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cairn Review</title>
+<link rel="stylesheet" href="/assets/review.css">
+</head>
+<body>
+<div id="app" class="shell">
+  <aside class="rail">
+    <div class="brand">
+      <div class="mark"></div>
+      <div class="word">cairn<span> review</span></div>
+    </div>
+    <div id="meta" class="meta">
+      <div class="meta-title" id="title">—</div>
+      <div class="meta-sub" id="linknote"></div>
+    </div>
+    <nav class="stack" id="versions"></nav>
+    <div class="rail-foot">
+      <div class="presence-title">in the room</div>
+      <ul id="presence" class="presence"></ul>
+    </div>
+  </aside>
+
+  <main class="stage">
+    <div class="viewport" id="viewport">
+      <video id="video" preload="metadata" playsinline></video>
+      <div class="notfound" id="notfound" hidden>
+        <div class="nf-title">This link is not available</div>
+        <div class="nf-body">It may have expired or been revoked. Ask your editor for a fresh link.</div>
+      </div>
+      <div class="pinlayer" id="pins"></div>
+    </div>
+
+    <div class="transport">
+      <div class="tc-row">
+        <div class="tc" id="tc">00:00:00:00</div>
+        <div class="dur" id="dur"></div>
+        <div class="hint" id="fps"></div>
+      </div>
+      <div class="scrub" id="scrub">
+        <div class="scrub-track" id="track">
+          <div class="scrub-fill" id="fill"></div>
+          <div class="scrub-head" id="head"></div>
+          <div id="marklayer" class="marklayer"></div>
+        </div>
+      </div>
+      <div class="controls">
+        <button class="btn" id="play" aria-label="play or pause">space</button>
+        <div class="spacer"></div>
+        <button class="btn" id="prevf" aria-label="previous frame">step back</button>
+        <button class="btn" id="nextf" aria-label="next frame">step fwd</button>
+        <div class="spacer"></div>
+        <button class="btn" id="toggle-proxy" hidden>full res</button>
+      </div>
+    </div>
+
+    <section class="notes">
+      <header class="notes-head">
+        <div class="notes-title">notes</div>
+        <div class="notes-count" id="ncount">0</div>
+      </header>
+      <ol id="comments" class="comments"></ol>
+      <form class="composer" id="composer" hidden>
+        <input id="author" class="author" placeholder="your name" maxlength="40" autocomplete="name">
+        <textarea id="body" class="body" placeholder="Note at this frame — be specific" maxlength="2000" rows="2"></textarea>
+        <button class="btn primary" id="submit" type="submit">add note</button>
+      </form>
+      <div class="viewer-note" id="viewer-note" hidden>view-only link — notes are off</div>
+    </section>
+  </main>
+</div>
+<script src="/assets/review.js"></script>
+</body>
+</html>
