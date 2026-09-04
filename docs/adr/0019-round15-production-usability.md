@@ -126,22 +126,31 @@ address. On a trusted LAN the address is discoverable.
   project-relative path computation, and the context-menu actions
   (`cairn lock/unlock --project --path`, `cairn snapshot create --project`)
   as argv constructions.
-- **`com` module** (cfg(windows), compiled by the windows CI matrix):
-  manual-vtable COM (the workspace's cfapi.rs pattern) — DLL exports
+- **`com` module** (cfg(windows), compiled by the windows CI matrix + a
+  linux `windows-cross-check` job type-checking it in ~1 min): manual-vtable
+  COM (the workspace's cfapi.rs pattern) — DLL exports
   (`DllGetClassObject`, `DllCanUnloadNow`, `DllRegisterServer` writing
   HKCU-based keys so regsvr32 needs no elevation), four
-  `IExplorerIconOverlayIdentifier` handlers (overlay slots named with a
+  `IShellIconOverlayIdentifier` handlers (overlay slots named with a
   leading space — Explorer's ~15-overlay cap sorts by name), and the
   `IShellExtInit`/`IContextMenu` adapter invoking the audited CLI via
-  `ShellExecuteExW`. The first milestone ships the full overlay pipeline and
-  the invoke plumbing; the CF_HDROP selection parse and QI overrides for the
-  menu object land with the icon resource pack (tracked below).
+  `ShellExecuteExW`. The overlay/menu faces implement real QI
+  (per-interface, E_NOINTERFACE elsewhere) and the vtable slot order is
+  verified against the windows-rs 0.58 projection (IsMemberOf=3,
+  GetOverlayInfo=4, GetPriority=5 — the first draft had it backwards and
+  would have crashed Explorer). The first milestone ships the full overlay
+  pipeline and the invoke plumbing; the CF_HDROP selection parse and the
+  offset-based dual-interface identity for the menu object land with the
+  icon resource pack (tracked below).
 
 **Known follow-ups (honest ledger)**: icon resource pack
 (`cairn-icons.ico` + full `QueryContextMenu` insertion + CF_HDROP
-plumbing + per-interface QI for the overlay/menu objects); a signed build +
-installer step (shell extensions require signing for real deployment);
-per-machine (HKCR) registration variant.
+plumbing + offset-based dual-interface identity for the menu object —
+the current companion-face minting shares state but does not uphold the
+strict QI-identity rule); a signed build + installer step (shell
+extensions require signing for real deployment); per-machine (HKCR)
+registration variant; live Explorer verification (the windows-matrix
+compile is not an Explorer session).
 
 ## Non-goals
 

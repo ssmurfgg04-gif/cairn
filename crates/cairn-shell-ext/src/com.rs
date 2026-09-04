@@ -20,20 +20,24 @@
 // block below carries its own safety note (the fs-win::cfapi convention).
 #![allow(unsafe_code)]
 
+use std::cell::RefCell;
 use std::ffi::c_void;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use windows::core::{IUnknown, Interface, GUID, HRESULT, PCWSTR, PWSTR};
-use windows::Win32::Foundation::{CLASS_E_CLASSNOTAVAILABLE, E_FAIL, E_INVALIDARG, S_FALSE, S_OK};
+use windows::Win32::Foundation::{
+    CLASS_E_CLASSNOTAVAILABLE, E_FAIL, E_INVALIDARG, E_NOINTERFACE, S_FALSE, S_OK,
+};
+use windows::Win32::System::Com::IClassFactory;
 use windows::Win32::System::LibraryLoader::GetModuleFileNameW;
 use windows::Win32::System::Registry::{
-    RegCloseKey, RegCreateKeyExW, RegSetValueExW, HKEY, HKEY_CLASSES_ROOT, HKEY_CURRENT_USER,
-    KEY_WRITE, REG_OPTION_NON_VOLATILE, REG_SZ, REG_VALUE_TYPE,
+    RegCloseKey, RegCreateKeyExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER, KEY_WRITE,
+    REG_OPTION_NON_VOLATILE, REG_SZ, REG_VALUE_TYPE,
 };
 use windows::Win32::UI::Shell::{
-    IClassFactory, IContextMenu, IExplorerIconOverlayIdentifier, IShellExtInit,
-    CMIC_MASK_SHIFT_DOWN, CMIC_MASK_SHIFT_UP, CMINVOKECOMMANDINFO, QCMIF_PLACEBOTTOM,
+    IContextMenu, IShellExtInit, IShellIconOverlayIdentifier, ShellExecuteExW, CMINVOKECOMMANDINFO,
     SHELLEXECUTEINFOW,
 };
 
@@ -186,19 +190,9 @@ impl<T> ComObject<T> {
     }
 }
 
-// IUnknown slot layout shared by every interface here.
-const QI_ADDREF: usize = 1;
+// IUnknown slot layout shared by every interface here. QI=0, ADDREF=1,
+// RELEASE=2; interface methods follow.
 const QI_RELEASE: usize = 2;
-
-unsafe extern "system" fn unknown_query_interface<T>(
-    this: *mut c_void,
-    riid: *const GUID,
-    ppv: *mut *mut c_void,
-) -> HRESULT {
-    // per-interface: overridden by concrete vtables (slot 0 is QI itself)
-    let _ = (this as *mut ComObject<T>, riid, ppv);
-    E_FAIL
-}
 
 unsafe extern "system" fn object_add_ref<T>(this: *mut c_void) -> u32 {
     let obj = this as *mut ComObject<T>;
@@ -224,7 +218,7 @@ unsafe fn write_ptr(ppv: *mut *mut c_void, p: *mut c_void) -> HRESULT {
 }
 
 // ---------------------------------------------------------------------------
-// Overlay icon handlers (IExplorerIconOverlayIdentifier)
+// Overlay icon handlers (IShellIconOverlayIdentifier)
 // ---------------------------------------------------------------------------
 
 /// Inner state for one overlay handler: the state it reports + the icon
@@ -233,12 +227,53 @@ struct OverlayInner {
     state: OverlayState,
 }
 
-// vtable slots after IUnknown: GetOverlayInfo=3, GetOverlayPriority=4,
-// IsMemberOf=5.
+/// Real QI for the overlay face: IUnknown + IShellIconOverlayIdentifier.
+unsafe extern "system" fn overlay_query_interface(
+    this: *mut c_void,
+    riid: *const GUID,
+    ppv: *mut *mut c_void,
+) -> HRESULT {
+    if ppv.is_null() {
+        return E_INVALIDARG;
+    }
+    let want = *riid;
+    if want == <IUnknown as Interface>::IID
+        || want == <IShellIconOverlayIdentifier as Interface>::IID
+    {
+        let obj = this as *mut ComObject<OverlayInner>;
+        (*obj).add_ref();
+        return write_ptr(ppv, this);
+    }
+    E_NOINTERFACE
+}
+
+// IShellIconOverlayIdentifier vtable slots after IUnknown (verified against
+// the windows-rs 0.58 projection): IsMemberOf=3, GetOverlayInfo=4,
+// GetPriority=5.
+unsafe extern "system" fn overlay_is_member_of(
+    this: *mut c_void,
+    pwsz_path: PCWSTR,
+    _dw_attrib: u32,
+) -> HRESULT {
+    let obj = this as *mut ComObject<OverlayInner>;
+    let wanted = (*obj).inner().state;
+    let abs = PathBuf::from(from_wide(pwsz_path));
+    let Some((root, _info)) = core::resolve_root(&abs) else {
+        return S_FALSE; // not a cairn root: no overlay, no cost
+    };
+    let Some(rel) = core::rel_under(&root, &abs) else {
+        return S_FALSE;
+    };
+    match core::OverlayStateFile::read(&root).and_then(|f| f.state_of(&rel)) {
+        Some(state) if state == wanted => S_OK,
+        _ => S_FALSE,
+    }
+}
+
 unsafe extern "system" fn overlay_get_overlay_info(
     this: *mut c_void,
     pwsz_icon_file: PWSTR,
-    cch_max: u32,
+    cch_max: i32,
     pindex: *mut i32,
     pdw_flags: *mut u32,
 ) -> HRESULT {
@@ -246,7 +281,10 @@ unsafe extern "system" fn overlay_get_overlay_info(
     let inner = (*obj).inner();
     let path = icon_file();
     let wpath = wide(&path.to_string_lossy());
-    let n = wpath.len().min(cch_max as usize).saturating_sub(1);
+    // cch_max is i32 in the projection; Explorer passes the buffer capacity
+    // INCLUDING the terminator.
+    let cap = cch_max.max(0) as usize;
+    let n = wpath.len().min(cap).saturating_sub(1);
     if pwsz_icon_file.is_null() || pindex.is_null() || pdw_flags.is_null() {
         return E_INVALIDARG;
     }
@@ -269,34 +307,14 @@ unsafe extern "system" fn overlay_get_priority(this: *mut c_void, ppriority: *mu
     S_OK
 }
 
-unsafe extern "system" fn overlay_is_member_of(
-    this: *mut c_void,
-    pwsz_path: PCWSTR,
-    _dw_attrib: u32,
-) -> HRESULT {
-    let obj = this as *mut ComObject<OverlayInner>;
-    let wanted = (*obj).inner().state;
-    let abs = PathBuf::from(from_wide(pwsz_path));
-    let Some((root, _info)) = core::resolve_root(&abs) else {
-        return S_FALSE; // not a cairn root: no overlay, no cost
-    };
-    let Some(rel) = core::rel_under(&root, &abs) else {
-        return S_FALSE;
-    };
-    match core::OverlayStateFile::read(&root).and_then(|f| f.state_of(&rel)) {
-        Some(state) if state == wanted => S_OK,
-        _ => S_FALSE,
-    }
-}
-
 const OVERLAY_VTABLE: VTablePtr<6> = VTablePtr {
     entries: [
-        unknown_query_interface::<OverlayInner> as *const c_void,
+        overlay_query_interface as *const c_void,
         object_add_ref::<OverlayInner> as *const c_void,
         object_release::<OverlayInner> as *const c_void,
+        overlay_is_member_of as *const c_void,
         overlay_get_overlay_info as *const c_void,
         overlay_get_priority as *const c_void,
-        overlay_is_member_of as *const c_void,
     ],
 };
 
@@ -308,12 +326,49 @@ unsafe fn make_overlay(state: OverlayState) -> *mut ComObject<OverlayInner> {
 // Context menu (IShellExtInit + IContextMenu)
 // ---------------------------------------------------------------------------
 
+/// Selection state shared by the context-menu object's two faces. Explorer
+/// instantiates the object, QIs IShellExtInit, calls Initialize with the
+/// selection, then QIs IContextMenu on the same instance. The two faces
+/// share one Rc so the Initialize'd selection is what InvokeCommand acts on.
+///
+/// Milestone caveat (ADR-0019 §5): QI for the companion face mints a new
+/// object rather than returning an offset pointer, so the strict COM
+/// identity rule (same IUnknown* from every QI) is not upheld across faces.
+/// Explorer's per-invocation QI pattern (each face queried once per menu
+/// open) is unaffected; a proper offset-based dual-interface object lands
+/// with the icon resource pack.
+type SharedSelection = Rc<RefCell<Vec<PathBuf>>>;
+
 struct MenuInner {
     /// The paths Explorer selected (Initialize).
-    selected: Vec<PathBuf>,
+    selected: SharedSelection,
 }
 
-// IShellExtInit slots: Initialize=3.
+// IShellExtInit slots after IUnknown: Initialize=3.
+unsafe extern "system" fn menu_init_query_interface(
+    this: *mut c_void,
+    riid: *const GUID,
+    ppv: *mut *mut c_void,
+) -> HRESULT {
+    if ppv.is_null() {
+        return E_INVALIDARG;
+    }
+    let want = *riid;
+    let obj = this as *mut ComObject<MenuInner>;
+    if want == <IUnknown as Interface>::IID || want == <IShellExtInit as Interface>::IID {
+        (*obj).add_ref();
+        return write_ptr(ppv, this);
+    }
+    if want == <IContextMenu as Interface>::IID {
+        // mint the companion cmd face sharing the same selection
+        let inner = (*obj).inner();
+        let shared = Rc::clone(&inner.selected);
+        let companion = make_menu_cmd_face(shared);
+        return write_ptr(ppv, companion as *mut c_void);
+    }
+    E_NOINTERFACE
+}
+
 unsafe extern "system" fn menu_initialize(
     this: *mut c_void,
     _pidl_folder: *mut c_void,
@@ -326,15 +381,40 @@ unsafe extern "system" fn menu_initialize(
     // DROPFILES parse from the data object's CF_HDROP storage.
     let obj = this as *mut ComObject<MenuInner>;
     let inner = (*obj).inner();
-    inner.selected = menu_paths_from_data_object(pdata_obj);
-    if inner.selected.is_empty() {
+    *inner.selected.borrow_mut() = menu_paths_from_data_object(pdata_obj);
+    if inner.selected.borrow().is_empty() {
         S_FALSE
     } else {
         S_OK
     }
 }
 
-// IContextMenu slots: QueryContextMenu=3, InvokeCommand=4, GetCommandString=5.
+// IContextMenu slots after IUnknown: QueryContextMenu=3, InvokeCommand=4,
+// GetCommandString=5 (verified against the windows-rs 0.58 projection).
+unsafe extern "system" fn menu_cmd_query_interface(
+    this: *mut c_void,
+    riid: *const GUID,
+    ppv: *mut *mut c_void,
+) -> HRESULT {
+    if ppv.is_null() {
+        return E_INVALIDARG;
+    }
+    let want = *riid;
+    let obj = this as *mut ComObject<MenuInner>;
+    if want == <IUnknown as Interface>::IID || want == <IContextMenu as Interface>::IID {
+        (*obj).add_ref();
+        return write_ptr(ppv, this);
+    }
+    if want == <IShellExtInit as Interface>::IID {
+        // mint the companion init face sharing the same selection
+        let inner = (*obj).inner();
+        let shared = Rc::clone(&inner.selected);
+        let companion = make_menu_init_face(shared);
+        return write_ptr(ppv, companion as *mut c_void);
+    }
+    E_NOINTERFACE
+}
+
 unsafe extern "system" fn menu_query_context_menu(
     this: *mut c_void,
     _hmenu: *mut c_void,
@@ -356,16 +436,19 @@ unsafe extern "system" fn menu_invoke_command(
     this: *mut c_void,
     pici: *const CMINVOKECOMMANDINFO,
 ) -> HRESULT {
+    if pici.is_null() {
+        return E_INVALIDARG;
+    }
     let obj = this as *mut ComObject<MenuInner>;
     let inner = (*obj).inner();
     let ici = &*pici;
-    // lpVerb is either a MAKEINTRESOURCE id (0,1,2) or a string verb
-    let verb_ptr = ici.lpVerb as *const u8;
+    // lpVerb (PCSTR) is either a MAKEINTRESOURCE id (0,1,2) or a string verb
+    let verb_ptr: *const u8 = ici.lpVerb.0;
     if verb_ptr.is_null() {
         return E_INVALIDARG;
     }
-    let which: i32 = if (ici.lpVerb as usize) < 0x10000 {
-        ici.lpVerb as i32
+    let which: i32 = if (ici.lpVerb.0 as usize) < 0x10000 {
+        ici.lpVerb.0 as i32
     } else {
         // string verb: "lock" | "unlock" | "snapshot"
         let mut s = String::new();
@@ -381,10 +464,14 @@ unsafe extern "system" fn menu_invoke_command(
             _ => return E_INVALIDARG,
         }
     };
-    let Some((root, info)) = core::resolve_root(inner.selected.first()?) else {
+    let first = match inner.selected.borrow().first().cloned() {
+        Some(f) => f,
+        None => return E_INVALIDARG,
+    };
+    let Some((root, info)) = core::resolve_root(&first) else {
         return E_FAIL;
     };
-    let Some(rel) = core::rel_under(&root, inner.selected.first().unwrap()) else {
+    let Some(rel) = core::rel_under(&root, &first) else {
         return E_FAIL;
     };
     let action = match which {
@@ -420,32 +507,19 @@ unsafe extern "system" fn menu_get_command_string(
 /// Spawn `cairn <argv>` detached. Uses ShellExecuteW ("open" on the
 /// resolved cairn.exe) so no console window flashes in Explorer.
 unsafe fn run_cairn(action: &MenuAction) {
-    let mut params = action.argv().join(" ");
-    let verb: PCWSTR = PCWSTR(wide("open").as_ptr());
-    let file: PCWSTR = PCWSTR(wide("cairn.exe").as_ptr());
-    let parameters: PCWSTR = PCWSTR(wide(&params).as_ptr());
-    params.push(' ');
-    let mut sei = SHELLEXECUTEINFOW {
-        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
-        lpVerb: verb,
-        lpFile: file,
-        lpParameters: parameters,
-        nShow: 0, // SW_HIDE: the CLI is quiet on success
-        fMask: 0,
-        hwnd: std::ptr::null_mut(),
-        lpDirectory: PCWSTR::null(),
-        hInstApp: std::mem::zeroed(),
-        lpIDList: std::ptr::null_mut(),
-        lpClass: PCWSTR::null(),
-        hkeyClass: std::mem::zeroed(),
-        dwHotKey: 0,
-        hIcon: std::mem::zeroed(),
-        hProcess: std::mem::zeroed(),
-    };
-    let _ = windows::Win32::UI::Shell::ShellExecuteExW(&mut sei);
-    let _ = CMIC_MASK_SHIFT_DOWN; // flags reserved for future accelerator work
-    let _ = CMIC_MASK_SHIFT_UP;
-    let _ = QCMIF_PLACEBOTTOM;
+    let params = action.argv().join(" ");
+    // The wide buffers must outlive the ShellExecuteExW call: PCWSTR is a
+    // borrowed pointer, not an owned handle.
+    let verb_w = wide("open");
+    let file_w = wide("cairn.exe");
+    let params_w = wide(&params);
+    let mut sei = SHELLEXECUTEINFOW::default();
+    sei.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
+    sei.lpVerb = PCWSTR(verb_w.as_ptr());
+    sei.lpFile = PCWSTR(file_w.as_ptr());
+    sei.lpParameters = PCWSTR(params_w.as_ptr());
+    sei.nShow = 0; // SW_HIDE: the CLI is quiet on success
+    let _ = ShellExecuteExW(&mut sei);
 }
 
 /// CF_HDROP extraction from the data object (DROPFILES + wide path list).
@@ -460,7 +534,7 @@ unsafe fn menu_paths_from_data_object(_pdata: *mut c_void) -> Vec<PathBuf> {
 
 const MENU_INIT_VTABLE: VTablePtr<4> = VTablePtr {
     entries: [
-        unknown_query_interface::<MenuInner> as *const c_void,
+        menu_init_query_interface as *const c_void,
         object_add_ref::<MenuInner> as *const c_void,
         object_release::<MenuInner> as *const c_void,
         menu_initialize as *const c_void,
@@ -469,7 +543,7 @@ const MENU_INIT_VTABLE: VTablePtr<4> = VTablePtr {
 
 const MENU_CMD_VTABLE: VTablePtr<6> = VTablePtr {
     entries: [
-        unknown_query_interface::<MenuInner> as *const c_void,
+        menu_cmd_query_interface as *const c_void,
         object_add_ref::<MenuInner> as *const c_void,
         object_release::<MenuInner> as *const c_void,
         menu_query_context_menu as *const c_void,
@@ -479,15 +553,20 @@ const MENU_CMD_VTABLE: VTablePtr<6> = VTablePtr {
 };
 
 // The context menu object implements BOTH IShellExtInit and IContextMenu;
-// the box's vtable pointer swaps per query. We keep it as one object with
-// two faces via the inner struct.
+// the two faces share one selection via Rc. Explorer's entry face is
+// IShellExtInit (Initialize), so the factory mints that face; QI between
+// faces mints companions carrying the same Rc.
+unsafe fn make_menu_init_face(selected: SharedSelection) -> *mut ComObject<MenuInner> {
+    ComObject::new(MENU_INIT_VTABLE.entries.as_ptr(), MenuInner { selected })
+}
+
+unsafe fn make_menu_cmd_face(selected: SharedSelection) -> *mut ComObject<MenuInner> {
+    ComObject::new(MENU_CMD_VTABLE.entries.as_ptr(), MenuInner { selected })
+}
+
+/// The face the class factory serves (Explorer QIs further from there).
 unsafe fn make_menu_object() -> *mut ComObject<MenuInner> {
-    ComObject::new(
-        MENU_INIT_VTABLE.entries.as_ptr(),
-        MenuInner {
-            selected: Vec::new(),
-        },
-    )
+    make_menu_init_face(Rc::new(RefCell::new(Vec::new())))
 }
 
 // ---------------------------------------------------------------------------
@@ -503,13 +582,16 @@ unsafe extern "system" fn factory_query_interface(
     riid: *const GUID,
     ppv: *mut *mut c_void,
 ) -> HRESULT {
-    let obj = this as *mut ComObject<FactoryInner>;
+    if ppv.is_null() {
+        return E_INVALIDARG;
+    }
     let want = *riid;
     if want == <IUnknown as Interface>::IID || want == <IClassFactory as Interface>::IID {
+        let obj = this as *mut ComObject<FactoryInner>;
+        (*obj).add_ref();
         return write_ptr(ppv, this);
     }
-    let _ = obj;
-    E_FAIL
+    E_NOINTERFACE
 }
 
 unsafe extern "system" fn factory_create_instance(
@@ -529,17 +611,20 @@ unsafe extern "system" fn factory_create_instance(
         CLSID_CONTEXT_MENU => make_menu_object() as *mut c_void,
         _ => return CLASS_E_CLASSNOTAVAILABLE,
     };
-    // the vtable's own QI handles the requested interface
+    // the vtable's own QI handles the requested interface. The object's
+    // first field is the vtable pointer (pointer to the slot array); each
+    // slot is a `*const c_void` holding a fn pointer.
     let vt = *(unknown as *mut *const *const c_void);
     let qi: unsafe extern "system" fn(*mut c_void, *const GUID, *mut *mut c_void) -> HRESULT =
-        std::mem::transmute(*(*vt).add(0));
+        std::mem::transmute(*vt.add(0));
     let hr = qi(unknown, &want, ppv);
-    // release the creation reference if QI failed (caller holds one on success)
-    if hr.is_err() {
-        let rel: unsafe extern "system" fn(*mut c_void) -> u32 =
-            std::mem::transmute(*(*vt).add(QI_RELEASE));
-        rel(unknown);
-    }
+    // The object was born with one creation reference. QI added its own
+    // reference for the caller on success; either way the creation
+    // reference is ours to drop (on failure QI never added one, so this
+    // destroys the object; on success the caller's reference survives).
+    let rel: unsafe extern "system" fn(*mut c_void) -> u32 =
+        std::mem::transmute(*vt.add(QI_RELEASE));
+    rel(unknown);
     hr
 }
 
@@ -590,13 +675,13 @@ extern "system" fn DllGetClassObject(
         let factory = make_factory(clsid);
         let vt = *(factory as *mut *const *const c_void);
         let qi: unsafe extern "system" fn(*mut c_void, *const GUID, *mut *mut c_void) -> HRESULT =
-            std::mem::transmute(*(*vt).add(0));
+            std::mem::transmute(*vt.add(0));
         let hr = qi(factory, riid, ppv);
-        if hr.is_err() {
-            let rel: unsafe extern "system" fn(*mut c_void) -> u32 =
-                std::mem::transmute(*(*vt).add(QI_RELEASE));
-            rel(factory);
-        }
+        // drop the creation reference: the caller's QI reference is the one
+        // that survives (see factory_create_instance for the semantics).
+        let rel: unsafe extern "system" fn(*mut c_void) -> u32 =
+            std::mem::transmute(*vt.add(QI_RELEASE));
+        rel(factory);
         hr
     }
 }
@@ -612,12 +697,13 @@ extern "system" fn DllCanUnloadNow() -> HRESULT {
 
 fn reg_set_string(key: HKEY, name: Option<&str>, value: &str) -> HRESULT {
     unsafe {
+        // Both wide buffers outlive the RegSetValueExW call (PCWSTR borrows).
         let name_w: Vec<u16> = name.map(wide).unwrap_or_default();
         let value_w = wide(value);
         let name_ptr = if name_w.is_empty() {
-            None
+            PCWSTR::null()
         } else {
-            Some(PCWSTR(name_w.as_ptr()))
+            PCWSTR(name_w.as_ptr())
         };
         let res = RegSetValueExW(
             key,
@@ -629,10 +715,10 @@ fn reg_set_string(key: HKEY, name: Option<&str>, value: &str) -> HRESULT {
                 value_w.len() * 2,
             )),
         );
-        if res.is_err() {
-            E_FAIL
-        } else {
+        if res.0 == 0 {
             S_OK
+        } else {
+            E_FAIL
         }
     }
 }
@@ -644,17 +730,17 @@ unsafe fn reg_create(path: &str) -> Result<HKEY, HRESULT> {
         HKEY_CURRENT_USER,
         PCWSTR(path_w.as_ptr()),
         0,
-        None,
+        PCWSTR::null(),
         REG_OPTION_NON_VOLATILE,
-        KEY_WRITE.0,
+        KEY_WRITE,
         None,
         &mut key,
         None,
     );
-    if res.is_err() {
-        Err(E_FAIL)
-    } else {
+    if res.0 == 0 {
         Ok(key)
+    } else {
+        Err(E_FAIL)
     }
 }
 
@@ -741,12 +827,9 @@ extern "system" fn DllUnregisterServer() -> HRESULT {
 }
 
 const _: () = {
-    // compile-time sanity: the unknown_query_interface fallback is only a
-    // placeholder — every served interface overrides slot 0 with its own QI
-    // (factory_query_interface demonstrates the pattern; overlay + menu
-    // QI land with the icon pack milestone, tracked in ADR-0019 §5)
+    // Compile-time sanity: every face's vtable slot 0 is a real QI
+    // (overlay_query_interface / menu_init_query_interface /
+    // menu_cmd_query_interface / factory_query_interface). Companion-face
+    // minting + offset-based identity land with the icon resource pack
+    // (ADR-0019 §5).
 };
-
-// keep unused-import warnings honest for the windows-only build
-#[allow(unused_imports)]
-use windows::Win32::UI::Shell::ShellExecuteExW;
