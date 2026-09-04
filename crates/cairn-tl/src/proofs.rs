@@ -18,7 +18,7 @@
 //!    SHAPES, same symbolic discriminant surface.
 //! 2. SHARDING: each proof family is split into 11 per-kind shards — the
 //!    OURS kind is a CONCRETE constant per shard (the 11 harness entries
-//!    `proof_classifier_shard_kind_0..10`, `proof_symmetry_shard_kind_0..10`),
+//!    `proof_classifier_shard_kind_00..10`, `proof_symmetry_shard_kind_00..10`),
 //!    the THEIRS kind stays symbolic. The union of a family's 11 shards is
 //!    EXACTLY the original 121-pair space (every (ours, theirs) pair appears
 //!    in shard `ours`), so sharding loses no coverage — each CBMC job
@@ -230,61 +230,61 @@ fn classifier_body(ours_kind: u8) {
 // One harness per runner — see the module doc and kani.yml.
 #[cfg(kani)]
 #[kani::proof]
-fn proof_classifier_shard_kind_0() {
+fn proof_classifier_shard_kind_00() {
     classifier_body(0);
 }
 
 #[cfg(kani)]
 #[kani::proof]
-fn proof_classifier_shard_kind_1() {
+fn proof_classifier_shard_kind_01() {
     classifier_body(1);
 }
 
 #[cfg(kani)]
 #[kani::proof]
-fn proof_classifier_shard_kind_2() {
+fn proof_classifier_shard_kind_02() {
     classifier_body(2);
 }
 
 #[cfg(kani)]
 #[kani::proof]
-fn proof_classifier_shard_kind_3() {
+fn proof_classifier_shard_kind_03() {
     classifier_body(3);
 }
 
 #[cfg(kani)]
 #[kani::proof]
-fn proof_classifier_shard_kind_4() {
+fn proof_classifier_shard_kind_04() {
     classifier_body(4);
 }
 
 #[cfg(kani)]
 #[kani::proof]
-fn proof_classifier_shard_kind_5() {
+fn proof_classifier_shard_kind_05() {
     classifier_body(5);
 }
 
 #[cfg(kani)]
 #[kani::proof]
-fn proof_classifier_shard_kind_6() {
+fn proof_classifier_shard_kind_06() {
     classifier_body(6);
 }
 
 #[cfg(kani)]
 #[kani::proof]
-fn proof_classifier_shard_kind_7() {
+fn proof_classifier_shard_kind_07() {
     classifier_body(7);
 }
 
 #[cfg(kani)]
 #[kani::proof]
-fn proof_classifier_shard_kind_8() {
+fn proof_classifier_shard_kind_08() {
     classifier_body(8);
 }
 
 #[cfg(kani)]
 #[kani::proof]
-fn proof_classifier_shard_kind_9() {
+fn proof_classifier_shard_kind_09() {
     classifier_body(9);
 }
 
@@ -314,61 +314,61 @@ fn symmetry_body(ka: u8) {
 
 #[cfg(kani)]
 #[kani::proof]
-fn proof_symmetry_shard_kind_0() {
+fn proof_symmetry_shard_kind_00() {
     symmetry_body(0);
 }
 
 #[cfg(kani)]
 #[kani::proof]
-fn proof_symmetry_shard_kind_1() {
+fn proof_symmetry_shard_kind_01() {
     symmetry_body(1);
 }
 
 #[cfg(kani)]
 #[kani::proof]
-fn proof_symmetry_shard_kind_2() {
+fn proof_symmetry_shard_kind_02() {
     symmetry_body(2);
 }
 
 #[cfg(kani)]
 #[kani::proof]
-fn proof_symmetry_shard_kind_3() {
+fn proof_symmetry_shard_kind_03() {
     symmetry_body(3);
 }
 
 #[cfg(kani)]
 #[kani::proof]
-fn proof_symmetry_shard_kind_4() {
+fn proof_symmetry_shard_kind_04() {
     symmetry_body(4);
 }
 
 #[cfg(kani)]
 #[kani::proof]
-fn proof_symmetry_shard_kind_5() {
+fn proof_symmetry_shard_kind_05() {
     symmetry_body(5);
 }
 
 #[cfg(kani)]
 #[kani::proof]
-fn proof_symmetry_shard_kind_6() {
+fn proof_symmetry_shard_kind_06() {
     symmetry_body(6);
 }
 
 #[cfg(kani)]
 #[kani::proof]
-fn proof_symmetry_shard_kind_7() {
+fn proof_symmetry_shard_kind_07() {
     symmetry_body(7);
 }
 
 #[cfg(kani)]
 #[kani::proof]
-fn proof_symmetry_shard_kind_8() {
+fn proof_symmetry_shard_kind_08() {
     symmetry_body(8);
 }
 
 #[cfg(kani)]
 #[kani::proof]
-fn proof_symmetry_shard_kind_9() {
+fn proof_symmetry_shard_kind_09() {
     symmetry_body(9);
 }
 

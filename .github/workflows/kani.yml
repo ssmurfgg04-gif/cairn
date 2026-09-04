@@ -44,27 +44,27 @@ jobs:
           # matter, so both families are HARD-gated again. The classifier
           # LOGIC is additionally pinned by the 89 cairn-tl tests + the
           # 18-file real-timeline corpus gate. ----
-          - proof_classifier_shard_kind_0
-          - proof_classifier_shard_kind_1
-          - proof_classifier_shard_kind_2
-          - proof_classifier_shard_kind_3
-          - proof_classifier_shard_kind_4
-          - proof_classifier_shard_kind_5
-          - proof_classifier_shard_kind_6
-          - proof_classifier_shard_kind_7
-          - proof_classifier_shard_kind_8
-          - proof_classifier_shard_kind_9
+          - proof_classifier_shard_kind_00
+          - proof_classifier_shard_kind_01
+          - proof_classifier_shard_kind_02
+          - proof_classifier_shard_kind_03
+          - proof_classifier_shard_kind_04
+          - proof_classifier_shard_kind_05
+          - proof_classifier_shard_kind_06
+          - proof_classifier_shard_kind_07
+          - proof_classifier_shard_kind_08
+          - proof_classifier_shard_kind_09
           - proof_classifier_shard_kind_10
-          - proof_symmetry_shard_kind_0
-          - proof_symmetry_shard_kind_1
-          - proof_symmetry_shard_kind_2
-          - proof_symmetry_shard_kind_3
-          - proof_symmetry_shard_kind_4
-          - proof_symmetry_shard_kind_5
-          - proof_symmetry_shard_kind_6
-          - proof_symmetry_shard_kind_7
-          - proof_symmetry_shard_kind_8
-          - proof_symmetry_shard_kind_9
+          - proof_symmetry_shard_kind_00
+          - proof_symmetry_shard_kind_01
+          - proof_symmetry_shard_kind_02
+          - proof_symmetry_shard_kind_03
+          - proof_symmetry_shard_kind_04
+          - proof_symmetry_shard_kind_05
+          - proof_symmetry_shard_kind_06
+          - proof_symmetry_shard_kind_07
+          - proof_symmetry_shard_kind_08
+          - proof_symmetry_shard_kind_09
           - proof_symmetry_shard_kind_10
     steps:
       - uses: actions/checkout@v4
@@ -82,6 +82,8 @@ jobs:
           ${{ matrix.harness == 'proof_bloom_probe_math_in_bounds' && '--default-unwind 32' || '' }}
         if: contains(matrix.harness, 'b64_') || contains(matrix.harness, 'hex_') || contains(matrix.harness, 'sniff_') || contains(matrix.harness, 'roundtrip_frozen') || contains(matrix.harness, 'bloom_probe')
       - name: Proof (cairn-tl shard) ${{ matrix.harness }}
-        # bounded op model: 11 op kinds, fixed structures — unwind 12 covers it
-        run: cargo kani --harness ${{ matrix.harness }} -p cairn-tl --default-unwind 12
+        # bounded op model: 11 op kinds, fixed structures; unwind 32 covers the
+        # model's memcmp (Vec<usize> order compare = 16 bytes; the cairn-core
+        # commit shard precedent uses 104 for its ~95-byte buffers).
+        run: cargo kani --harness ${{ matrix.harness }} -p cairn-tl --default-unwind 32
         if: contains(matrix.harness, 'shard')
