@@ -175,6 +175,59 @@ pub fn cmd_export_markers(
     as_otio: bool,
     timeline: Option<&str>,
 ) -> anyhow::Result<()> {
+    let format = if as_otio { "otio" } else { "fcpxml" };
+    let (payload, _ctype) = markers_payload(root, version, format, timeline)?;
+    std::fs::write(out, payload).map_err(|e| anyhow::anyhow!("write {out}: {e}"))?;
+    let set =
+        cairn_review::store::Store::load_comments(root, version).map_err(anyhow::Error::msg)?;
+    let review = cairn_review::store::Store::load(root).map_err(anyhow::Error::msg)?;
+    let (fps_num, fps_den) = review
+        .as_ref()
+        .and_then(|f| f.version(version))
+        .map(|v| (i64::from(v.fps_num.max(1)), i64::from(v.fps_den.max(1))))
+        .unwrap_or((24, 1));
+    let (timebase, ntsc) = fcpxml_rate_fields(fps_num, fps_den);
+    println!(
+        "exported {} marker(s) @ {}/{} fps (timebase {timebase}, ntsc {ntsc}) -> {out} \
+         (import into Premiere/Resolve/FCP)",
+        set.len(),
+        fps_num,
+        fps_den
+    );
+    Ok(())
+}
+
+/// NDF timecode display for a frame at an integer rate (the same rule the
+/// review player uses: count frames at the TRUE rate, display NDF).
+fn tc_str(frame: u64, rate: u64) -> String {
+    let rate = rate.max(1);
+    let (secs, frames) = (frame / rate, frame % rate);
+    let (hours, rem) = (secs / 3600, secs % 3600);
+    let (mins, secs) = (rem / 60, rem % 60);
+    format!("{hours:02}:{mins:02}:{secs:02}:{frames:02}")
+}
+
+/// CSV-escape one field (RFC 4180: quote when needed, double the quotes).
+fn csv_field(s: &str) -> String {
+    if s.contains(',') || s.contains('"') || s.contains('\n') || s.contains('\r') {
+        format!("\"{}\"", s.replace('"', "\"\""))
+    } else {
+        s.to_string()
+    }
+}
+
+/// The marker-export payload for one version's comments — the ONE body
+/// behind every surface: the CLI (`cairn review export-markers`) and the
+/// loopback HTTP endpoint the NLE panel calls (`GET /api/v1/markers`).
+/// Formats: `fcpxml` (FCP7 XML, the Premiere/Resolve/FCP import), `otio`
+/// (canonical timeline with markers), `csv` (frame/TC/author/status/body —
+/// the spreadsheet/panel view). Returns `(payload, content_type)`.
+pub fn markers_payload(
+    root: &Path,
+    version: u32,
+    format: &str,
+    timeline: Option<&str>,
+) -> anyhow::Result<(String, &'static str)> {
     let set =
         cairn_review::store::Store::load_comments(root, version).map_err(anyhow::Error::msg)?;
     if set.is_empty() {
@@ -188,36 +241,50 @@ pub fn cmd_export_markers(
         .map(|v| (i64::from(v.fps_num.max(1)), i64::from(v.fps_den.max(1))))
         .unwrap_or((24, 1));
     let (timebase, ntsc) = fcpxml_rate_fields(fps_num, fps_den);
-    if as_otio {
-        let tl = match timeline {
-            Some(p) => crate::load_timeline_sidecar(&resolve(root, p))?.0,
-            None => cairn_tl::model::Timeline {
-                name: format!("review v{version} markers"),
-                global_start_time: None,
-                metadata: cairn_tl::model::JsonMap::new(),
-                tracks: cairn_tl::model::Element::container(
-                    cairn_tl::model::Kind::Stack,
-                    "tracks",
-                    Vec::new(),
-                ),
-                extra: cairn_tl::model::JsonMap::new(),
-            },
-        };
-        let with = notes_to_otio_at(&tl, &set, Some(true_rate(fps_num, fps_den)));
-        let json = cairn_tl::canon::serialize_file(&with).map_err(|e| anyhow::anyhow!("{e:?}"))?;
-        std::fs::write(out, json).map_err(|e| anyhow::anyhow!("write {out}: {e}"))?;
-    } else {
-        let xml = notes_to_fcpxml(&set, timebase, ntsc, &format!("cairn review v{version}"));
-        std::fs::write(out, xml).map_err(|e| anyhow::anyhow!("write {out}: {e}"))?;
+    match format {
+        "otio" => {
+            let tl = match timeline {
+                Some(p) => crate::load_timeline_sidecar(&resolve(root, p))?.0,
+                None => cairn_tl::model::Timeline {
+                    name: format!("review v{version} markers"),
+                    global_start_time: None,
+                    metadata: cairn_tl::model::JsonMap::new(),
+                    tracks: cairn_tl::model::Element::container(
+                        cairn_tl::model::Kind::Stack,
+                        "tracks",
+                        Vec::new(),
+                    ),
+                    extra: cairn_tl::model::JsonMap::new(),
+                },
+            };
+            let with = notes_to_otio_at(&tl, &set, Some(true_rate(fps_num, fps_den)));
+            let json =
+                cairn_tl::canon::serialize_file(&with).map_err(|e| anyhow::anyhow!("{e:?}"))?;
+            Ok((json, "application/json"))
+        }
+        "csv" => {
+            let mut out = String::from("frame,tc,author,status,note\n");
+            let mut rows: Vec<_> = set.notes.values().collect();
+            rows.sort_by_key(|n| n.anchor.frame);
+            for n in rows {
+                let frame = u64::try_from(n.anchor.frame.max(0)).unwrap_or(0);
+                let rate = u64::try_from(n.anchor.rate.max(1)).unwrap_or(24);
+                out.push_str(&format!(
+                    "{frame},{},{},{},{}\n",
+                    tc_str(frame, rate),
+                    csv_field(&n.author),
+                    csv_field(n.status.as_str()),
+                    csv_field(&n.body)
+                ));
+            }
+            Ok((out, "text/csv; charset=utf-8"))
+        }
+        "fcpxml" => {
+            let xml = notes_to_fcpxml(&set, timebase, ntsc, &format!("cairn review v{version}"));
+            Ok((xml, "application/xml"))
+        }
+        other => anyhow::bail!("unknown marker format '{other}' (fcpxml | otio | csv)"),
     }
-    println!(
-        "exported {} marker(s) @ {}/{} fps (timebase {timebase}, ntsc {ntsc}) -> {out} \
-         (import into Premiere/Resolve/FCP)",
-        set.len(),
-        fps_num,
-        fps_den
-    );
-    Ok(())
 }
 
 #[cfg(test)]
@@ -282,5 +349,50 @@ mod tests {
         let otio = std::fs::read_to_string(&out3).unwrap();
         assert!(otio.contains("\"rate\": 23.976"));
         assert!(otio.contains("\"value\": 96.0"));
+    }
+
+    /// The shared payload body (round 19): all three formats agree on the
+    /// TRUE rate and the frame index; CSV sorts by frame, quotes fields,
+    /// and displays NDF timecode at the note's own rate; unknown formats
+    /// are a hard error, not a silent default.
+    #[test]
+    fn markers_payload_three_formats_one_truth() {
+        let root = tmp();
+        publish(&root, (25, 1));
+        cairn_review::store::Store::add_comment(
+            &root,
+            1,
+            "jane",
+            "tighten, after cut",
+            50,
+            25,
+            100,
+        )
+        .unwrap();
+        cairn_review::store::Store::add_comment(&root, 1, "tom", "opening, weak", 25, 25, 101)
+            .unwrap();
+
+        let (csv, ctype) = markers_payload(&root, 1, "csv", None).unwrap();
+        assert_eq!(ctype, "text/csv; charset=utf-8");
+        let lines: Vec<&str> = csv.trim_end().lines().collect();
+        assert_eq!(lines[0], "frame,tc,author,status,note");
+        // frame-sorted: tom@25 first, jane@50 second
+        assert_eq!(lines[1], "25,00:00:01:00,tom,OPEN,\"opening, weak\"");
+        assert_eq!(lines[2], "50,00:00:02:00,jane,OPEN,\"tighten, after cut\"");
+
+        let (xml, _) = markers_payload(&root, 1, "fcpxml", None).unwrap();
+        assert!(xml.contains("<timebase>25</timebase>"));
+        assert!(xml.contains("<start>50</start>"));
+
+        let (otio, _) = markers_payload(&root, 1, "otio", None).unwrap();
+        assert!(otio.contains("\"rate\": 25.0"));
+        assert!(otio.contains("\"value\": 50.0"));
+
+        // unknown format: a hard error naming the legal set
+        let err = markers_payload(&root, 1, "xlsx", None)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("unknown marker format"), "{err}");
+        assert!(err.contains("fcpxml | otio | csv"));
     }
 }

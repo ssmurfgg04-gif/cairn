@@ -1,0 +1,29 @@
+{
+  "manifestVersion": 4,
+  "id": "studio.cairn.markers",
+  "name": "cairn markers",
+  "version": "1.0.0",
+  "main": "panel.html",
+  "host": [
+    {
+      "app": "premierepro",
+      "minVersion": "25.0.0"
+    }
+  ],
+  "entrypoints": [
+    {
+      "type": "panel",
+      "id": "cairn.markers.panel",
+      "label": {
+        "default": "cairn markers"
+      },
+      "documentURL": "panel.html"
+    }
+  ],
+  "requiredPermissions": {
+    "network": {
+      "domains": "http://127.0.0.1:17778"
+    },
+    "localFileSystem": "request"
+  }
+}
