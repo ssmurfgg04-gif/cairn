@@ -7,6 +7,7 @@ description = "Cairn sync engine: state machine, AIMD uploader, conflict copies,
 
 [dependencies]
 cairn-core = { path = "../cairn-core" }
+blake3 = { workspace = true }
 cairn-store = { path = "../cairn-store" }
 cairn-proto = { path = "../cairn-proto" }
 tonic = { workspace = true }

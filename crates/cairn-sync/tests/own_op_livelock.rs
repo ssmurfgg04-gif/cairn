@@ -99,6 +99,8 @@ fn engine_with(entries: Vec<Entry>) -> (tempfile::TempDir, Engine) {
         tenant_id: "t1".into(),
         project_id: "p1".into(),
         device_id: "dev-A".into(),
+        local_ns: "p1".into(),
+        author_id: "dev-A".into(),
         store,
         cas,
         outbox: Outbox::new(conn.clone()),

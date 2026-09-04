@@ -24,11 +24,25 @@ use crate::plane::{upsert_op, Plane};
 use crate::retry::{backoff_millis, should_retry};
 use crate::workspace::workspace_dir;
 
-/// Engine context for one device + project.
+/// Engine context for one device + project (+ optional root namespace,
+/// ADR-0019 §2). `project_id` names the SERVER journal (plane calls);
+/// `local_ns` names the LOCAL row tables (files, cursor, outbox, forks);
+/// `author_id` is the journal authorship + own-op-suppression identity.
+/// For the default (legacy) root both equal the plain ids, so pre-round-15
+/// stores and journals are byte-compatible.
 pub struct Engine {
     pub tenant_id: String,
+    /// Server journal / plane scope.
     pub project_id: String,
+    /// Login identity (server auth, leases of record).
     pub device_id: String,
+    /// Local store namespace (rows/cursor/outbox); equals `project_id`
+    /// for the default root, `<project_id>#<root_id>` for additional roots.
+    pub local_ns: String,
+    /// Journal authorship: plain `device_id` for the default root,
+    /// `<device_id>#<root_id>` for additional roots — own-op suppression
+    /// compares THIS, so only same-root entries are skipped.
+    pub author_id: String,
     pub store: Store,
     pub cas: Cas,
     pub outbox: Outbox,
@@ -60,7 +74,7 @@ impl Engine {
     async fn push_phase(&self, stats: &mut PassStats) -> Result<(), CairnError> {
         // recovery first: resend any acknowledged-but-unsent outbox entries (I2)
         self.flush_outbox(stats).await?;
-        for f in self.store.list_files(&self.project_id) {
+        for f in self.store.list_files(&self.local_ns) {
             let Some(state) = LocalState::parse(&f.local_state) else {
                 continue;
             };
@@ -134,8 +148,8 @@ impl Engine {
         };
         let dict = if policy == cairn_core::manifest::Compression::ZstdDict {
             self.dicts
-                .get(&self.project_id)
-                .or_else(|| compress::train_project_dict(&self.project_id, &bytes))
+                .get(&self.local_ns)
+                .or_else(|| compress::train_project_dict(&self.local_ns, &bytes))
         } else {
             None
         };
@@ -163,7 +177,7 @@ impl Engine {
         if !missing.is_empty() {
             let session = self
                 .plane
-                .create_session(&self.tenant_id, &self.device_id, &self.project_id, &missing)
+                .create_session(&self.tenant_id, &self.author_id, &self.project_id, &missing)
                 .await?;
             // receipts must report the size the BUCKET holds — the compressed/stored bytes —
             // because CompleteUpload sample-verifies via HEAD against the object key.
@@ -257,8 +271,8 @@ impl Engine {
         // version with NO conflict copy. Claim min(cursor, fork-1) so the
         // server's seq>base rule fires (SPEC 7.1) and the conflict copy
         // preserves BOTH versions.
-        let mut base_seq = self.store.get_cursor(&self.device_id, &self.project_id);
-        if let Some(fork) = crate::apply::fork_seq(&self.store, &self.project_id, path) {
+        let mut base_seq = self.store.get_cursor(&self.author_id, &self.local_ns);
+        if let Some(fork) = crate::apply::fork_seq(&self.store, &self.local_ns, path) {
             if fork > 0 && fork - 1 < base_seq {
                 tracing::info!(
                     path = %path,
@@ -289,7 +303,7 @@ impl Engine {
         let op = upsert_op(path, &manifest_hash.hex(), bytes.len() as u64, base_seq);
         let entry = cairn_store::OutboxEntry {
             request_id: request_id.clone(),
-            project_id: self.project_id.clone(),
+            project_id: self.local_ns.clone(),
             op: {
                 let mut buf = Vec::new();
                 prost::Message::encode(&op, &mut buf)
@@ -305,7 +319,7 @@ impl Engine {
         // outbox_pending (NOT dirty), so recovery resends the SAME request_id (server
         // dedup) instead of re-chunking and double-appending (I2, §9.1)
         self.store
-            .set_file_state(&self.project_id, path, LocalState::OutboxPending.as_str())?;
+            .set_file_state(&self.local_ns, path, LocalState::OutboxPending.as_str())?;
         self.send_outbox_entry(&request_id, op, lease_token, path, stats)
             .await?;
 
@@ -327,7 +341,7 @@ impl Engine {
         )?;
 
         self.store.mark_synced_with_stat(
-            &self.project_id,
+            &self.local_ns,
             path,
             &manifest_hash.hex(),
             pushed_size,
@@ -335,7 +349,7 @@ impl Engine {
         )?;
         // the append resolved the fork (accepted: the head now descends from
         // these bytes; conflicted: conflict_copy handles the original path)
-        let _ = crate::apply::clear_fork(&self.store, &self.project_id, path);
+        let _ = crate::apply::clear_fork(&self.store, &self.local_ns, path);
         Ok(())
     }
 
@@ -380,7 +394,7 @@ impl Engine {
     }
 
     async fn flush_outbox(&self, stats: &mut PassStats) -> Result<(), CairnError> {
-        for e in self.outbox.pending(&self.project_id, 256) {
+        for e in self.outbox.pending(&self.local_ns, 256) {
             if let Ok(op) = cairn_proto::pb::JournalOp::decode(e.op.as_slice()) {
                 let path = op_path(&op);
                 let lease_token = self.store.get_lease(&path).map_or(0, |(t, _)| t);
@@ -399,7 +413,7 @@ impl Engine {
         path: &str,
         stats: &mut PassStats,
     ) -> Result<(), CairnError> {
-        let _base_seq = self.store.get_cursor(&self.device_id, &self.project_id);
+        let _base_seq = self.store.get_cursor(&self.author_id, &self.local_ns);
         // manifest identity extracted up front (op is consumed by the append)
         let upsert_manifest: Option<String> = match op.op.as_ref() {
             Some(cairn_proto::pb::journal_op::Op::FileUpsert(u)) => Some(u.manifest_hash.clone()),
@@ -410,7 +424,7 @@ impl Engine {
             .append(
                 &self.tenant_id,
                 &self.project_id,
-                &self.device_id,
+                &self.author_id,
                 request_id,
                 op,
                 lease_token,
@@ -429,7 +443,7 @@ impl Engine {
                     match std::fs::metadata(self.rooted(path)) {
                         Ok(m) => {
                             self.store.mark_synced_with_stat(
-                                &self.project_id,
+                                &self.local_ns,
                                 path,
                                 &mh,
                                 m.len(),
@@ -437,7 +451,7 @@ impl Engine {
                             )?;
                         }
                         Err(_) => {
-                            self.store.mark_synced(&self.project_id, path, &mh)?;
+                            self.store.mark_synced(&self.local_ns, path, &mh)?;
                         }
                     }
                 }
@@ -447,7 +461,7 @@ impl Engine {
             Err(e) if e.code() == "STALE_LEASE" => {
                 // surface to user per §14: keep the outbox entry, mark state, stop this path
                 self.store
-                    .set_file_state(&self.project_id, path, LocalState::Dirty.as_str())?;
+                    .set_file_state(&self.local_ns, path, LocalState::Dirty.as_str())?;
                 Err(e)
             }
             Err(e) if e.code() == "CONFLICT" => {
@@ -463,7 +477,7 @@ impl Engine {
     async fn conflict_copy(&self, path: &str, stats: &mut PassStats) -> Result<(), CairnError> {
         let date = date_of(self.store.clock().now_millis());
         let name = path.rsplit('/').next().unwrap_or(path);
-        let copy_name = cairn_core::pathutil::conflict_copy_name(name, &self.device_id, &date);
+        let copy_name = cairn_core::pathutil::conflict_copy_name(name, &self.author_id, &date);
         let copy_path = match path.rfind('/') {
             Some(idx) => format!("{}/{}", &path[..idx], copy_name),
             None => copy_name,
@@ -475,7 +489,7 @@ impl Engine {
         // case-collision guard (§10): if the destination exists case-insensitively, suffix it
         let rows: Vec<String> = self
             .store
-            .list_files(&self.project_id)
+            .list_files(&self.local_ns)
             .into_iter()
             .map(|f| f.path)
             .collect();
@@ -491,7 +505,7 @@ impl Engine {
             .map_err(|e| CairnError::new(ErrorKind::Io, format!("stat copy: {e}")))?;
         self.store.put_file(&cairn_store::FileRow {
             path: copy_path.clone(),
-            project_id: self.project_id.clone(),
+            project_id: self.local_ns.clone(),
             manifest_hash: None,
             size: meta.len(),
             mode: "file".into(),
@@ -506,7 +520,7 @@ impl Engine {
         // placeholder and hydration materializes the winner's content (§7.1 end state:
         // original = winner, copy = ours, both preserved).
         self.store
-            .set_file_state(&self.project_id, path, LocalState::Clean.as_str())?;
+            .set_file_state(&self.local_ns, path, LocalState::Clean.as_str())?;
         // Re-delivery (round 13, the W5 lag case): when the fork marker exists,
         // the refused remote entries are already PAST this device's cursor
         // (the pull that triggered the guard consumed them) -- the original
@@ -516,11 +530,11 @@ impl Engine {
         // (apply is idempotent; own-device entries rewrite nothing). The
         // CLASSIC offline case has no marker: the winner's entry is still
         // ahead of the cursor and the next pull delivers it naturally.
-        if let Some(fork) = crate::apply::fork_seq(&self.store, &self.project_id, path) {
+        if let Some(fork) = crate::apply::fork_seq(&self.store, &self.local_ns, path) {
             if fork > 0 {
                 let _ = self
                     .store
-                    .set_cursor(&self.device_id, &self.project_id, fork - 1);
+                    .set_cursor(&self.author_id, &self.local_ns, fork - 1);
                 tracing::info!(
                     path = %path,
                     fork,
@@ -529,7 +543,7 @@ impl Engine {
             }
         }
         // the original path's local claim is over: any fork is resolved
-        let _ = crate::apply::clear_fork(&self.store, &self.project_id, path);
+        let _ = crate::apply::clear_fork(&self.store, &self.local_ns, path);
         // re-append for the new path (content already chunked + uploaded); boxed because the
         // conflict path is strictly one level deep per file
         let mut inner = PassStats::default();
@@ -540,7 +554,7 @@ impl Engine {
     }
 
     async fn pull_phase(&self, stats: &mut PassStats) -> Result<(), CairnError> {
-        let cursor = self.store.get_cursor(&self.device_id, &self.project_id);
+        let cursor = self.store.get_cursor(&self.author_id, &self.local_ns);
         let entries = self
             .plane
             .fetch_batch(&self.tenant_id, &self.project_id, cursor, 512)
@@ -556,21 +570,21 @@ impl Engine {
             // acceptance byte/journal budgets at gate 1: 1302 journal ops for 10 files).
             // A device that loses its local table rebuilds via reset_to_snapshot, not
             // by replaying its own ops.
-            if e.device_id == self.device_id {
+            if e.device_id == self.author_id {
                 continue;
             }
-            crate::apply::apply_entry(&self.store, &self.project_id, &self.device_id, e)?;
+            crate::apply::apply_entry(&self.store, &self.local_ns, &self.author_id, e)?;
             stats.applied_entries += 1;
         }
         if let Some(last) = entries.last() {
             self.store
-                .set_cursor(&self.device_id, &self.project_id, last.seq)?;
+                .set_cursor(&self.author_id, &self.local_ns, last.seq)?;
         }
         Ok(())
     }
 
     fn rooted(&self, path: &str) -> std::path::PathBuf {
-        workspace_dir(&self.store, &self.project_id).join(path)
+        workspace_dir(&self.store, &self.local_ns).join(path)
     }
 }
 
