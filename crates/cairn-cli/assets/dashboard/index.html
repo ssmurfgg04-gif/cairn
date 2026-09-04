@@ -6,6 +6,12 @@
 <title>cairn — local console</title>
 <meta name="theme-color" content="#f5f6f8">
 <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect x="9" y="3.5" width="6" height="4" rx="1.2" fill="%23087cff"/><rect x="6.5" y="9" width="11" height="4" rx="1.2" fill="%230059d1"/><rect x="3.5" y="14.5" width="17" height="4" rx="1.2" fill="%230a0a0a"/></svg>'>
+<!-- webfont: non-blocking (media=print flips to all on load) — first paint
+     renders on the system stack, the identity font swaps in ~200 ms later,
+     and offline it simply never arrives (fallbacks carry the page) -->
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" media="print" onload="this.media='all'" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&display=swap"></noscript>
 <link rel="stylesheet" href="/assets/app.css">
 </head>
 <body>
@@ -21,23 +27,31 @@
       </span>
       <div>
         <h1 class="brand-name">cairn</h1>
-        <p class="brand-sub">local console</p>
+        <p class="brand-sub" data-i18n="brand.sub">local console</p>
       </div>
     </div>
     <nav class="nav" id="nav" aria-label="console sections">
-      <a href="#overview" class="nav-item is-active">Overview</a>
-      <a href="#projects" class="nav-item">Projects</a>
-      <a href="#activity" class="nav-item">Activity</a>
-      <a href="#review" class="nav-item">Review</a>
-      <a href="#leases" class="nav-item">Leases</a>
-      <a href="#snapshots" class="nav-item">Snapshots</a>
-      <a href="#pins" class="nav-item">Pins</a>
-      <a href="#recall" class="nav-item">Recall</a>
-      <a href="#storage" class="nav-item">Storage</a>
-      <a href="#flags" class="nav-item">Kill switches</a>
-      <a href="#doctor" class="nav-item">Doctor</a>
+      <a href="#overview" class="nav-item is-active" data-i18n="nav.overview">Overview</a>
+      <a href="#projects" class="nav-item" data-i18n="nav.projects">Projects</a>
+      <a href="#files" class="nav-item" data-i18n="nav.files">Files</a>
+      <a href="#activity" class="nav-item" data-i18n="nav.activity">Activity</a>
+      <a href="#review" class="nav-item" data-i18n="nav.review">Review</a>
+      <a href="#team" class="nav-item" data-i18n="nav.team">Team</a>
+      <a href="#locks" class="nav-item" data-i18n="nav.locks">Locks</a>
+      <a href="#versions" class="nav-item" data-i18n="nav.versions">Versions</a>
+      <a href="#pins" class="nav-item" data-i18n="nav.pins">Pins</a>
+      <a href="#recall" class="nav-item" data-i18n="nav.recall">Recall</a>
+      <a href="#storage" class="nav-item" data-i18n="nav.storage">Storage</a>
+      <a href="#flags" class="nav-item" data-i18n="nav.flags">Kill switches</a>
+      <a href="#doctor" class="nav-item" data-i18n="nav.doctor">Doctor</a>
     </nav>
     <div class="side-foot">
+      <div class="lang-row" role="group" aria-label="language">
+        <button type="button" class="lang" data-lang="en">EN</button>
+        <button type="button" class="lang" data-lang="de-DE">DE</button>
+        <button type="button" class="lang" data-lang="ja-JP">JA</button>
+        <button type="button" class="lang" data-lang="zh-CN">中文</button>
+      </div>
       <p class="meta">daemon <span id="daemon-version">—</span></p>
       <p class="meta">proto <span id="daemon-proto">—</span></p>
       <p class="meta" id="daemon-uptime">uptime —</p>
@@ -47,198 +61,233 @@
   <main class="main">
     <header class="head">
       <div>
-        <p class="kicker">project folder</p>
-        <h2 class="title" id="project-name">no roots attached</h2>
+        <p class="kicker" data-i18n="head.kicker">project folder</p>
+        <h2 class="title" id="project-name" data-i18n="head.noRoots">no roots attached</h2>
       </div>
       <div class="head-right">
+        <div class="search" id="search">
+          <input id="search-input" class="input search-input" type="search"
+                 autocomplete="off" spellcheck="false"
+                 data-i18n-attr="placeholder:search.placeholder" placeholder="search files, projects, reviews…">
+          <div class="search-drop" id="search-drop" hidden></div>
+        </div>
         <span class="state-chip" id="state-chip"><span class="dot"></span><span id="state-label">checking</span></span>
+        <span class="state-chip chip-update" id="update-chip" hidden><span class="dot"></span><span id="update-label">update</span></span>
       </div>
     </header>
 
     <section id="onboarding" class="card onboarding" hidden>
       <div class="ob-head">
         <div>
-          <h3 class="ob-title">Get your studio syncing</h3>
-          <p class="ob-sub">Three steps — the tray turns green when you are done.</p>
+          <h3 class="ob-title" id="ob-title" data-i18n="ob.title.welcome">Welcome to cairn</h3>
+          <p class="ob-sub" id="ob-sub" data-i18n="ob.sub.welcome">Get your studio syncing in three steps — the tray dot turns green when you are done.</p>
         </div>
       </div>
       <div class="ob-steps">
         <div class="ob-step" id="ob-step-1">
           <span class="ob-num">1</span>
           <div>
-            <p class="ob-name">Connect a folder</p>
-            <p class="ob-desc">Attach the project folder your edit lives in.</p>
+            <p class="ob-name" data-i18n="ob.step1.name">Connect a folder</p>
+            <p class="ob-desc" data-i18n="ob.step1.desc">Attach the project folder your edit lives in.</p>
           </div>
         </div>
         <div class="ob-step" id="ob-step-2">
           <span class="ob-num">2</span>
           <div>
-            <p class="ob-name">First sync</p>
-            <p class="ob-desc">Files are chunked and sent to your peers — watch the outbox drain.</p>
+            <p class="ob-name" data-i18n="ob.step2.name">First sync</p>
+            <p class="ob-desc" data-i18n="ob.step2.desc">Files are chunked and sent to your peers — watch the outbox drain.</p>
           </div>
         </div>
         <div class="ob-step" id="ob-step-3">
           <span class="ob-num">3</span>
           <div>
-            <p class="ob-name">Ready to edit</p>
-            <p class="ob-desc">Green dot means every save is journaled and safe.</p>
+            <p class="ob-name" data-i18n="ob.step3.name">Ready to edit</p>
+            <p class="ob-desc" data-i18n="ob.step3.desc">Green dot means every save is journaled and safe.</p>
           </div>
         </div>
       </div>
       <div class="ob-cta">
-        <button type="button" class="btn btn-primary" id="ob-cta-attach">Attach a folder</button>
-        <button type="button" class="btn" id="ob-cta-guide" hidden>Open the guide</button>
+        <button type="button" class="btn btn-primary" id="ob-cta-attach" data-i18n="ob.cta">Open project folder…</button>
+        <span class="ob-cli" id="ob-cli">
+          <code id="ob-cli-cmd">cairn attach /path/to/project</code>
+          <button type="button" class="btn btn-ghost btn-copy" id="ob-cli-copy" data-copy="cairn attach /path/to/project">copy</button>
+        </span>
         <span class="note" id="ob-note" style="margin-top:0"></span>
       </div>
     </section>
 
     <section id="overview" class="grid">
       <article class="card card-wide">
-        <h3 class="card-title">Sync state</h3>
+        <h3 class="card-title" data-i18n="card.sync">Sync state</h3>
         <div class="stat-row">
           <div class="stat">
             <p class="stat-num" id="stat-pending">0</p>
-            <p class="stat-label">outbox pending</p>
+            <p class="stat-label" data-i18n="stat.pending">outbox pending</p>
           </div>
           <div class="stat">
             <p class="stat-num" id="stat-cursor">0</p>
-            <p class="stat-label">journal cursor</p>
+            <p class="stat-label" data-i18n="stat.cursor">journal cursor</p>
           </div>
           <div class="stat">
             <p class="stat-num" id="stat-files">0</p>
-            <p class="stat-label">files known</p>
+            <p class="stat-label" data-i18n="stat.files">files known</p>
           </div>
           <div class="stat">
             <p class="stat-num" id="stat-conflicts">0</p>
-            <p class="stat-label">conflict copies</p>
+            <p class="stat-label" data-i18n="stat.conflicts">conflict copies</p>
           </div>
         </div>
-        <p class="note">The daemon watches attached roots, chunks content with FastCDC, and appends every save to the server-linearized journal.</p>
+        <p class="note" data-i18n="note.sync">The daemon watches attached roots, chunks content with FastCDC, and appends every save to the server-linearized journal.</p>
       </article>
       <article class="card">
-        <h3 class="card-title">Hydration (I1)</h3>
+        <h3 class="card-title" data-i18n="card.i1">Hydration (I1)</h3>
         <p class="stat-num" id="stat-i1">—</p>
-        <p class="stat-label">first byte, cached</p>
+        <p class="stat-label" data-i18n="stat.i1">first byte, cached</p>
         <div class="meter"><div class="meter-fill" id="i1-meter"></div></div>
-        <p class="note">target &lt; 50 ms · measured from the header cache</p>
+        <p class="note" data-i18n="note.i1">target &lt; 50 ms · measured from the header cache</p>
       </article>
     </section>
 
     <section id="projects" class="card">
-      <h3 class="card-title">Attached projects</h3>
+      <h3 class="card-title" data-i18n="card.projects">Attached projects</h3>
       <div class="action-row">
-        <input id="attach-root" class="input" type="text" placeholder="/path/to/workspace — attach a root" spellcheck="false">
-        <input id="attach-project" class="input" type="text" placeholder="project id (optional)" spellcheck="false">
-        <button type="button" class="btn btn-primary" id="btn-attach">attach</button>
+        <input id="attach-root" class="input" type="text" data-i18n-attr="placeholder:attach.root" placeholder="/path/to/workspace — attach a root" spellcheck="false">
+        <input id="attach-project" class="input" type="text" data-i18n-attr="placeholder:attach.project" placeholder="project id (optional)" spellcheck="false">
+        <button type="button" class="btn btn-primary" id="btn-attach" data-i18n="btn.attach">attach</button>
       </div>
       <table class="table">
-        <thead><tr><th>project</th><th>root</th><th>state</th><th class="num">files</th><th class="num">outbox</th><th>last error</th><th>actions</th></tr></thead>
+        <thead><tr><th data-i18n="th.project">project</th><th data-i18n="th.root">root</th><th data-i18n="th.state">state</th><th class="num" data-i18n="th.files">files</th><th class="num" data-i18n="th.outbox">outbox</th><th data-i18n="th.lastError">last error</th><th data-i18n="th.actions">actions</th></tr></thead>
         <tbody id="project-body">
-          <tr><td colspan="7" class="empty">No attached projects — attach a root above or via <code>cairn attach</code>.</td></tr>
+          <tr><td colspan="7" class="empty" data-i18n="empty.projects">No attached projects — attach a root above or via <code>cairn attach</code>.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="files" class="card">
+      <h3 class="card-title" data-i18n="card.files">Project files</h3>
+      <div class="action-row">
+        <select id="files-project" class="input"></select>
+        <input id="files-filter" class="input" type="text" data-i18n-attr="placeholder:files.filter" placeholder="filter by name…" spellcheck="false">
+      </div>
+      <div class="files-summary" id="files-summary"></div>
+      <div class="meter files-meter"><div class="meter-fill" id="files-meter-fill"></div></div>
+      <table class="table">
+        <thead><tr><th data-i18n="th.file">file</th><th class="num" data-i18n="th.size">size</th><th data-i18n="th.sync">sync</th><th data-i18n="th.badges">state</th></tr></thead>
+        <tbody id="files-body">
+          <tr><td colspan="4" class="empty" data-i18n="empty.files">No files yet — attach a project and drop media in.</td></tr>
         </tbody>
       </table>
     </section>
 
     <section id="activity" class="card">
-      <h3 class="card-title">Journal activity</h3>
+      <h3 class="card-title" data-i18n="card.activity">Journal activity</h3>
       <table class="table">
-        <thead><tr><th class="num">seq</th><th>path</th><th>state</th><th class="num">size</th></tr></thead>
+        <thead><tr><th class="num" data-i18n="th.seq">seq</th><th data-i18n="th.path">path</th><th data-i18n="th.state">state</th><th class="num" data-i18n="th.size">size</th></tr></thead>
         <tbody id="activity-body">
-          <tr><td colspan="4" class="empty">No entries yet — saves appear here as they are journaled.</td></tr>
+          <tr><td colspan="4" class="empty" data-i18n="empty.activity">No entries yet — saves appear here as they are journaled.</td></tr>
         </tbody>
       </table>
     </section>
 
-    <section id="leases" class="card">
-      <h3 class="card-title">Active leases</h3>
-      <p class="note">NLE project files auto-acquire leases on open; fencing tokens protect every append.</p>
-      <table class="table">
-        <thead><tr><th>path</th><th>token</th><th>expires</th><th></th></tr></thead>
-        <tbody id="lease-body">
-          <tr><td colspan="4" class="empty">No live leases on this machine.</td></tr>
-        </tbody>
-      </table>
-    </section>
     <section id="review" class="card">
-      <h3 class="card-title">Client review</h3>
+      <h3 class="card-title" data-i18n="card.review">Client review</h3>
       <div id="review-body" class="review-body">
         <div class="skel"></div>
       </div>
     </section>
 
-    <section id="snapshots" class="card">
-      <h3 class="card-title">Snapshots</h3>
-      <p class="note">Snapshots fold from the journal every 5,000 entries, every 24h, on demand, or at project close.</p>
+    <section id="team" class="card">
+      <h3 class="card-title" data-i18n="card.team">Team</h3>
+      <div id="team-body" class="team-body">
+        <div class="skel"></div>
+      </div>
+    </section>
+
+    <section id="locks" class="card">
+      <h3 class="card-title" data-i18n="card.locks">Active locks</h3>
+      <p class="note" data-i18n="note.locks">NLE project files auto-acquire locks on open; fencing tokens protect every append. "Lock" is the word editors already use — a lease is how it is implemented.</p>
+      <table class="table">
+        <thead><tr><th data-i18n="th.path">path</th><th data-i18n="th.token">token</th><th data-i18n="th.expires">expires</th><th></th></tr></thead>
+        <tbody id="lease-body">
+          <tr><td colspan="4" class="empty" data-i18n="empty.locks">No live locks on this machine.</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="versions" class="card">
+      <h3 class="card-title" data-i18n="card.versions">Versions</h3>
+      <p class="note" data-i18n="note.versions">Versions fold from the journal every 5,000 entries, every 24h, on demand, or at project close — every fold is a restore point.</p>
       <div class="action-row">
         <select id="snapshot-project" class="input"></select>
-        <input id="snapshot-label" class="input" type="text" placeholder="label (e.g. before color pass)" spellcheck="false">
-        <button type="button" class="btn" id="btn-snapshot">create snapshot</button>
-        <button type="button" class="btn btn-ghost" id="btn-snapshots-refresh">refresh</button>
+        <input id="snapshot-label" class="input" type="text" data-i18n-attr="placeholder:versions.label" placeholder="label (e.g. before color pass)" spellcheck="false">
+        <button type="button" class="btn" id="btn-snapshot" data-i18n="btn.snapshot">create version</button>
+        <button type="button" class="btn btn-ghost" id="btn-snapshots-refresh" data-i18n="btn.refresh">refresh</button>
       </div>
       <table class="table">
-        <thead><tr><th>commit</th><th>label</th><th class="num">seq</th><th>author</th><th>actions</th></tr></thead>
+        <thead><tr><th data-i18n="th.commit">commit</th><th data-i18n="th.label">label</th><th class="num" data-i18n="th.seq">seq</th><th data-i18n="th.author">author</th><th data-i18n="th.actions">actions</th></tr></thead>
         <tbody id="snapshot-body">
-          <tr><td colspan="5" class="empty">Snapshots list is served by the storage server after the first fold.</td></tr>
+          <tr><td colspan="5" class="empty" data-i18n="empty.versions">No versions yet — create one after the first sync.</td></tr>
         </tbody>
       </table>
     </section>
 
     <section id="pins" class="card">
-      <h3 class="card-title">Pins</h3>
-      <p class="note">Pinned files are recalled into local storage and exempt from LRU eviction.</p>
+      <h3 class="card-title" data-i18n="card.pins">Pins</h3>
+      <p class="note" data-i18n="note.pins">Pinned files are recalled into local storage and exempt from LRU eviction.</p>
       <div class="action-row">
         <select id="pin-project" class="input"></select>
-        <input id="pin-path" class="input" type="text" placeholder="relative path to pin (e.g. scene.prproj)" spellcheck="false">
-        <button type="button" class="btn" id="btn-pin">pin</button>
+        <input id="pin-path" class="input" type="text" data-i18n-attr="placeholder:pins.path" placeholder="relative path to pin (e.g. scene.prproj)" spellcheck="false">
+        <button type="button" class="btn" id="btn-pin" data-i18n="btn.pin">pin</button>
       </div>
       <table class="table">
-        <thead><tr><th>path</th><th class="num">size</th><th>state</th><th>actions</th></tr></thead>
+        <thead><tr><th data-i18n="th.file">file</th><th class="num" data-i18n="th.size">size</th><th data-i18n="th.state">state</th><th data-i18n="th.actions">actions</th></tr></thead>
         <tbody id="pin-body">
-          <tr><td colspan="4" class="empty">No pins on this machine.</td></tr>
+          <tr><td colspan="4" class="empty" data-i18n="empty.pins">No pins on this machine.</td></tr>
         </tbody>
       </table>
     </section>
 
     <section id="recall" class="card">
-      <h3 class="card-title">Recall jobs</h3>
-      <p class="note">Recall materializes files from the bucket into local storage (progress per job).</p>
+      <h3 class="card-title" data-i18n="card.recall">Recall jobs</h3>
+      <p class="note" data-i18n="note.recall">Recall materializes files from the bucket into local storage (progress per job).</p>
       <div class="action-row">
         <select id="recall-project" class="input"></select>
-        <input id="recall-path" class="input" type="text" placeholder="one path (optional — whole project if empty)" spellcheck="false">
-        <button type="button" class="btn" id="btn-recall">start recall</button>
+        <input id="recall-path" class="input" type="text" data-i18n-attr="placeholder:recall.path" placeholder="one path (optional — whole project if empty)" spellcheck="false">
+        <button type="button" class="btn" id="btn-recall" data-i18n="btn.recall">start recall</button>
       </div>
       <div id="recall-jobs" class="recall-jobs">
-        <p class="note">No recall jobs yet.</p>
+        <p class="note" data-i18n="empty.recall">No recall jobs yet.</p>
       </div>
     </section>
 
     <section id="storage" class="card">
-      <h3 class="card-title">Local storage</h3>
+      <h3 class="card-title" data-i18n="card.storage">Local storage</h3>
       <div class="stat-row">
         <div class="stat">
           <p class="stat-num" id="stat-blobs">0</p>
-          <p class="stat-label">local chunks</p>
+          <p class="stat-label" data-i18n="stat.chunks">local chunks</p>
         </div>
         <div class="stat">
           <p class="stat-num" id="stat-bytes">0</p>
-          <p class="stat-label">bytes cached</p>
+          <p class="stat-label" data-i18n="stat.cached">bytes cached</p>
         </div>
         <div class="stat">
           <p class="stat-num" id="stat-pinned">0</p>
-          <p class="stat-label">pinned chunks</p>
+          <p class="stat-label" data-i18n="stat.pinned">pinned chunks</p>
         </div>
       </div>
-      <p class="note" id="storage-note">NLE media caches belong on local scratch; pinned chunks are never evicted.</p>
+      <div class="meter quota-meter"><div class="meter-fill" id="quota-meter-fill"></div></div>
+      <p class="note" id="storage-note" data-i18n="note.storage">NLE media caches belong on local scratch; pinned chunks are never evicted.</p>
     </section>
 
     <section id="flags" class="card">
-      <h3 class="card-title">Kill switches</h3>
-      <p class="note">Flags take effect on the next job run. No restart required.</p>
+      <h3 class="card-title" data-i18n="card.flags">Kill switches</h3>
+      <p class="note" data-i18n="note.flags">Flags take effect on the next job run. No restart required. Owner/lead only (RBAC-enforced).</p>
       <div class="flag-grid" id="flag-grid"></div>
     </section>
 
     <section id="doctor" class="card">
-      <h3 class="card-title">Doctor</h3>
+      <h3 class="card-title" data-i18n="card.doctor">Doctor</h3>
       <div id="doctor-body" class="doctor"></div>
     </section>
 
@@ -247,6 +296,48 @@
     </footer>
   </main>
 </div>
+
+<!-- help overlay: ? or the footer link -->
+<div class="overlay" id="help-overlay" hidden>
+  <div class="card overlay-card" role="dialog" aria-modal="true" aria-labelledby="help-title">
+    <div class="overlay-head">
+      <h3 class="card-title" id="help-title" data-i18n="help.title">Shortcuts &amp; cheatsheet</h3>
+      <button type="button" class="btn btn-ghost" id="help-close" aria-label="close">esc</button>
+    </div>
+    <div class="help-grid">
+      <div>
+        <p class="help-h" data-i18n="help.keys">Keys</p>
+        <ul class="help-list">
+          <li><kbd>/</kbd> <span data-i18n="help.search">focus search</span></li>
+          <li><kbd>?</kbd> <span data-i18n="help.help">toggle this panel</span></li>
+          <li><kbd>g&nbsp;then&nbsp;o</kbd> <span data-i18n="help.goOverview">go to overview</span></li>
+          <li><kbd>g&nbsp;then&nbsp;f</kbd> <span data-i18n="help.goFiles">go to files</span></li>
+          <li><kbd>esc</kbd> <span data-i18n="help.esc">close overlays</span></li>
+        </ul>
+      </div>
+      <div>
+        <p class="help-h" data-i18n="help.cli">CLI cheatsheet</p>
+        <ul class="help-list mono-list">
+          <li><code>cairn attach &lt;folder&gt;</code></li>
+          <li><code>cairn review publish --media cuts/v1.mp4</code></li>
+          <li><code>cairn review link --note "client"</code></li>
+          <li><code>cairn review export-markers --version 1 --out m.xml</code></li>
+          <li><code>cairn member add &lt;device&gt; &lt;role&gt;</code></li>
+          <li><code>cairn doctor</code></li>
+        </ul>
+      </div>
+      <div>
+        <p class="help-h" data-i18n="help.states">What the dot means</p>
+        <ul class="help-list">
+          <li><span class="dot dot-ok"></span> <span data-i18n="help.dotOk">all files synced — safe to edit</span></li>
+          <li><span class="dot dot-warn"></span> <span data-i18n="help.dotWarn">syncing — chunks in flight</span></li>
+          <li><span class="dot dot-bad"></span> <span data-i18n="help.dotBad">attention — see Doctor</span></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script src="/assets/app.js"></script>
 </body>
 </html>

@@ -54,13 +54,6 @@ pub fn audit_path(root: &Path) -> PathBuf {
     root.join(".cairn").join("audit.json")
 }
 
-fn now_ms() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
-}
-
 impl AuditFile {
     pub fn to_json(&self) -> Result<Vec<u8>, String> {
         serde_json::to_vec_pretty(self).map_err(|e| format!("serialize audit: {e}"))
