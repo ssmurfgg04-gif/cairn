@@ -6,6 +6,7 @@
 
 #![forbid(unsafe_code)]
 
+mod audit;
 mod daemon;
 mod dashboard;
 mod doctor;

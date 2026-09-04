@@ -20,8 +20,11 @@ use cairn_proto::pb::{
 use tokio::sync::RwLock;
 use tonic::{Request, Response, Status};
 
+use crate::audit::AuditFile;
 use crate::doctor;
 use crate::projects;
+
+use cairn_core::rbac::{self, Permission, Role};
 
 /// Daemon-wide swarm options (ADR-0017): the signal server to rendezvous
 /// through + the join code the host shared (swarm admission, §7).
@@ -127,6 +130,99 @@ pub struct CtlProjectsSvc {
     pub state: Arc<DaemonState>,
 }
 
+// ---------- daemon-side RBAC (the Ctl boundary, ADR-0020 §4) ----------
+
+fn now_ms_i64() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// The acting device: the daemon's own enrolled identity. The machine is
+/// the actor — the CLI shares this home, and studio members.json keys
+/// roles by device id, so `role_of(our device)` is exactly "what this
+/// machine's person may do".
+fn acting_device(store: &cairn_store::Store) -> String {
+    crate::projects::load_identity(store)
+        .map(|i| i.device_id)
+        .filter(|d| !d.is_empty())
+        .unwrap_or_else(|| "local".into())
+}
+
+/// Resolve a project's primary root for enforcement: the first durable
+/// root binding, else any live runtime's workspace.
+async fn project_root(state: &DaemonState, project_id: &str) -> Option<PathBuf> {
+    if let Ok(store) = cairn_store::Store::open(&state.home, Arc::new(WallClock)) {
+        if let Some(b) = cairn_sync::workspace::list_roots(&store, project_id)
+            .into_iter()
+            .next()
+        {
+            return Some(b.path);
+        }
+    }
+    let map = projects::RUNTIMES.read().await;
+    map.values()
+        .find(|rt| rt.project_id == project_id)
+        .map(|rt| rt.workspace.clone())
+}
+
+/// Enforce `perm` for the acting device against the project's synced
+/// members.json — the daemon side of the ADR-0020 matrix. Every decision
+/// (allow AND deny) lands in the project's audit ledger, which syncs to
+/// every peer: the log is not fiction.
+///
+/// No resolvable root (first attach, unbound project, daemon with no
+/// projects) enforces nothing — there is no members.json to read; the
+/// CLI-side guards remain the second layer for root-present commands.
+/// A CORRUPT members.json fails closed (parse error → precondition),
+/// never open.
+async fn rbac_guard(
+    state: &DaemonState,
+    project_id: &str,
+    root_hint: Option<&std::path::Path>,
+    perm: Permission,
+    action: &str,
+) -> Result<Role, Status> {
+    let root = match root_hint {
+        Some(p) => Some(p.to_path_buf()),
+        None => project_root(state, project_id).await,
+    };
+    let Some(root) = root else {
+        tracing::trace!(action, "rbac: no project root to enforce against");
+        return Ok(Role::Editor);
+    };
+    let store = cairn_store::Store::open(&state.home, Arc::new(WallClock))
+        .map_err(|e| Status::failed_precondition(e.message))?;
+    let device = acting_device(&store);
+    // fail CLOSED on corrupt members (parse error propagates)
+    let members = crate::members::load(&root)
+        .map_err(|e| Status::failed_precondition(format!("members.json unreadable: {e}")))?;
+    let role = members.role_of(&device);
+    let allowed = rbac::allows(role, perm);
+    if let Err(e) = AuditFile::decision(
+        &root,
+        now_ms_i64(),
+        &device,
+        role.as_str(),
+        action,
+        project_id,
+        allowed,
+    ) {
+        // bookkeeping is never allowed to break enforcement, but it must
+        // be loud when it breaks
+        tracing::warn!(error = %e, "audit ledger write failed (decision still enforced)");
+    }
+    if !allowed {
+        return Err(Status::permission_denied(format!(
+            "device '{device}' (role '{}') may not {action} — ask the owner to adjust \
+             .cairn/members.json",
+            role.as_str()
+        )));
+    }
+    Ok(role)
+}
+
 #[tonic::async_trait]
 impl CtlProjects for CtlProjectsSvc {
     async fn attach_root(
@@ -135,6 +231,16 @@ impl CtlProjects for CtlProjectsSvc {
     ) -> Result<Response<AttachRootResponse>, Status> {
         let req = request.into_inner();
         let root = std::path::PathBuf::from(&req.root_path);
+        // RBAC: binding a machine to a project is a member decision —
+        // the members file in the root being attached is the authority
+        rbac_guard(
+            &self.state,
+            &req.project_id,
+            Some(&root),
+            Permission::AttachRoot,
+            "ctl/attach-root",
+        )
+        .await?;
         let pid = projects::attach(
             &self.state.home,
             &root,
@@ -160,6 +266,17 @@ impl CtlProjects for CtlProjectsSvc {
         request: Request<DetachRootRequest>,
     ) -> Result<Response<Ack>, Status> {
         let req = request.into_inner();
+        // RBAC: an assistant-class device must not be able to unbind the
+        // studio machine from the project (the "cairn detach --project a"
+        // story) — enforced HERE, not in the CLI
+        rbac_guard(
+            &self.state,
+            &req.project_id,
+            None,
+            Permission::DetachRoot,
+            "ctl/detach-root",
+        )
+        .await?;
         projects::detach(&self.state.home, &req.project_id)
             .await
             .map_err(|e| Status::failed_precondition(e.message))?;
@@ -223,6 +340,25 @@ impl CtlDiagnostics for CtlDiagSvc {
         request: Request<SetFlagRequest>,
     ) -> Result<Response<cairn_proto::pb::Ack>, Status> {
         let req = request.into_inner();
+        // RBAC: kill switches are global on this machine — enforce
+        // ManageFlags against every attached project (any denial blocks;
+        // no projects attached = nothing to enforce against)
+        let mut pids: Vec<String> = {
+            let map = projects::RUNTIMES.read().await;
+            map.values().map(|rt| rt.project_id.clone()).collect()
+        };
+        pids.sort();
+        pids.dedup();
+        for pid in &pids {
+            rbac_guard(
+                &self.state,
+                pid,
+                None,
+                Permission::ManageFlags,
+                "ctl/set-flag",
+            )
+            .await?;
+        }
         let mut flags = self.state.flags.write().await;
         let known = flags.iter_mut().find(|(n, _)| *n == req.name);
         match known {
@@ -560,6 +696,14 @@ impl CtlSnapshots for CtlSnapshotsSvc {
         request: Request<CreateSnapshotRequest>,
     ) -> Result<Response<CreateSnapshotResponse>, Status> {
         let req = request.into_inner();
+        rbac_guard(
+            &self.state,
+            &req.project_id,
+            None,
+            Permission::Snapshot,
+            "ctl/create-snapshot",
+        )
+        .await?;
         let (mut client, _url) = server_ctx(&self.state.home).await?;
         let (tenant, token) = bearer(&self.state.home)?;
         let mut r = Request::new(FoldNowRequest {
@@ -640,6 +784,17 @@ impl CtlSnapshots for CtlSnapshotsSvc {
         request: Request<RestoreSnapshotRequest>,
     ) -> Result<Response<RestoreSnapshotResponse>, Status> {
         let req = request.into_inner();
+        // RBAC: restore overwrites the workspace from a commit — the
+        // most destructive ctl mutation, guarded hardest (Owner-only in
+        // the matrix)
+        rbac_guard(
+            &self.state,
+            &req.project_id,
+            None,
+            Permission::Restore,
+            "ctl/restore-snapshot",
+        )
+        .await?;
         let (_client, _url) = server_ctx(&self.state.home).await?;
         let (tenant, token) = bearer(&self.state.home)?;
         // commit → tree → (path, manifest) entries
@@ -786,6 +941,14 @@ impl CtlPins for CtlPinsSvc {
         request: Request<PinRequest>,
     ) -> Result<Response<cairn_proto::pb::Ack>, Status> {
         let req = request.into_inner();
+        rbac_guard(
+            &self.state,
+            &req.project_id,
+            None,
+            Permission::OrganizeBins,
+            "ctl/pin",
+        )
+        .await?;
         let store = cairn_store::Store::open(&self.state.home, Arc::new(WallClock))
             .map_err(|e| Status::failed_precondition(e.message))?;
         // pin = ensure chunks local (recall-one) + record file-level pin
@@ -802,6 +965,14 @@ impl CtlPins for CtlPinsSvc {
         request: Request<UnpinRequest>,
     ) -> Result<Response<cairn_proto::pb::Ack>, Status> {
         let req = request.into_inner();
+        rbac_guard(
+            &self.state,
+            &req.project_id,
+            None,
+            Permission::OrganizeBins,
+            "ctl/unpin",
+        )
+        .await?;
         let store = cairn_store::Store::open(&self.state.home, Arc::new(WallClock))
             .map_err(|e| Status::failed_precondition(e.message))?;
         store
@@ -861,6 +1032,14 @@ impl CtlRecall for CtlRecallSvc {
         request: Request<StartRecallRequest>,
     ) -> Result<Response<StartRecallResponse>, Status> {
         let req = request.into_inner();
+        rbac_guard(
+            &self.state,
+            &req.project_id,
+            None,
+            Permission::Read,
+            "ctl/start-recall",
+        )
+        .await?;
         let job_id = uuid::Uuid::now_v7().to_string();
         let response_id = job_id.clone();
         let home = self.state.home.clone();
@@ -981,4 +1160,173 @@ async fn recall_paths_simple(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cairn_core::rbac::{MemberFile, Role};
+
+    fn tmp_home() -> PathBuf {
+        tempfile::tempdir().unwrap().keep()
+    }
+
+    fn enrolled_home(device: &str) -> PathBuf {
+        let home = tmp_home();
+        let store = cairn_store::Store::open(&home, Arc::new(WallClock)).unwrap();
+        crate::projects::save_identity(
+            &store,
+            &crate::projects::Identity {
+                server_url: "http://127.0.0.1:9".into(),
+                token: "t".into(),
+                device_id: device.into(),
+                tenant_id: "tn".into(),
+                tls_ca: None,
+            },
+        )
+        .unwrap();
+        home
+    }
+
+    fn members_root(device: &str, role: Role) -> PathBuf {
+        let root = tempfile::tempdir().unwrap().keep();
+        std::fs::create_dir_all(root.join(".cairn")).unwrap();
+        let mut f = MemberFile::default();
+        f.upsert(device, "the member", role, "dev-owner", 1);
+        std::fs::write(crate::members::members_path(&root), f.to_json().unwrap()).unwrap();
+        root
+    }
+
+    /// The daemon-side story from the audit round: an assistant-class
+    /// device must not be able to unbind the machine from a project —
+    /// enforced at the ctl boundary, not in the CLI.
+    #[tokio::test]
+    async fn assistant_cannot_detach_but_editor_can() {
+        let home = enrolled_home("dev-artist");
+        let state = Arc::new(DaemonState::new(home.clone()));
+        let root = members_root("dev-artist", Role::Assistant);
+        // root_hint simulates a resolvable project root
+        let r = rbac_guard(
+            &state,
+            "proj",
+            Some(&root),
+            Permission::DetachRoot,
+            "ctl/detach-root",
+        )
+        .await;
+        assert!(r.is_err());
+        let msg = r.err().unwrap().message().to_string();
+        assert!(msg.contains("assistant"), "denial names the role: {msg}");
+        // the denial is AUDITED (the log is not fiction)
+        let audit = crate::audit::AuditFile::load(&root).unwrap();
+        assert!(audit
+            .iter()
+            .any(|(_, e)| !e.allowed && e.action == "ctl/detach-root"));
+
+        // an Editor-class device detaches fine, and that lands in the audit too
+        let root2 = members_root("dev-artist", Role::Editor);
+        let r2 = rbac_guard(
+            &state,
+            "proj",
+            Some(&root2),
+            Permission::DetachRoot,
+            "ctl/detach-root",
+        )
+        .await;
+        assert!(r2.is_ok());
+        let audit2 = crate::audit::AuditFile::load(&root2).unwrap();
+        assert!(audit2
+            .iter()
+            .any(|(_, e)| e.allowed && e.action == "ctl/detach-root"));
+    }
+
+    #[tokio::test]
+    async fn reviewer_cannot_attach_but_every_creative_role_can() {
+        let home = enrolled_home("dev-x");
+        let state = Arc::new(DaemonState::new(home));
+        for role in [
+            Role::Owner,
+            Role::LeadEditor,
+            Role::Editor,
+            Role::Assistant,
+            Role::Colorist,
+            Role::SoundDesigner,
+        ] {
+            let root = members_root("dev-x", role);
+            assert!(
+                rbac_guard(
+                    &state,
+                    "p",
+                    Some(&root),
+                    Permission::AttachRoot,
+                    "ctl/attach-root"
+                )
+                .await
+                .is_ok(),
+                "{role:?} must attach"
+            );
+        }
+        let root = members_root("dev-x", Role::Reviewer);
+        assert!(rbac_guard(
+            &state,
+            "p",
+            Some(&root),
+            Permission::AttachRoot,
+            "ctl/attach-root"
+        )
+        .await
+        .is_err());
+    }
+
+    /// Unlisted device = the documented fail-open Editor default — and
+    /// no-identity daemon ("local") behaves the same. Corrupt members
+    /// fails CLOSED.
+    #[tokio::test]
+    async fn unlisted_defaults_to_editor_and_corrupt_fails_closed() {
+        let home = enrolled_home("dev-unknown");
+        let state = Arc::new(DaemonState::new(home));
+        // no members.json at all -> Editor default, allowed + audited
+        let root = tempfile::tempdir().unwrap().keep();
+        let r = rbac_guard(
+            &state,
+            "p",
+            Some(&root),
+            Permission::DetachRoot,
+            "ctl/detach-root",
+        )
+        .await;
+        assert!(r.is_ok());
+        assert!(crate::audit::AuditFile::load(&root).unwrap().len() == 1);
+
+        // corrupt members.json: fail closed (precondition), never open
+        std::fs::create_dir_all(root.join(".cairn")).unwrap();
+        std::fs::write(crate::members::members_path(&root), b"{ broken").unwrap();
+        let r2 = rbac_guard(
+            &state,
+            "p",
+            Some(&root),
+            Permission::DetachRoot,
+            "ctl/detach-root",
+        )
+        .await;
+        assert!(r2.is_err());
+        assert_eq!(r2.err().unwrap().code(), tonic::Code::FailedPrecondition);
+    }
+
+    /// No root resolvable -> nothing to enforce against (first attach on
+    /// a machine with no bindings): allowed, no audit file invented.
+    #[tokio::test]
+    async fn no_root_means_nothing_to_enforce() {
+        let home = enrolled_home("dev-a");
+        let state = Arc::new(DaemonState::new(home));
+        let r = rbac_guard(
+            &state,
+            "ghost",
+            None,
+            Permission::Restore,
+            "ctl/restore-snapshot",
+        )
+        .await;
+        assert!(r.is_ok());
+    }
 }
