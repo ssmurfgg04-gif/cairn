@@ -834,6 +834,20 @@ async fn lease_keepalive(store: &Store, plane: &dyn Plane, tenant_id: &str, proj
 fn write_overlay_snapshot(store: &Store, ns: &str, workspace: &std::path::Path, generation: u64) {
     use cairn_shell_ext::core::{write_state_file, OverlayState};
     let rows = store.list_files(ns);
+    // Round 20 perf: skip the write when the visible state did not change
+    // (the 1s pass used to rewrite the file even fully idle — disk churn
+    // per project per second). Fingerprint = the entries + generation.
+    let fingerprint = {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        for r in &rows {
+            if r.mode == "file" {
+                (r.path.as_str(), r.local_state.as_str()).hash(&mut h);
+            }
+        }
+        generation.hash(&mut h);
+        h.finish()
+    };
     let mut entries: Vec<(String, OverlayState)> = Vec::new();
     for r in &rows {
         if r.mode != "file" {
@@ -855,8 +869,25 @@ fn write_overlay_snapshot(store: &Store, ns: &str, workspace: &std::path::Path, 
         };
         entries.push((r.path.clone(), state));
     }
-    let _ = write_state_file(workspace, &entries, generation, 4096);
+    // last-write dedupe: only touch the disk when something visible moved
+    let skip = OVERLAY_FP
+        .lock()
+        .expect("overlay fp")
+        .insert(ns.to_string(), (fingerprint, std::time::Instant::now()))
+        .is_some_and(|(prev_fp, prev_at)| {
+            prev_fp == fingerprint && prev_at.elapsed() < std::time::Duration::from_secs(60)
+        });
+    if !skip {
+        let _ = write_state_file(workspace, &entries, generation, 4096);
+    }
 }
+
+/// Overlay-write dedupe state: ns -> (fingerprint, last check). The 60s
+/// force-write keeps generation counters fresh even when states are stable
+/// (the shell extension may key behavior off generation).
+static OVERLAY_FP: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, (u64, std::time::Instant)>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
 async fn run_loop(
     rt: &Arc<ProjectRuntime>,

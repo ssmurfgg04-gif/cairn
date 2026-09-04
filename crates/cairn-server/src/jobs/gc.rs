@@ -130,17 +130,11 @@ pub async fn mark(state: &ServerState, tenant_id: &str) -> Result<HashSet<String
         .map(|r| r.get(0))
         .collect();
     for path in holds {
-        let mh: Option<String> = sqlx::query_scalar(
-            "SELECT manifest_hash FROM (
-                 SELECT op FROM journal WHERE tenant_id=?1 AND path=?2 ORDER BY seq DESC LIMIT 1
-             )",
-        )
-        .bind(tenant_id)
-        .bind(&path)
-        .fetch_optional(&state.db)
-        .await
-        .map_err(db_err)?
-        .flatten();
+        // Round 20 fix: the previous first query selected `manifest_hash`
+        // from a subquery that only projected `op` — a prepare-time "no such
+        // column" error that failed the ENTIRE gc_pass for any tenant with a
+        // legal hold (silently, because shadow mode logged it). The op blob
+        // carries the manifest hash; one query, decoded once.
         let Some(op_blob) = sqlx::query_scalar::<_, Vec<u8>>(
             "SELECT op FROM journal WHERE tenant_id=?1 AND path=?2 ORDER BY seq DESC LIMIT 1",
         )
@@ -152,7 +146,6 @@ pub async fn mark(state: &ServerState, tenant_id: &str) -> Result<HashSet<String
         else {
             continue;
         };
-        let _ = mh;
         if let Ok(op) = cairn_proto::pb::JournalOp::decode(op_blob.as_slice()) {
             if let Some(cairn_proto::pb::journal_op::Op::FileUpsert(u)) = op.op {
                 collect_manifest_chunks(state, tenant_id, &u.manifest_hash, &mut live).await;

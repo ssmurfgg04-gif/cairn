@@ -93,11 +93,25 @@ impl Portal {
     }
 
     /// Presence for one token, freshest first, stale entries dropped
-    /// (90 s without a heartbeat).
+    /// (90 s without a heartbeat). Round 20: the prune now covers EVERY
+    /// token (stale entries for never-again-polled links used to linger
+    /// for the daemon's lifetime — unbounded memory growth), and the map
+    /// is hard-capped (a hostile valid-token holder cannot grow it).
     fn presence(&self, token: &str) -> Vec<PresenceEntry> {
         let now = self.provider.now_ms();
         let mut guard = self.presence.lock().expect("presence lock");
-        guard.retain(|(t, _), e| t != token || now.saturating_sub(e.seen_at_ms) < 90_000);
+        guard.retain(|_, e| now.saturating_sub(e.seen_at_ms) < 90_000);
+        if guard.len() > 512 {
+            // keep the freshest 512 — bounded by construction (clone first:
+            // the map cannot be mutated while iterated)
+            let mut entries: Vec<((String, String), PresenceEntry)> =
+                guard.iter().map(|(k, e)| (k.clone(), e.clone())).collect();
+            entries.sort_by_key(|(_, e)| std::cmp::Reverse(e.seen_at_ms));
+            guard.clear();
+            for (k, e) in entries.into_iter().take(512) {
+                guard.insert(k, e);
+            }
+        }
         guard
             .iter()
             .filter(|((t, _), _)| t == token)
@@ -198,11 +212,25 @@ async fn session(State(p): State<Portal>, UrlPath(token): UrlPath<String>) -> Re
             })
         })
         .collect();
-    // comments across visible versions
+    // comments across visible versions — with the no-AI robot's read
+    // (ADR-0023 §3): each note gains `parsed` = the mechanical ops the editor
+    // can one-click, or null for creative notes (the human's call). Derived
+    // at READ time from the note body: deterministic, nothing stored.
     let mut comments: Vec<serde_json::Value> = Vec::new();
     for v in file.versions_for(&link) {
         if let Ok(set) = Store::load_comments(&root, v.number) {
             for n in set.notes.values() {
+                let parsed = match cairn_tl::note_ops::parse_note_at(&n.body, n.anchor.rate) {
+                    cairn_tl::note_ops::NoteParse::Mechanical(ops) => {
+                        let summaries: Vec<String> = ops.iter().map(|op| op.summary()).collect();
+                        if summaries.is_empty() {
+                            serde_json::Value::Null
+                        } else {
+                            json!(summaries)
+                        }
+                    }
+                    cairn_tl::note_ops::NoteParse::Creative => serde_json::Value::Null,
+                };
                 comments.push(json!({
                     "id": n.id,
                     "version": v.number,
@@ -212,6 +240,7 @@ async fn session(State(p): State<Portal>, UrlPath(token): UrlPath<String>) -> Re
                     "body": n.body,
                     "status": n.status.as_str(),
                     "created_ms": n.created_ms,
+                    "parsed": parsed,
                 }));
             }
         }
@@ -328,7 +357,9 @@ async fn comment(
     let author = if author.is_empty() {
         "guest".to_string()
     } else {
-        author.to_string()
+        // bounded (Round 20): an unbounded author string is a disk-growth
+        // vector for a hostile commenter; 64 chars is a name, not an essay
+        author.chars().take(64).collect()
     };
     match Store::add_comment(
         &root,

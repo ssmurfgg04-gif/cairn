@@ -182,8 +182,13 @@ pub fn parse_fcpxml(input: &str) -> Result<Timeline, BridgeError> {
 
 #[derive(Default)]
 struct BridgeState {
-    // resources
+    // resources: (declaration order matters for media-rep attachment —
+    // "most recent asset" is the LAST OPENED one, which a BTreeMap's
+    // lexicographic next_back() did NOT give when asset ids don't sort in
+    // declaration order; Round 20 keeps the map keyed by id for lookup AND
+    // an order list for recency)
     assets: BTreeMap<String, AssetInfo>,
+    asset_order: Vec<String>,
     // spine assembly
     spine_items: Vec<SpineItem>,
     markers_pending: Vec<Marker>,
@@ -294,12 +299,22 @@ impl BridgeState {
             }
             "asset" => {
                 let id = attrs.get("id").cloned().unwrap_or_default();
+                if !self.assets.contains_key(&id) {
+                    self.asset_order.push(id.clone());
+                }
                 self.assets.insert(id, AssetInfo { src: None });
             }
             "media-rep" => {
                 // attach src to the most recent asset (stack: resources/asset)
                 if let Some(src) = attrs.get("src") {
-                    let target = self.assets.values_mut().next_back();
+                    // Round 20 fix: DOCUMENT order, not lexicographic —
+                    // next_back() on the id-keyed BTreeMap picked the
+                    // alphabetically-last asset, mis-attaching media-rep src
+                    // whenever ids don't sort in declaration order
+                    let target = self
+                        .asset_order
+                        .last()
+                        .and_then(|id| self.assets.get_mut(id));
                     if let Some(asset) = target {
                         asset.src = Some(src.clone());
                     }

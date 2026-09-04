@@ -242,6 +242,20 @@
     renderMarks(active);
   }
 
+  // (round 20) mechanical chip styles injected once
+  if (!document.getElementById("cmech-style")) {
+    const st = document.createElement("style");
+    st.id = "cmech-style";
+    st.textContent = `
+.cmech { display:flex; gap:8px; align-items:center; margin-top:6px; padding:4px 8px;
+  border:1px solid rgba(255,215,106,.25); border-radius:6px; background:rgba(255,215,106,.07); }
+.cmech-tag { font-size:9px; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
+  color:#ffd76a; }
+.cmech-ops { font-size:11px; color:#f2ede3; font-family:var(--mono, monospace); }
+`;
+    document.head.append(st);
+  }
+
   function commentRow(c, isActive) {
     const row = el("li", "crow" + (c.status === "RESOLVED" ? " resolved" : "") +
       (isActive ? "" : " dim"));
@@ -278,6 +292,15 @@
     right.append(headLine);
 
     right.append(el("div", "cbody", c.body));
+
+    // the no-AI robot's read (round 20): mechanical notes get a chip the
+    // editor can act on; creative notes get the honest "your call" mark.
+    if (Array.isArray(c.parsed) && c.parsed.length) {
+      const chip = el("div", "cmech");
+      chip.append(el("span", "cmech-tag", "mechanical"));
+      chip.append(el("span", "cmech-ops", c.parsed.join(" · ")));
+      right.append(chip);
+    }
 
     if (state.session.role === "commenter") {
       const canResolve = c.status === "OPEN";
