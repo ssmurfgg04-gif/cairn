@@ -10,6 +10,7 @@ mod daemon;
 mod dashboard;
 mod doctor;
 mod projects;
+mod review;
 mod win_attach;
 
 use clap::{Parser, Subcommand};
@@ -262,6 +263,12 @@ pub enum Cmd {
         /// Bind address for the local dashboard (loopback only, ADR-0009)
         #[arg(long, default_value = "127.0.0.1:17778")]
         ui_addr: String,
+        /// Bind address for the CLIENT REVIEW portal (ADR-0020): the
+        /// token-gated web player for guests. OFF unless set — bind
+        /// 0.0.0.0:17778-style addresses for LAN/VPN clients. Every route
+        /// fails closed without a valid guest link token.
+        #[arg(long)]
+        review_addr: Option<String>,
         /// Signal server (ADR-0017) — join every project's swarm for
         /// peer-first hydration (LAN-speed blocks, zero cloud egress)
         #[arg(long)]
@@ -280,6 +287,13 @@ pub enum Cmd {
         /// fingerprint; the code still gates admission).
         #[arg(long)]
         swarm_mdns: bool,
+    },
+    /// Client review portal (ADR-0020): publish versions, mint guest
+    /// links, read frame-accurate comments. The daemon's --review flag
+    /// serves the web player to clients.
+    Review {
+        #[command(subcommand)]
+        cmd: review_cmd::ReviewCmd,
     },
     /// Run the P2P signal server + relay (ADR-0017): the lightweight
     /// rendezvous directory nodes register business cards with, plus the
@@ -310,6 +324,96 @@ pub enum Cmd {
         #[arg(long)]
         no_mdns: bool,
     },
+}
+
+pub mod review_cmd {
+    use clap::Subcommand;
+
+    #[derive(Subcommand)]
+    pub enum ReviewCmd {
+        /// Publish a new version to the review stack (append-only; guests
+        /// always land on the newest)
+        Publish {
+            /// Project root (default: current directory)
+            #[arg(long, default_value = ".")]
+            root: String,
+            /// Session title (sets it on first publish)
+            #[arg(long)]
+            title: Option<String>,
+            /// Watchable media file, RELATIVE to the root
+            #[arg(long)]
+            media: String,
+            /// Lightweight proxy, RELATIVE to the root (served to guests
+            /// first; see `cairn proxy`)
+            #[arg(long)]
+            proxy: Option<String>,
+            /// Frame rate: "24", "25", "23.976", or an exact rational
+            /// "24000/1001"
+            #[arg(long, default_value = "24")]
+            fps: String,
+            /// Total frames of the cut
+            #[arg(long)]
+            frames: u64,
+            /// Version label shown to clients
+            #[arg(long, default_value = "")]
+            label: String,
+            /// Timeline file (OTIO/FCPXML) — binds this version to the
+            /// timeline's content fingerprint (the AAF/OMF handoff
+            /// verifies against it)
+            #[arg(long)]
+            timeline: Option<String>,
+            /// Snapshot/commit hash this version was published from
+            #[arg(long)]
+            snapshot: Option<String>,
+            /// Publisher identity recorded on the version
+            #[arg(long, default_value = "editor")]
+            by: String,
+        },
+        /// Mint a guest link (no account — the token is the identity)
+        Link {
+            #[arg(long, default_value = ".")]
+            root: String,
+            /// guest role: commenter (default) or viewer (view-only)
+            #[arg(long, default_value = "commenter")]
+            role: String,
+            /// who this link is for (display only)
+            #[arg(long, default_value = "")]
+            note: String,
+            /// link lifetime in hours (0 = no expiry)
+            #[arg(long, default_value = "72")]
+            ttl_hours: i64,
+            /// restrict the link to the newest version only
+            #[arg(long)]
+            latest_only: bool,
+        },
+        /// List the version stack, links, and note counts
+        List {
+            #[arg(long, default_value = ".")]
+            root: String,
+        },
+        /// List frame-anchored comments with timecodes
+        Comments {
+            #[arg(long, default_value = ".")]
+            root: String,
+            /// one version (default: all)
+            #[arg(long)]
+            version: Option<u32>,
+        },
+        /// Mark a comment resolved (or reopened with --status OPEN)
+        Resolve {
+            #[arg(long, default_value = ".")]
+            root: String,
+            #[arg(long)]
+            version: u32,
+            /// comment id (`cairn review comments` shows them via
+            /// --json in a follow-up; use the player for now)
+            #[arg(long)]
+            id: String,
+            /// RESOLVED (default), OPEN, or REJECTED
+            #[arg(long, default_value = "RESOLVED")]
+            status: String,
+        },
+    }
 }
 
 pub mod notes {
@@ -443,6 +547,7 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
         Cmd::Daemon {
             ctl_addr,
             ui_addr,
+            review_addr,
             swarm_signal,
             swarm_join_code,
             swarm_dev_key,
@@ -517,7 +622,7 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
                     }
                 }
             };
-            daemon::run(home, ctl_addr, ui_addr, swarm).await
+            daemon::run(home, ctl_addr, ui_addr, review_addr, swarm).await
         }
         Cmd::Signal {
             bind,
@@ -526,6 +631,7 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
             dev_key,
             no_mdns,
         } => run_signal_server(&bind, &relay_bind, join_code, dev_key, no_mdns).await,
+        Cmd::Review { cmd } => run_review(cmd),
         Cmd::TlCapture { path, in_place } => run_tl_capture(&path, in_place),
         Cmd::TlMerge {
             base,
@@ -1439,4 +1545,125 @@ fn run_unlock(home: &std::path::Path, project: &str, path: &str) -> anyhow::Resu
         .map_err(|e| anyhow::anyhow!("unlock: {e}"))?;
     println!("unlocked: {project}/{path}");
     Ok(())
+}
+
+// ---------- review portal (ADR-0020) ----------
+
+fn run_review(cmd: review_cmd::ReviewCmd) -> anyhow::Result<()> {
+    use review_cmd::ReviewCmd;
+    use std::path::Path;
+    match cmd {
+        ReviewCmd::Publish {
+            root,
+            title,
+            media,
+            proxy,
+            fps,
+            frames,
+            label,
+            timeline,
+            snapshot,
+            by,
+        } => {
+            let fps = review::parse_fps(&fps)
+                .map_err(|e| anyhow::anyhow!("--fps: {e}"))
+                .unwrap();
+            let timeline_fp = timeline.map(|p| {
+                let (tl, _) = load_timeline_sidecar(&p)
+                    .map_err(|e| anyhow::anyhow!("timeline {p}: {e}"))
+                    .unwrap();
+                tl.tracks.content_fingerprint()
+            });
+            let n = review::cmd_publish(
+                Path::new(&root),
+                title.as_deref(),
+                &media,
+                proxy.as_deref(),
+                fps,
+                frames,
+                &label,
+                timeline_fp.as_deref(),
+                snapshot.as_deref(),
+                &by,
+            )?;
+            println!("published v{n} to the review stack");
+        }
+        ReviewCmd::Link {
+            root,
+            role,
+            note,
+            ttl_hours,
+            latest_only,
+        } => {
+            let role = cairn_review::model::GuestRole::parse(&role)
+                .unwrap_or_else(|| panic!("--role must be commenter or viewer"));
+            let (token, exp) =
+                review::cmd_link(Path::new(&root), role, &note, ttl_hours, latest_only)?;
+            println!("token: {token}");
+            println!(
+                "url:   http://<review-host>:17778/r/{token}   (cairn daemon --review 0.0.0.0:17778)"
+            );
+            if exp > 0 {
+                let dt = chrono_like(exp);
+                println!("expires: {dt}");
+            } else {
+                println!("expires: never");
+            }
+        }
+        ReviewCmd::List { root } => review::cmd_list(Path::new(&root))?,
+        ReviewCmd::Comments { root, version } => {
+            review::cmd_comments(Path::new(&root), version)?;
+        }
+        ReviewCmd::Resolve {
+            root,
+            version,
+            id,
+            status,
+        } => {
+            let st = cairn_tl::notes::NoteStatus::parse(&status)
+                .unwrap_or_else(|| panic!("--status must be OPEN, RESOLVED, or REJECTED"));
+            review::cmd_resolve(Path::new(&root), version, &id, st)?;
+            println!("comment {id} -> {}", st.as_str());
+        }
+    }
+    Ok(())
+}
+
+/// Millis → a readable UTC stamp without pulling a date crate: fixed
+/// civil-from-days math (Howard Hinnant's algorithm).
+#[allow(clippy::many_single_char_names)] // Hinnant's published variable names
+fn chrono_like(ms: i64) -> String {
+    let secs = ms.div_euclid(1000);
+    let days = secs.div_euclid(86_400);
+    let rem = secs.rem_euclid(86_400);
+    let (h, m, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let mth = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if mth <= 2 { y + 1 } else { y };
+    format!("{y:04}-{mth:02}-{d:02} {h:02}:{m:02}:{s:02} UTC")
+}
+
+#[cfg(test)]
+mod chrono_tests {
+    #[test]
+    fn civil_date_math_matches_known_stamp() {
+        // 2026-09-04 00:00:00 UTC = 1788480000 s
+        assert_eq!(
+            super::chrono_like(1_788_480_000_000),
+            "2026-09-04 00:00:00 UTC"
+        );
+        assert_eq!(super::chrono_like(0), "1970-01-01 00:00:00 UTC");
+        // 2000-02-29 12:30:45 UTC = 951827445
+        assert_eq!(
+            super::chrono_like(951_827_445_000),
+            "2000-02-29 12:30:45 UTC"
+        );
+    }
 }

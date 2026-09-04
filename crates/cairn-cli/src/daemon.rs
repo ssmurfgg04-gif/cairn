@@ -269,6 +269,7 @@ pub async fn run(
     home: PathBuf,
     ctl_addr: String,
     ui_addr: String,
+    review_addr: Option<String>,
     swarm: Option<SwarmOpts>,
 ) -> anyhow::Result<()> {
     let state = Arc::new(DaemonState::new(home));
@@ -349,6 +350,19 @@ pub async fn run(
         .serve(ctl_addr.parse()?);
 
     let ui = crate::dashboard::serve(ui_addr, Arc::clone(&state));
+
+    // client review portal (ADR-0020): token-gated routes only, OFF by
+    // default. Runs detached: a portal failure must not take the sync
+    // daemon down with it (clients can retry; the engine keeps syncing).
+    if let Some(addr) = review_addr {
+        let portal = cairn_review::http::Portal::new(Arc::new(crate::review::RuntimesProvider));
+        tokio::spawn(async move {
+            match cairn_review::http::serve(addr, portal).await {
+                Ok(()) => tracing::info!("review portal closed"),
+                Err(e) => tracing::error!(error = %e, "review portal failed"),
+            }
+        });
+    }
 
     // The daemon is safe to kill -9 at any point (I2): nothing here owns uncommitted state.
     tokio::select! {

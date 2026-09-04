@@ -313,6 +313,7 @@ dependencies = [
  "cairn-fs-win",
  "cairn-p2p",
  "cairn-proto",
+ "cairn-review",
  "cairn-server",
  "cairn-shell-ext",
  "cairn-store",
@@ -410,6 +411,23 @@ dependencies = [
  "serde_json",
  "tonic",
  "tonic-build",
+]
+
+[[package]]
+name = "cairn-review"
+version = "4.0.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "bytes",
+ "cairn-tl",
+ "futures",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

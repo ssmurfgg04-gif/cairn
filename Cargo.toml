@@ -16,6 +16,7 @@ members = [
     "crates/cairn-tl",
     "crates/cairn-tray",
     "crates/cairn-shell-ext",
+    "crates/cairn-review",
 ]
 exclude = ["crates/cairn-x/fuzz"]
 
