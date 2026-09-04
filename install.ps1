@@ -1,4 +1,5 @@
-# Cairn -- one-command Windows installer (round 12: CLI + tray, ADR-0016).
+# Cairn -- one-command Windows installer (round 12: CLI + tray, ADR-0016;
+# round 19: + the cairn-app native window, ADR-0022).
 #
 #   irm https://raw.githubusercontent.com/ssmurfgg04-gif/cairn/main/install.ps1 | iex
 #
@@ -7,13 +8,17 @@
 #   2. Resolves the latest GitHub release and downloads:
 #        - cairn-windows-*.exe    (the engine: CLI + daemon + server)
 #        - cairn-tray-windows-*.exe (the system tray, ADR-0016 "clicky-clicky")
+#        - cairn-window-*-setup.exe (the NSIS bundle: the native console
+#          window, ADR-0022 -- optional, degrades to the browser console)
 #   3. Verifies each download against the release's SHA256 assets
 #   4. Adds the install dir to the user PATH (idempotent)
 #   5. Registers the tray to start at login (HKCU Run key, per-user, no admin)
 #      and creates a Desktop shortcut to it
-#   6. Starts the tray for THIS session (no reboot needed to see it)
-#   7. Runs `cairn init` (creates the store; device id is issued at `cairn login`)
-#   8. Prints the next step
+#   6. Runs the NSIS bundle silently (/S, per-user) so cairn-app.exe lands
+#      beside the engine + tray -- the tray's "Open Console" finds it there
+#   7. Starts the tray for THIS session (no reboot needed to see it)
+#   8. Runs `cairn init` (creates the store; device id is issued at `cairn login`)
+#   9. Prints the next step
 #
 # Explorer badge registration is NOT installer work: the daemon registers the
 # CfAPI sync root + provider state at `cairn attach` time (badge.rs). The
@@ -28,6 +33,7 @@
 [CmdletBinding()]
 param(
     [string]$ArtifactUrl = "",
+    [string]$AppSetupUrl = "",
     [string]$InstallDir = "$env:LOCALAPPDATA\Programs\cairn",
     [string]$Repo = "ssmurfgg04-gif/cairn"
 )
@@ -54,6 +60,7 @@ $winName = if ($build -ge 22000) { "Windows 11" } else { "Windows 10" }
 Write-Host "Detected: $winName ($($cv.ProductName), build $build)"
 
 # ---- 2. Resolve the release asset -------------------------------------------------
+$release = $null
 if ($ArtifactUrl -ne "") {
     $exeUrl = $ArtifactUrl
     Write-Host "Using pinned artifact: $exeUrl"
@@ -65,6 +72,7 @@ if ($ArtifactUrl -ne "") {
     } catch {
         Fail "cannot query the latest release ($api): $($_.Exception.Message)"
     }
+    $release = $rel
     $asset = $rel.assets |
         Where-Object { $_.name -match '^cairn-windows-.*\.exe$' } |
         Select-Object -First 1
@@ -142,6 +150,60 @@ if (Get-Command Unblock-File -ErrorAction SilentlyContinue) {
     Unblock-File $exePath
 }
 
+# ---- 3c. Download + verify + RUN the WINDOW bundle (optional asset: the
+# NSIS setup for cairn-app, ADR-0022; older releases ship without it and
+# the browser console carries on -- degrade loudly, never half-install) ---
+$appInstalled = $false
+if ($AppSetupUrl -ne "") {
+    $appUrl = $AppSetupUrl
+} elseif ($release -and $release.assets) {
+    $appAsset = $release.assets |
+        Where-Object { $_.name -match '^cairn-window-.*-setup\.exe$' } |
+        Select-Object -First 1
+    $appUrl = if ($appAsset) { $appAsset.browser_download_url } else { "" }
+} else {
+    $appUrl = ""
+}
+if ($appUrl -ne "") {
+    $setupPath = Join-Path $env:TEMP "cairn-window-setup.exe"
+    try {
+        Invoke-WebRequest -Uri $appUrl -OutFile $setupPath -UserAgent "cairn-installer" -UseBasicParsing
+        $appShaUrl = "$appUrl.sha256"
+        $aresp = Invoke-WebRequest -Uri $appShaUrl -UserAgent "cairn-installer" -UseBasicParsing
+        $ashaText = if ($aresp.Content -is [byte[]]) {
+            [Text.Encoding]::ASCII.GetString($aresp.Content)
+        } else {
+            $aresp.Content
+        }
+        $aexpected = ($ashaText.Trim() -split '\s+')[0].ToLower()
+        $aactual = (Get-FileHash $setupPath -Algorithm SHA256).Hash.ToLower()
+        if ($aactual -ne $aexpected) {
+            Remove-Item $setupPath -Force
+            Write-Host "window bundle SHA256 mismatch -- skipping cairn-app (browser console still fully installed)"
+        } else {
+            if (Get-Command Unblock-File -ErrorAction SilentlyContinue) {
+                Unblock-File $setupPath
+            }
+            Write-Host "cairn-window-setup.exe verified (SHA256: $aactual) -- installing (per-user, silent)"
+            # /S = NSIS silent; per-user installMode (tauri.conf) lands
+            # cairn-app.exe in the standard LOCALAPPDATA spot -- the tray's
+            # "Open Console" looks there and beside itself.
+            $proc = Start-Process -FilePath $setupPath -ArgumentList "/S" -Wait -PassThru
+            if ($proc.ExitCode -eq 0) {
+                $appInstalled = $true
+            } else {
+                Write-Host "window bundle installer exited $($proc.ExitCode) -- the browser console remains the fallback"
+            }
+            Remove-Item $setupPath -Force -ErrorAction SilentlyContinue
+        }
+    } catch {
+        if (Test-Path $setupPath) { Remove-Item $setupPath -Force -ErrorAction SilentlyContinue }
+        Write-Host "window bundle unavailable ($($_.Exception.Message)) -- browser console it is"
+    }
+} else {
+    Write-Host "no cairn-window-*-setup.exe asset on this release -- the console opens in your browser (same surface)"
+}
+
 # ---- 4. PATH (user scope, idempotent) ---------------------------------------------
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
 if (($userPath -split ';') -notcontains $InstallDir) {
@@ -203,7 +265,10 @@ Write-Host ""
 if ($trayInstalled) {
     Write-Host "Cairn installed."
     Write-Host "The tray icon is in your notification area: right-click it to connect a project folder,"
-    Write-Host "check status, or open the project -- no terminal needed."
+    Write-Host "check status, or open the console -- no terminal needed."
+    if ($appInstalled) {
+        Write-Host "The native console window (cairn-app) is installed -- tray > Open Console launches it."
+    }
 } else {
     Write-Host "Cairn installed (engine only -- no tray on this release)."
     Write-Host "Run 'cairn attach <folder>' to start -- the 5-minute guide walks you through it:"

@@ -43,6 +43,18 @@ jobs:
           RUSTFLAGS: -C target-feature=+crt-static
         run: cargo build --release -p cairn-tray --bin cairn-tray
 
+      - name: Build the native window (Tauri NSIS bundle, ADR-0022)
+        working-directory: crates/cairn-app
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          # tauri-cli on the pinned toolchain (cached by rust-cache's prefix)
+          cargo install tauri-cli --version ^2 --locked
+          cargo tauri build --bundles nsis
+          $bundle = Get-ChildItem "target\release\bundle\nsis\*-setup.exe" | Select-Object -First 1
+          if (-not $bundle) { throw "NSIS bundle missing after tauri build" }
+          Write-Host "NSIS bundle: $($bundle.Name) ($([int]($bundle.Length / 1MB)) MiB)"
+
       - name: Smoke test (exit-code contract)
         shell: pwsh
         run: |
@@ -70,6 +82,13 @@ jobs:
           "$th  cairn-tray-windows-$ver.exe" | Out-File "cairn-tray-windows-$ver.exe.sha256" -NoNewline -Encoding ascii
           Write-Host "packaged cairn-tray-windows-$ver.exe ($((Get-Item "cairn-tray-windows-$ver.exe").Length / 1MB -as [int])) MiB, sha256 $th"
 
+          # the native window: NSIS bundle renamed to the release convention
+          $nsis = Get-ChildItem "crates\cairn-app\target\release\bundle\nsis\*-setup.exe" | Select-Object -First 1
+          Copy-Item $nsis.FullName "cairn-window-$ver-setup.exe"
+          $ah = (Get-FileHash "cairn-window-$ver-setup.exe" -Algorithm SHA256).Hash.ToLower()
+          "$ah  cairn-window-$ver-setup.exe" | Out-File "cairn-window-$ver-setup.exe.sha256" -NoNewline -Encoding ascii
+          Write-Host "packaged cairn-window-$ver-setup.exe ($((Get-Item "cairn-window-$ver-setup.exe").Length / 1MB -as [int])) MiB, sha256 $ah"
+
       - name: Publish to GitHub Releases
         env:
           GH_TOKEN: ${{ github.token }}
@@ -80,12 +99,12 @@ jobs:
           $existing = gh release view "$ver" --json id -q .id 2>$null
           if ($existing) {
             # re-run of the job against an existing release: refresh the assets
-            gh release upload "$ver" "cairn-windows-$ver.exe" "cairn-windows-$ver.exe.sha256" "cairn-tray-windows-$ver.exe" "cairn-tray-windows-$ver.exe.sha256" --clobber
+            gh release upload "$ver" "cairn-windows-$ver.exe" "cairn-windows-$ver.exe.sha256" "cairn-tray-windows-$ver.exe" "cairn-tray-windows-$ver.exe.sha256" "cairn-window-$ver-setup.exe" "cairn-window-$ver-setup.exe.sha256" --clobber
           } else {
-            gh release create "$ver" "cairn-windows-$ver.exe" "cairn-windows-$ver.exe.sha256" "cairn-tray-windows-$ver.exe" "cairn-tray-windows-$ver.exe.sha256" `
+            gh release create "$ver" "cairn-windows-$ver.exe" "cairn-windows-$ver.exe.sha256" "cairn-tray-windows-$ver.exe" "cairn-tray-windows-$ver.exe.sha256" "cairn-window-$ver-setup.exe" "cairn-window-$ver-setup.exe.sha256" `
               --title "cairn $ver" --generate-notes
           }
-          Write-Host "release $ver published (engine + tray)"
+          Write-Host "release $ver published (engine + tray + window)"
 
   # The installer gate lives INSIDE this workflow (not as a release:published
   # listener): GitHub does not fire events for releases created with the
@@ -127,4 +146,12 @@ jobs:
           $run = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "CairnTray" -ErrorAction SilentlyContinue).CairnTray
           if (-not $run) { throw "tray autostart (HKCU Run) not registered" }
           # tray binary is present; DO NOT launch the GUI on CI (no interactive session)
-          Write-Host "installer gate GREEN (engine + tray)"
+          # 5. the native window installed (ADR-0022) -- the tray's "Open
+          #    Console" lookup order: beside the tray, then the per-user spots
+          $app = @(
+            "$env:LOCALAPPDATA\Programs\cairn\cairn-app.exe",
+            "$env:LOCALAPPDATA\cairn\cairn-app.exe"
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $app) { throw "cairn-app.exe not installed (NSIS /S leg)" }
+          Write-Host "cairn-app: $app"
+          Write-Host "installer gate GREEN (engine + tray + window)"
