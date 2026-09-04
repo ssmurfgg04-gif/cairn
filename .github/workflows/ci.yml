@@ -417,7 +417,6 @@ jobs:
         run: |
           set -e
           CAIRN="$GITHUB_WORKSPACE/target/debug/cairn"
-          FIX="$GITHUB_WORKSPACE/crates/cairn-tl/fixtures/roundtrip_base.otio"
           cd /tmp/tl-gate
           # ---- semantic: frame-disjoint re-cuts shift exit 2 -> 1 ----
           # A: head re-cut (in +6); B: tail re-cut (out -8) of the same clip

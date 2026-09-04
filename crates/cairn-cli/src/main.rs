@@ -759,22 +759,39 @@ pub mod snapshot {
 }
 
 fn main() -> anyhow::Result<()> {
-    // tonic's TLS pulls rustls with both providers feature-unified; pick ring explicitly
-    // (workspace-standard, THIRD_PARTY.md) before any TLS-capable code runs
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .json()
-        .flatten_event(true)
-        .with_current_span(true)
-        .try_init()
-        .ok();
-    let cli = Cli::parse();
-    let home = std::path::PathBuf::from(cli.home.clone().unwrap_or_else(default_home));
-    tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()?
-        .block_on(run(cli, home))
+    // Round 20 Windows fix: even `--version` blew the 1 MiB main thread on a
+    // real Windows host — clap's parse of this command tree in a debug
+    // build plus the giant `run()` async state machine park far more stack
+    // than Linux's 8 MiB default (which is why it was never seen there).
+    // The whole boot sequence — provider init, tracing, CLI parse, the
+    // runtime, run() — moves onto a thread with a guaranteed 16 MiB stack;
+    // the platform's smallest thread no longer decides whether the CLI
+    // boots. (Found by the new round20-windows CI leg: tl-capture on a
+    // real windows-latest host overflowed where ubuntu never did.)
+    std::thread::Builder::new()
+        .stack_size(16 * 1024 * 1024)
+        .spawn(|| -> anyhow::Result<()> {
+            // tonic's TLS pulls rustls with both providers feature-unified; pick
+            // ring explicitly (workspace-standard, THIRD_PARTY.md) before any
+            // TLS-capable code runs
+            let _ = rustls::crypto::ring::default_provider().install_default();
+            tracing_subscriber::fmt()
+                .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+                .json()
+                .flatten_event(true)
+                .with_current_span(true)
+                .try_init()
+                .ok();
+            let cli = Cli::parse();
+            let home = std::path::PathBuf::from(cli.home.clone().unwrap_or_else(default_home));
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?
+                .block_on(run(cli, home))
+        })
+        .expect("spawn cli thread")
+        .join()
+        .map_err(|_| anyhow::anyhow!("cli thread panicked"))?
 }
 
 fn default_home() -> String {
