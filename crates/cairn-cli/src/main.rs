@@ -274,6 +274,12 @@ pub enum Cmd {
         /// only; pairs with `cairn signal --dev-key`)
         #[arg(long)]
         swarm_dev_key: bool,
+        /// Zero-config LAN join (ADR-0019 §4): discover the swarm's signal
+        /// server via its mDNS beacon instead of passing --swarm-signal.
+        /// Requires --swarm-join-code (the beacon is matched by the code's
+        /// fingerprint; the code still gates admission).
+        #[arg(long)]
+        swarm_mdns: bool,
     },
     /// Run the P2P signal server + relay (ADR-0017): the lightweight
     /// rendezvous directory nodes register business cards with, plus the
@@ -298,6 +304,11 @@ pub enum Cmd {
         /// only; pairs with `cairn daemon --swarm-dev-key`)
         #[arg(long)]
         dev_key: bool,
+        /// Disable the LAN mDNS beacon (ADR-0019 §4). By default, when a join
+        /// code is active and the bind is wildcard, the signal server
+        /// announces a fingerprint beacon so LAN joiners need ONLY the code.
+        #[arg(long)]
+        no_mdns: bool,
     },
 }
 
@@ -435,7 +446,43 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
             swarm_signal,
             swarm_join_code,
             swarm_dev_key,
+            swarm_mdns,
         } => {
+            let swarm_signal = if swarm_mdns {
+                // zero-config LAN join: browse for the beacon that matches
+                // the join code's fingerprint (ADR-0019 §4)
+                let code = swarm_join_code.as_deref().ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "--swarm-mdns requires --swarm-join-code — the beacon is \
+                         matched by the code's fingerprint"
+                    )
+                })?;
+                if swarm_signal.is_some() {
+                    return Err(anyhow::anyhow!(
+                        "--swarm-mdns and --swarm-signal are mutually exclusive \
+                         (discovery fills in the address)"
+                    ));
+                }
+                let code = cairn_p2p::JoinCode::parse(code)
+                    .map_err(|e| anyhow::anyhow!("--swarm-join-code: {e}"))?;
+                let fp = cairn_p2p::mdns::code_fingerprint(&code.display());
+                let tx = std::sync::Arc::new(
+                    cairn_p2p::mdns::UdpMdns::bind()
+                        .map_err(|e| anyhow::anyhow!("mDNS socket: {e} (LAN multicast unavailable; pass --swarm-signal explicitly)"))?,
+                );
+                let found =
+                    cairn_p2p::mdns::browse(tx, &fp, std::time::Duration::from_millis(1500)).await;
+                let Some(beacon) = found.first() else {
+                    return Err(anyhow::anyhow!(
+                        "no mDNS beacon on this LAN matches the join code's fingerprint \
+                         within 1.5s — pass --swarm-signal <host:port> explicitly"
+                    ));
+                };
+                tracing::info!(signal = %beacon.signal_addr, "mDNS: discovered swarm signal");
+                Some(beacon.signal_addr.to_string())
+            } else {
+                swarm_signal
+            };
             let swarm = match swarm_signal {
                 None => None,
                 Some(signal) => {
@@ -477,7 +524,8 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
             relay_bind,
             join_code,
             dev_key,
-        } => run_signal_server(&bind, &relay_bind, join_code, dev_key).await,
+            no_mdns,
+        } => run_signal_server(&bind, &relay_bind, join_code, dev_key, no_mdns).await,
         Cmd::TlCapture { path, in_place } => run_tl_capture(&path, in_place),
         Cmd::TlMerge {
             base,
@@ -896,6 +944,7 @@ async fn run_signal_server(
     relay_bind: &str,
     join_code: Option<String>,
     dev_key: bool,
+    no_mdns: bool,
 ) -> anyhow::Result<()> {
     if dev_key && join_code.is_some() {
         return Err(anyhow::anyhow!(
@@ -927,6 +976,34 @@ async fn run_signal_server(
 
     let signal = cairn_p2p::signal::SignalServer::spawn(bind_addr, &key).await?;
     let relay = cairn_p2p::relay::RelayServer::spawn(relay_addr, signal.local_addr, &key).await?;
+    // LAN beacon (ADR-0019 §4): advertise a join-code FINGERPRINT so LAN
+    // joiners can find this signal server with just the code (--swarm-mdns
+    // on their daemon). Non-fatal: multicast-less environments simply skip
+    // discovery and use explicit --swarm-signal.
+    let mut mdns_task = None;
+    let mut mdns_shutdown: Option<tokio::sync::watch::Sender<bool>> = None;
+    if !no_mdns {
+        if let Admission::JoinCode(code) = &admission {
+            if bind_addr.ip().is_unspecified() {
+                match cairn_p2p::mdns::UdpMdns::bind() {
+                    Ok(tx) => {
+                        let fp = cairn_p2p::mdns::code_fingerprint(&code.display());
+                        let (tx_alive, rx_alive) = tokio::sync::watch::channel(false);
+                        mdns_shutdown = Some(tx_alive);
+                        mdns_task = Some(tokio::spawn(cairn_p2p::mdns::spawn_announcer(
+                            std::sync::Arc::new(tx),
+                            fp,
+                            signal.local_addr.port(),
+                            rx_alive,
+                        )));
+                    }
+                    Err(e) => {
+                        tracing::warn!("mDNS beacon unavailable ({e}); LAN discovery off");
+                    }
+                }
+            }
+        }
+    }
     println!(
         "signal: {} (rendezvous directory, join-code gated)",
         signal.local_addr
@@ -964,6 +1041,12 @@ async fn run_signal_server(
         }
     }
     tokio::signal::ctrl_c().await?;
+    if let Some(tx) = mdns_shutdown.take() {
+        let _ = tx.send(true);
+    }
+    if let Some(t) = mdns_task.take() {
+        t.abort();
+    }
     relay.task.abort();
     signal.task.abort();
     Ok(())

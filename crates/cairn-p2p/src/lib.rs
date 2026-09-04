@@ -41,6 +41,7 @@
 
 pub mod crypto;
 pub mod join;
+pub mod mdns;
 pub mod relay;
 pub mod session;
 pub mod signal;
