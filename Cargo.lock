@@ -314,6 +314,7 @@ dependencies = [
  "cairn-p2p",
  "cairn-proto",
  "cairn-server",
+ "cairn-shell-ext",
  "cairn-store",
  "cairn-sync",
  "cairn-tl",
@@ -444,6 +445,16 @@ dependencies = [
  "uuid",
  "webpki-roots 0.26.11",
  "zstd",
+]
+
+[[package]]
+name = "cairn-shell-ext"
+version = "4.0.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
+ "windows",
 ]
 
 [[package]]
