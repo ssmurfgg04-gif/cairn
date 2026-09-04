@@ -307,9 +307,11 @@ name = "cairn-cli"
 version = "4.0.0"
 dependencies = [
  "anyhow",
+ "async-trait",
  "axum",
  "cairn-core",
  "cairn-fs-win",
+ "cairn-p2p",
  "cairn-proto",
  "cairn-server",
  "cairn-store",
@@ -380,6 +382,21 @@ dependencies = [
  "tempfile",
  "windows",
  "windows-core",
+]
+
+[[package]]
+name = "cairn-p2p"
+version = "4.0.0"
+dependencies = [
+ "blake3",
+ "cairn-core",
+ "hmac",
+ "orion",
+ "sha2",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -1724,8 +1741,11 @@ version = "0.17.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e6758747fd1ce1efaf2bd43219ac4aa9e28263b236b2b6a1e486bcd06820707"
 dependencies = [
+ "ct-codecs",
  "fiat-crypto",
+ "getrandom 0.4.3",
  "subtle",
+ "zeroize",
 ]
 
 [[package]]

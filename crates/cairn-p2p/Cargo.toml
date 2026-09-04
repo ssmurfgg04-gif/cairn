@@ -1,0 +1,23 @@
+[package]
+name = "cairn-p2p"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "P2P swarm transport (ADR-0017): signal rendezvous, NAT hole-punching, encrypted relay fallback, mesh block sync"
+
+[dependencies]
+cairn-core = { path = "../cairn-core" }
+tokio = { workspace = true }
+orion = "0.17"
+blake3 = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[lints]
+workspace = true
