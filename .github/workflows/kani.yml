@@ -34,16 +34,23 @@ jobs:
           # symmetry, SHARDED per ours-op-kind (round-14 hardening of the two
           # heavy harnesses that shared-runner preemption used to kill at
           # 50–95 min mid-exploration — never a verification failure, never
-          # completed; evidence + history in STATUS.md). Two moves landed:
-          # (1) STUBS for the String/serde_json construction in bounded_op
-          # (allocation-free, identical op shapes and branch outcomes — the
-          # named follow-up), (2) PER-KIND SHARDING: ours-kind is a concrete
+          # completed; evidence + history in STATUS.md). Four moves landed:
+          # (1) construction stubs for the String/serde_json payloads in
+          # bounded_op, (2) PER-KIND SHARDING: ours-kind is a concrete
           # constant per harness, theirs-kind stays symbolic; the union of
-          # the 11 shards per family is EXACTLY the original 121-pair space.
-          # Each shard is a tiny CBMC job — preemption windows no longer
-          # matter, so both families are HARD-gated again. The classifier
-          # LOGIC is additionally pinned by the 89 cairn-tl tests + the
-          # 18-file real-timeline corpus gate. ----
+          # the 11 shards per family is EXACTLY the original 121-pair space,
+          # (3) drop-glue scoping (mem::forget after asserting), (4) the
+          # named follow-up proper: #[kani::stub(std::fmt::format, ...)] on
+          # every harness (note/fingerprint TEXT is presentation, not the
+          # proven property) + branch-valued payloads (Value::Bool(bit),
+          # symbolic AttrKind, ""/"x" names) so the classifier's payload
+          # equalities resolve as 1-bit/1-byte compares AND the
+          # value-differs sub-arms (C1/C2/C3/C8) are covered — run
+          # 33844913132 ground >130 min on exactly the three payload-
+          # comparing shards (03/06/09) before this. Each shard is a tiny
+          # CBMC job — preemption windows no longer matter, so both families
+          # are HARD-gated. The classifier LOGIC is additionally pinned by
+          # the 89 cairn-tl tests + the 18-file real-timeline corpus gate. ----
           - proof_classifier_shard_kind_00
           - proof_classifier_shard_kind_01
           - proof_classifier_shard_kind_02
@@ -85,5 +92,7 @@ jobs:
         # bounded op model: 11 op kinds, fixed structures; unwind 32 covers the
         # model's memcmp (Vec<usize> order compare = 16 bytes; the cairn-core
         # commit shard precedent uses 104 for its ~95-byte buffers).
-        run: cargo kani --harness ${{ matrix.harness }} -p cairn-tl --default-unwind 32
+        # -Z stubbing enables the #[kani::stub] attributes (move 4a/4b) —
+        # without the flag the harnesses fail to compile.
+        run: cargo kani --harness ${{ matrix.harness }} -p cairn-tl --default-unwind 32 -Z stubbing
         if: contains(matrix.harness, 'shard')
