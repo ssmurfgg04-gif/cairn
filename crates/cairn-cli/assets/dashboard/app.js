@@ -368,6 +368,57 @@ async function refreshOnce() {
   } catch { /* daemon down: status chip already reports it */ }
 }
 
+function renderReview(rows) {
+  const body = document.getElementById("review-body");
+  if (!body) return;
+  body.textContent = "";
+  const live = rows.filter((r) => r.title !== null && r.title !== undefined);
+  if (!live.length) {
+    body.innerHTML =
+      '<div class="muted-note">no review sessions — publish one: <code>cairn review publish --media cuts/v1.mp4 --frames N</code></div>';
+    return;
+  }
+  for (const r of live) {
+    const card = document.createElement("div");
+    card.className = "review-project";
+    const head = document.createElement("div");
+    head.className = "review-head";
+    head.innerHTML =
+      '<span class="rv-title"></span> <span class="rv-links"></span>';
+    head.querySelector(".rv-title").textContent = r.title;
+    head.querySelector(".rv-links").textContent =
+      r.live_links + " live link" + (r.live_links === 1 ? "" : "s") +
+      (r.expired_links ? " · " + r.expired_links + " expired" : "");
+    card.appendChild(head);
+    const versions = document.createElement("div");
+    versions.className = "rv-versions";
+    for (const v of r.versions.slice(-4).reverse()) {
+      const row = document.createElement("div");
+      row.className = "rv-row";
+      row.textContent =
+        "v" + v.number + "  " + v.label + "  ·  " + v.duration +
+        "  ·  " + v.frames + "fr  ·  by " + v.published_by +
+        (v.has_proxy ? "  ·  proxy" : "");
+      versions.appendChild(row);
+    }
+    card.appendChild(versions);
+    const notes = document.createElement("div");
+    notes.className = "rv-notes";
+    notes.textContent = r.open_notes + " note" + (r.open_notes === 1 ? "" : "s");
+    card.appendChild(notes);
+    body.appendChild(card);
+  }
+}
+
+async function refreshReview() {
+  try {
+    const r = await getJSON("/api/v1/review");
+    renderReview(r.review || []);
+  } catch {
+    /* dashboard keeps polling */
+  }
+}
+
 async function refreshAll() {
   await refreshStatus();
   await refreshProjects();
@@ -445,5 +496,7 @@ document.querySelectorAll(".nav-item").forEach((a) => {
 
 refreshOnce();
 refreshAll();
+refreshReview();
 setInterval(refreshAll, 2000);
+setInterval(refreshReview, 5000);
 setInterval(refreshOnce, 15000);

@@ -19,6 +19,28 @@ Legend: ✅ implemented + tests green · 🟨 implemented, platform-gated / hard
 | M7 | fuzz targets; flags flip w/o restart; audit log; SLO metrics; runbooks; ctl-api frozen | ✅ / fuzz execution on nightly CI (targets build locally) |
 | M8 | onboarding e2e; doctor; THIRD_PARTY complete; beta runbook | ✅ (docs/runbook-beta.md; onboarding e2e) |
 
+
+## Round 16 (2026-09-04) — the Frame.io five: review loop, proxies, RBAC, handoff (ADR-0020)
+
+The product-shaped critique: editors need client NOTES, not faster sync. Round 16
+closes the review/approval loop on the P2P foundation — every feature is
+files-in-the-root (deterministic `.cairn/` JSON, journaled + synced like media,
+zero new transport code).
+
+| Item | Status | Evidence |
+|---|---|---|
+| Client review portal (`cairn-review`) | ✅ | Version stack (append-only, guests land on newest), guest links with NO account (uuid-v4 token = 122 CSPRNG bits, role commenter/viewer, TTL, latest-only; every route fails closed), frame-accurate comments = per-version cairn-tl NoteSets (blake3 content ids dedupe, round-14 three-way merge converges offline comments, NDF timecodes: 23.976→24 basis, 29.97→30), presence (in-memory, 90 s staleness), self-contained player (no build step/CDN; HTTP-range serving: capped 8 MiB 206 + streaming 200; scrub/frame-step/pins/resolve). 17 unit tests + live smoke (comment@960 → 00:00:40:00, 404 on bad tokens). Portal OFF by default: `cairn daemon --review ADDR`, detached (portal failure never kills the sync engine) |
+| Review CLI + dashboard panel | ✅ | `cairn review publish/link/list/comments/resolve/export-markers`; publish binds the timeline digest; `/api/v1/review` + Review card in the local console; live-smoked publish→link→comment→resolve |
+| Proxy workflow (`cairn-proxy`) | ✅ | Proxies are ordinary project files under `.cairn/proxy-cache/` (digest-keyed → journaled/synced/pinnable; the sparse/pin model IS the smart sync). Pluggable Transcoder: FfmpegTranscoder (1080p H.264, downscale-only, `-movflags +faststart` for range scrubbing) + CopyTranscoder (test double). `.cairn/proxies.json` (Ready/Stale/Failed, idempotent, stale-on-edit). 11 tests + live smoke. Review portal streams proxy first; `?full=1` for the original |
+| RBAC (`cairn-core::rbac` + `cairn member`) | ✅ | 7 roles × 14 permissions matrix (Lead locks timeline, Assistant organizes bins, Colorist grades, Client comments). `.cairn/members.json` synced, device-keyed, fail-open default (`editor`) — adding members makes a studio stricter. Guards on review publish/link (ManageReview), handoff record (Snapshot), member edits (ManageMembers, owner-only). `cairn member check` exit-code answer for scripts. Daemon-side gRPC enforcement: ledgered (ctl proto change). 4 matrix tests + CLI enforcement tests |
+| NLE marker bridge (`cairn-tl::markers`) | ✅ | Comments flow back into the edit: `notes_to_otio` (1-frame Marker.1 on the tracks stack, integer-exact RationalTime — re-import lands on the identical frame) + `notes_to_fcpxml` (FCP7 XML; Premiere/Resolve/FCP import). `cairn review export-markers`. 4 tests incl. canon round-trip + negative-frame clamp |
+| AAF/OMF handoff ledger (`cairn-tl::handoff`) | ✅ | Every export bound to (a) file digest (re-export/tamper) + (b) timeline digest (blake3 over canonical serialization). verify → Current / FileChanged / **TimelineMoved** (the sound-team revolt signal, exit 1). AAF CFB + OMF OMFI magic sniffing. `.cairn/handoffs.json` idempotent by digest. 4 tests + live smoke both green paths + the TimelineMoved refusal |
+| Windows shell extension (round 15 part 8 fix) | ✅ | The 19 windows-only com.rs compile errors fixed AND locally verified via `cargo check --target x86_64-pc-windows-msvc` (new permanent capability); real per-face QI; vtable slot order corrected (IsMemberOf=3/GetOverlayInfo=4/GetPriority=5 — the draft had it backwards); ci.yml `windows-cross-check` job (~1 min, linux runner). nle-matrix green at 351f312 |
+
+Honest follow-ups (ADR-0020 ledger): daemon-side RBAC (ctl proto), compiled
+Premiere/Resolve panel (UXP) — the marker bridge covers the workflow first,
+drop-frame TC for 29.97 broadcast, proxy auto-gen on publish, presence relay.
+
 ## Round 15 (2026-09-04) — the production-usability five (ADR-0019)
 
 The user's five-item round: CfAPI lifecycle resilience, multi-root single-daemon,
