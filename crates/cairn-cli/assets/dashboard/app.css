@@ -80,7 +80,7 @@ body::after {
 
 ::selection { background: rgba(8, 124, 255, 0.22); }
 
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+:focus-visible { outline: 3px solid rgba(8, 124, 255, 0.42); outline-offset: 2px; border-radius: 4px; }
 
 /* thin quiet scrollbars */
 * { scrollbar-width: thin; scrollbar-color: rgba(10, 10, 10, 0.18) transparent; }
@@ -432,6 +432,19 @@ body::after {
 
 .foot { padding-top: 14px; }
 .foot .meta { font-family: var(--sans); }
+.foot-help {
+  font: inherit; font-weight: 700;
+  border: 1px solid var(--hairline-2);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--ink-2);
+  width: 20px; height: 20px;
+  display: inline-grid; place-items: center;
+  cursor: pointer;
+  vertical-align: -4px;
+  transition: color 0.15s var(--ease), border-color 0.15s var(--ease);
+}
+.foot-help:hover { color: var(--accent-strong); border-color: var(--accent); }
 
 /* ---------- action rows, inputs, buttons ---------- */
 
@@ -607,21 +620,210 @@ select.input { appearance: none; cursor: pointer; }
 /* update chip */
 .chip-update { cursor: default; }
 
-/* onboarding hero: the zero-root welcome moment (audit #1) */
+/* onboarding hero: the zero-root welcome moment (audit #1) — the dark
+   studio stage. The reference onboarding's aurora + glass + progress
+   footer translated into cairn's warm-dark language: amber fields
+   drifting behind glass over near-black #141312, the cairn stack lit
+   warm at 76px, display-scale DM Sans, and a 72x3 footer track that
+   advances over REAL state — it never fakes a step. */
 .onboarding.hero {
-  padding: 42px 44px 36px;
-  background:
-    radial-gradient(58% 90% at 18% 8%, rgba(8, 124, 255, 0.10), transparent 70%),
-    radial-gradient(46% 76% at 88% 14%, rgba(255, 138, 76, 0.08), transparent 70%),
-    var(--glass);
+  position: relative;
+  overflow: hidden;
+  padding: 0;
+  max-width: 860px;            /* the stage */
+  width: 100%;
+  margin-inline: auto;
+  border-radius: 24px;
+  background: #141312;
+  border: 1px solid rgba(255, 215, 106, 0.16);
+  box-shadow: 0 24px 70px rgba(10, 10, 10, 0.28);
+  color: #f2ede3;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
-.onboarding.hero .ob-title { font-size: 25px; letter-spacing: -0.03em; }
-.onboarding.hero .ob-sub { font-size: 13.5px; max-width: 58ch; }
-.onboarding.hero .ob-steps { margin-top: 24px; }
-.onboarding.hero .ob-name { font-size: 15.5px; }
-.onboarding.hero .ob-desc { font-size: 12.5px; max-width: 34ch; }
-.onboarding.hero .ob-cta { margin-top: 26px; }
-.onboarding.hero #ob-cta-attach { font-size: 14px; padding: 10px 22px; }
+/* cinematic vignette: darkens the stage edges (adds depth, dithers the
+   aurora's large blurred gradients so they don't band) — transparent to
+   55%, warm-dark at the rim; content sits safely inside the 54px padding */
+.onboarding.hero::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: radial-gradient(120% 90% at 50% 42%, transparent 55%, rgba(20, 19, 18, 0.55) 100%);
+}
+
+/* the aurora — three warm fields, ~38% alpha tops, blur 18px, 24s+ drift */
+.onboarding.hero .ob-aurora {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  filter: blur(18px);
+}
+.ob-aurora i {
+  position: absolute;
+  display: block;
+  border-radius: 50%;
+  will-change: transform;
+}
+.ob-aurora .f1 {
+  left: 5%; top: -16%;
+  width: 222px; height: 222px;              /* 111px radius */
+  background: radial-gradient(circle, rgba(255, 243, 163, 0.38), transparent 70%);
+  animation: ob-field-a 24s ease-in-out infinite alternate;
+}
+.ob-aurora .f2 {
+  right: 3%; top: -6%;
+  width: 300px; height: 300px;
+  background: radial-gradient(circle, rgba(255, 180, 94, 0.24), transparent 70%);
+  animation: ob-field-b 29s ease-in-out infinite alternate;
+}
+.ob-aurora .f3 {
+  left: 36%; bottom: -36%;
+  width: 340px; height: 340px;
+  background: radial-gradient(circle, rgba(255, 157, 122, 0.14), transparent 70%);
+  animation: ob-field-c 34s ease-in-out infinite alternate;
+}
+@keyframes ob-field-a { to { transform: translate3d(46px, 30px, 0) scale(1.16); } }
+@keyframes ob-field-b { to { transform: translate3d(-40px, 36px, 0) scale(1.10); } }
+@keyframes ob-field-c { to { transform: translate3d(28px, -32px, 0) scale(1.08); } }
+
+.onboarding.hero .ob-inner {
+  position: relative;
+  z-index: 1;                  /* above the vignette — text stays crisp */
+  padding: 54px 56px 42px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.onboarding.hero .ob-mark {
+  display: block;
+  margin-bottom: 24px;
+  filter: drop-shadow(0 10px 24px rgba(255, 196, 94, 0.16));
+}
+.onboarding.hero .ob-title {
+  font-size: clamp(34px, 5vw, 54px);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  line-height: 1.06;
+  color: #f7f2e8;
+  text-wrap: balance;
+}
+.onboarding.hero .ob-sub {
+  font-size: 16px;
+  color: #98918a;               /* 5.9:1 on #141312 — AA at 16px */
+  max-width: 56ch;
+  margin-top: 14px;
+  line-height: 1.55;
+  text-wrap: pretty;
+}
+
+/* steps: three dark glass chips */
+.onboarding.hero .ob-steps {
+  margin-top: 36px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  width: 100%;
+  text-align: left;
+}
+.onboarding.hero .ob-step {
+  position: relative;
+  padding: 15px 16px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.035);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  display: grid;
+  grid-template-columns: 30px 1fr;
+  column-gap: 12px;
+  align-items: start;
+  transition: border-color 0.4s var(--ease), background 0.4s var(--ease);
+}
+.onboarding.hero .ob-step:not(:last-child)::after { display: none; }
+.onboarding.hero .ob-step.now { border-color: rgba(255, 215, 106, 0.30); background: rgba(255, 215, 106, 0.05); }
+.onboarding.hero .ob-num {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.14);
+  color: #8a8580;
+}
+.onboarding.hero .ob-step.now .ob-num {
+  background: #ffd76a;
+  border-color: #ffd76a;
+  color: #141312;
+  box-shadow: 0 0 0 5px rgba(255, 215, 106, 0.14);
+  animation: ob-num-breathe 2.4s ease-in-out infinite;
+}
+@keyframes ob-num-breathe { 0%, 100% { box-shadow: 0 0 0 5px rgba(255, 215, 106, 0.14); } 50% { box-shadow: 0 0 0 8px rgba(255, 215, 106, 0.05); } }
+.onboarding.hero .ob-step.done .ob-num { background: #35c07f; border-color: #35c07f; color: #0b0c0f; }
+.onboarding.hero .ob-step.done:not(:last-child)::after { background: #35c07f; }
+.onboarding.hero .ob-name { font-size: 15.5px; color: #f2ede3; }
+.onboarding.hero .ob-desc { font-size: 12.5px; color: #948e86; max-width: 34ch; margin-top: 3px; }
+.onboarding.hero .ob-step.now .ob-name { color: #ffd76a; }
+.onboarding.hero .ob-step.done .ob-name { color: #b5aea4; }
+
+.onboarding.hero .ob-cta { margin-top: 32px; justify-content: center; }
+/* the hero's primary is the palette's own amber (design review: the console
+   blue reads default-Bootstrap against the warm stage) */
+.onboarding.hero #ob-cta-attach {
+  background: #ffd76a;
+  border-color: #ffd76a;
+  color: #141312;
+  font-size: 15px; padding: 12px 26px;
+  box-shadow: 0 8px 24px rgba(255, 215, 106, 0.22);
+}
+.onboarding.hero #ob-cta-attach:hover { background: #ffdf8f; border-color: #ffdf8f; color: #141312; }
+.onboarding.hero .note { color: #b5aea4; }
+
+/* the 82px progress footer — 72x3 track, CLI one-liner right */
+.onboarding.hero .ob-foot {
+  position: relative;
+  z-index: 1;                  /* above the vignette — the footer stays crisp */
+  min-height: 82px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 16px 56px;
+  border-top: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(255, 255, 255, 0.025);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+.ob-track {
+  width: 72px;
+  height: 3px;
+  border-radius: 2px;
+  background: #333338;
+  overflow: hidden;
+  flex: none;
+}
+.ob-track-fill {
+  display: block;
+  height: 100%;
+  width: 33%;
+  background: #ffd76a;
+  border-radius: 2px;
+  transition: width 0.6s var(--ease);
+}
+.ob-stage-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: #8a8580;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.onboarding.hero .ob-cli {
+  margin-left: auto;
+  border-color: rgba(255, 255, 255, 0.10);
+  background: rgba(255, 255, 255, 0.03);
+}
+.onboarding.hero .ob-cli code { color: #b5aea4; }
+.onboarding.hero .ob-cli .btn-copy { border-color: rgba(255, 255, 255, 0.14); color: #8a8580; }
+.onboarding.hero .ob-cli .btn-copy:hover { color: #f2ede3; border-color: rgba(255, 255, 255, 0.28); }
+
 .ob-cli {
   display: inline-flex; align-items: center; gap: 8px;
   border: 1px solid var(--hairline);
@@ -644,6 +846,33 @@ select.input { appearance: none; cursor: pointer; }
 }
 .files-meter { height: 4px; margin-top: 8px; margin-bottom: 12px; }
 .tag.pin { background: rgba(180, 83, 9, 0.14); color: #8a4a06; }
+
+/* files: Finder-style overlay icons (16px) + skeleton + fallback mark */
+.f-name { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.f-name .f-doc { color: var(--ink-3); flex: none; }
+.f-name { overflow-wrap: anywhere; }
+
+.f-state { display: inline-flex; align-items: center; gap: 7px; }
+.f-state .f-ic { flex: none; color: var(--ink-3); }
+/* the pip color carries the state; the mark stays ink for legibility */
+.f-state .f-ic .ov { fill: var(--ink-3); }
+.f-state.ok .f-ic { color: var(--ink-2); }
+.f-state.ok .f-ic .ov { fill: var(--ok); }
+.f-state.info .f-ic .ov { fill: var(--info); }
+.f-state.bad .f-ic { color: var(--ink-2); }
+.f-state.bad .f-ic .ov { fill: var(--bad); }
+.f-state.info .f-ic .ov-stroke,
+.f-state.ok .f-ic .ov-stroke,
+.f-state.bad .f-ic .ov-stroke { stroke: #fff; }
+
+/* skeleton rows: shimmer at row rhythm, varied widths (see app.js) */
+.f-skel td { padding: 11px 10px; }
+.f-skel .skel { height: 12px; margin: 0; }
+
+/* error fallback: the 76px stack, dimmed, one plain sentence */
+.f-error { text-align: center; padding: 36px 10px 30px; }
+.f-error-mark { color: var(--ink); opacity: 0.32; margin: 0 auto 10px; display: block; }
+.f-error-note { color: var(--ink-3); font-size: 12.5px; max-width: 52ch; margin: 0 auto; }
 
 /* team card */
 .team-body { display: flex; flex-direction: column; gap: 18px; }
@@ -767,6 +996,11 @@ kbd {
   .grid { grid-template-columns: 1fr; }
   .ob-steps { grid-template-columns: 1fr; gap: 18px; }
   .ob-step:not(:last-child)::after { left: 15px; right: auto; top: 34px; bottom: -14px; width: 2px; height: auto; }
+  /* the hero's 3-chip row stacks; the stage breathes at mobile padding */
+  .onboarding.hero .ob-steps { grid-template-columns: 1fr; }
+  .onboarding.hero .ob-inner { padding: 38px 26px 30px; }
+  .onboarding.hero .ob-foot { padding: 14px 26px; min-height: 0; }
+  .onboarding.hero .ob-cli { margin-left: 0; }
 }
 @media (max-width: 900px) {
   .frame { flex-direction: column; }
