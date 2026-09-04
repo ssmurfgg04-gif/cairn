@@ -14,6 +14,9 @@
 //!   background — one-click attach; the login code flow is out of tray v1:
 //!   the installer's next-step text covers it)
 //! - Status… → `cairn doctor` output in a message box
+//! - Open Console → the native cairn-app window (ADR-0022) when the
+//!   installer placed it beside us / in the per-user Program Files, else
+//!   the daemon's loopback console in the default browser — same surface
 //! - Open Project Folder → Explorer at the project root
 //! - Disconnect → `cairn detach --project <id>`
 //!
@@ -66,6 +69,7 @@ mod menu {
     pub const OPEN: i32 = 2003;
     pub const SETTINGS: i32 = 2004;
     pub const DISCONNECT: i32 = 2005;
+    pub const CONSOLE: i32 = 2006;
     pub const EXIT: i32 = 2099;
 }
 
@@ -285,6 +289,55 @@ fn cairn_binary() -> String {
         }
     }
     "cairn".into()
+}
+
+/// The native console window (ADR-0022): cairn-app when the installer put
+/// it next to us (or in the standard per-user spots), else the daemon's
+/// loopback URL in the default browser — same surface, either viewport.
+fn cairn_app_binary() -> Option<String> {
+    let mut candidates: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(dir) = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(std::path::Path::to_path_buf))
+    {
+        candidates.push(dir.join("cairn-app.exe"));
+    }
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        let local = std::path::PathBuf::from(local);
+        // NSIS per-user default, and the Tauri variant of it
+        candidates.push(local.join("Programs").join("cairn").join("cairn-app.exe"));
+        candidates.push(local.join("cairn").join("cairn-app.exe"));
+    }
+    candidates
+        .into_iter()
+        .find(|c| c.is_file())
+        .map(|c| c.to_string_lossy().into_owned())
+}
+
+/// Open the console: the native window when installed, the browser otherwise.
+unsafe fn do_console() {
+    if let Some(app) = cairn_app_binary() {
+        let wide = to_wide(&app);
+        ShellExecuteW(
+            None,
+            w!("open"),
+            PCWSTR(wide.as_ptr()),
+            None,
+            None,
+            windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
+        );
+        return;
+    }
+    // fallback: the daemon's loopback console in the default browser
+    let url = to_wide("http://127.0.0.1:17778/");
+    ShellExecuteW(
+        None,
+        w!("open"),
+        PCWSTR(url.as_ptr()),
+        None,
+        None,
+        windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL,
+    );
 }
 
 /// Run `cairn … args` hidden; return (exit ok, combined output trimmed).
@@ -526,6 +579,13 @@ unsafe fn show_menu(hwnd: HWND) {
         menu::STATUS as usize,
         PCWSTR(status_w.as_ptr()),
     );
+    let console_w = to_wide("Open Console");
+    let _ = AppendMenuW(
+        menu,
+        MF_STRING,
+        menu::CONSOLE as usize,
+        PCWSTR(console_w.as_ptr()),
+    );
     let disabled_open = status.project_root.is_none();
     let mut flags = MF_STRING;
     if disabled_open {
@@ -578,6 +638,7 @@ unsafe fn show_menu(hwnd: HWND) {
     match cmd.0 as i32 {
         menu::CONNECT => do_connect(hwnd, &shared),
         menu::STATUS => do_status(hwnd),
+        menu::CONSOLE => do_console(),
         menu::OPEN => do_open(&status),
         menu::SETTINGS => do_settings(hwnd, &status),
         menu::DISCONNECT => do_disconnect(hwnd, &shared, &status),
