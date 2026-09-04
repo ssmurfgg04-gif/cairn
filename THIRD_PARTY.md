@@ -18,6 +18,8 @@ any) carries provenance headers; preference order is: crates > port-the-approach
 | Blender Foundation | GPL/CC (demo assets) | REAL production .blend (`BMW27.blend`, gzip-compressed by Blender itself) used as the real-container normalization evidence — bytes committed under `crates/cairn-core/tests/data/` | `cairn-core/tests/real_blend_roundtrip.rs` |
 | nextcloud/desktop | AGPL-3.0 | CfAPI walking-skeleton patterns studied (CfRegisterSyncRoot policies, FETCH_DATA→TRANSFER_DATA with 4096-block alignment, self-hydration deadlock guard, SyncRootManager registry keys) | `cairn-fs-win/src/cfapi.rs` (approach) |
 | AWS SigV4 | documentation | Presigned URL canonical request format (we implement the signer ourselves — see ADR-0005) | `cairn-server/src/storage/sigv4.rs` |
+| BitTorrent (BEP-style) | protocol design | Rarest-first want scheduling, Bloom HAVE exchange, mesh effect (completion re-announce) — design-level study, no code | `crates/cairn-p2p/src/swarm.rs` |
+| WebRTC/STUN (RFC 5389) | IETF spec | Binding request/response codec, XOR-MAPPED-ADDRESS, reflexive-address discovery | `crates/cairn-p2p/src/stun.rs` |
 
 ## Skill / design references (installed)
 
@@ -29,7 +31,9 @@ any) carries provenance headers; preference order is: crates > port-the-approach
 
 tokio, tonic, prost, axum (async/gRPC/HTTP) · rusqlite (client SQLite, bundled) · sqlx (server
 SQLite) · blake3 (hashing) · zstd (compression) · notify (fs watching) · fuser (FUSE, Linux) ·
-keyring (OS keychain) · pasetors (PASETO v4 tokens) · uuid v7 (request ids) · thiserror /
+keyring (OS keychain) · pasetors (PASETO v4 tokens) · orion (X25519 + XChaCha20-Poly1305 for
+the P2P swarm transport and its CSPRNG, ADR-0017 — zero new external code for the swarm:
+orion was already in the tree via pasetors) · uuid v7 (request ids) · thiserror /
 anyhow (error taxonomy per ADR-0010) · tracing / tracing-subscriber (observability per
 ADR-0007) · proptest (property tests) · memmap2 (large-file mmap) · unicode-normalization
 (NFC paths) · flate2 (gzip container normalization) · zip (zip container normalization, deflate-only feature set).
