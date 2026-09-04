@@ -179,3 +179,29 @@ Following the recipe above, the WO1 AttachRoot walking skeleton added:
      hydration GETs (default `false` preserves the frozen manifest semantics).
 3. **Semantics unchanged**: ports, handshake, error codes, auth model, journal
    conflict rule, presign TTL cap — all untouched.
+
+### Additive changes applied (Round 20, ADR-0023, 2026-09-05)
+
+1. **New service** — `CtlPresence` (the first ctl-side SERVER-STREAMING RPC;
+   old clients never see it, new clients degrade via `UNIMPLEMENTED` on old
+   daemons):
+   - `SendPresence(SendPresenceRequest) → Ack` — push one live-presence
+     event (playhead/drag/selection): relayed to the project swarm +
+     local subscribers. Payload is opaque app JSON, hard-bounded to
+     1200 bytes (the swarm codec's telemetry bound). Fails with
+     `failed_precondition` naming the flag while `live_presence` is off.
+   - `WatchPresence(WatchPresenceRequest) → stream PresenceEventMsg` —
+     subscribe to inbound presence (local echoes carry `local: true`).
+     Optional project filter; lagging consumers get a resync-able gap
+     (presence is a signal, not a log).
+   - Fields 1–5 used; 100–199 stay reserved per the frozen contract.
+   - RBAC: `ViewPresence` (all roles — the flag is the real gate); every
+     decision lands in the project audit ledger like every other ctl
+     mutation.
+2. **New permission** — `rbac::Permission::ViewPresence`, granted to all
+   seven roles. The matrix is now 7 × 18 (the "14 permissions" line in
+   earlier docs was already stale; this is the corrected count).
+3. **Semantics unchanged**: ports, handshake, error codes, auth model,
+   every existing RPC and field — untouched. `live_presence` and
+   `semantic_merge` are daemon kill-switch-style flags, both default
+   `"false"`.

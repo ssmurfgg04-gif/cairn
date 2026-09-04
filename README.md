@@ -42,8 +42,14 @@ rights. The CLI path below remains for servers and power users.
 
 **What you're evaluating:** the merge is `cairn tl-merge --base b.otio
 --ours a.otio --theirs b2.otio` (exit 0 clean / 1 notes / 2 conflicts / 3
-refused). The honest competitive ledger — where we win, where LucidLink and
-friends win — is [docs/COMPETITIVE.md](docs/COMPETITIVE.md).
+refused) — add `--semantic` to auto-merge frame-disjoint re-cuts
+(ADR-0023, opt-in). Also new: `cairn tl-branch` (git-for-video),
+`cairn search` (find clips by what's IN them), `cairn review
+export-changelist | apply-changelist` (client notes → mechanical edits,
+with a YES/NO gate), and live presence between editors (daemon flag
+`live_presence`, off by default). The honest competitive ledger — where
+we win, where LucidLink and friends win — is
+[docs/COMPETITIVE.md](docs/COMPETITIVE.md).
 
 ## Quick start
 
