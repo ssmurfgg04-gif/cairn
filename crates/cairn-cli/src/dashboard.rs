@@ -53,6 +53,8 @@ pub async fn serve(addr: String, state: Arc<DaemonState>) -> anyhow::Result<()> 
         .route("/api/v1/pins/unpin", post(unpin))
         .route("/api/v1/recall", post(start_recall))
         .route("/api/v1/recall/:job_id", get(recall_status))
+        // round 16: client review summary (per attached root)
+        .route("/api/v1/review", get(review_summary))
         .with_state(state);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!(%addr, "dashboard listening (loopback only)");
@@ -453,6 +455,64 @@ async fn recall_status(
         }
         Err(s) => Json(json!({"ok": false, "error": s.message()})),
     }
+}
+
+/// GET /api/v1/review — the review portal state per attached project:
+/// version stack, live links, comment counts. Read-only; minting links
+/// stays on the CLI (`cairn review link`).
+async fn review_summary(State(_state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
+    let mut out = Vec::new();
+    {
+        let map = crate::projects::RUNTIMES.read().await;
+        for rt in map.values() {
+            let root = rt.workspace.clone();
+            let entry = match cairn_review::store::Store::load(&root) {
+                Ok(Some(f)) => {
+                    let now = cairn_core::clock::WallClock.now_millis();
+                    let comments: u64 = f
+                        .versions
+                        .iter()
+                        .map(|v| {
+                            cairn_review::store::Store::load_comments(&root, v.number)
+                                .map(|s| s.len() as u64)
+                                .unwrap_or(0)
+                        })
+                        .sum();
+                    json!({
+                        "project_id": rt.project_id,
+                        "root_path": root.to_string_lossy(),
+                        "title": f.title,
+                        "versions": f.versions.iter().map(|v| json!({
+                            "number": v.number,
+                            "label": v.label,
+                            "frames": v.frames,
+                            "fps_num": v.fps_num,
+                            "fps_den": v.fps_den,
+                            "duration": v.timecode(v.frames.saturating_sub(1)),
+                            "has_proxy": v.proxy_rel.is_some(),
+                            "published_by": v.published_by,
+                        })).collect::<Vec<_>>(),
+                        "live_links": f.links.iter().filter(|l| !l.is_expired(now)).count(),
+                        "expired_links": f.links.iter().filter(|l| l.is_expired(now)).count(),
+                        "open_notes": comments,
+                    })
+                }
+                _ => json!({
+                    "project_id": rt.project_id,
+                    "root_path": root.to_string_lossy(),
+                    "title": null,
+                }),
+            };
+            out.push(entry);
+        }
+    }
+    out.sort_by(|a, b| {
+        a["project_id"]
+            .as_str()
+            .unwrap_or("")
+            .cmp(b["project_id"].as_str().unwrap_or(""))
+    });
+    Json(json!({ "review": out }))
 }
 
 async fn flags(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {

@@ -27,5 +27,7 @@ async fn main() {
 
     let portal = cairn_review::http::Portal::new(Arc::new(OneRoot(root)));
     println!("portal on http://{addr}/ — open /r/<token> with a link from `cairn review link`");
-    cairn_review::http::serve(addr, portal).await.expect("portal serve");
+    cairn_review::http::serve(addr, portal)
+        .await
+        .expect("portal serve");
 }

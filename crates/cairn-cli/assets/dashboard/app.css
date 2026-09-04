@@ -295,3 +295,19 @@ select.input { appearance: none; cursor: pointer; }
   .main { padding: 24px 20px; }
   .grid { grid-template-columns: 1fr; }
 }
+
+
+/* ---------- client review (round 16) ---------- */
+
+.review-body { display: flex; flex-direction: column; gap: 14px; }
+.review-project { border-top: 1px solid var(--border); padding-top: 12px; }
+.review-project:first-child { border-top: none; padding-top: 0; }
+.review-head { display: flex; align-items: baseline; gap: 10px; }
+.rv-title { font-weight: 600; }
+.rv-links { font-family: var(--mono); font-size: 11px; color: var(--green-fg); }
+.rv-versions { display: flex; flex-direction: column; gap: 2px; margin: 6px 0; }
+.rv-row { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+.rv-row:first-child { color: var(--text); }
+.rv-notes { font-size: 11px; color: var(--faint); }
+.muted-note { color: var(--faint); font-size: 12px; }
+.muted-note code { font-family: var(--mono); color: var(--muted); }

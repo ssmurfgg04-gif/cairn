@@ -183,10 +183,7 @@ const MATRIX: &[(Role, &[Permission])] = &[
             Permission::Verify,
         ],
     ),
-    (
-        Role::Reviewer,
-        &[Permission::Read, Permission::Comment],
-    ),
+    (Role::Reviewer, &[Permission::Read, Permission::Comment]),
 ];
 
 /// May `role` do `perm`?
