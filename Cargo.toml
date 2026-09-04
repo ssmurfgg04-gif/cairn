@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "crates/cairn-proto",
     "crates/cairn-core",
+    "crates/cairn-p2p",
     "crates/cairn-store",
     "crates/cairn-sync",
     "crates/cairn-server",
