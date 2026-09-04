@@ -116,6 +116,7 @@ const STR = {
   "files.conflict": { en: "conflict", "de-DE": "Konflikt", "ja-JP": "競合", "zh-CN": "冲突" },
   "files.pinned": { en: "pinned", "de-DE": "angepinnt", "ja-JP": "ピン留め", "zh-CN": "已置顶" },
   "files.placeholder": { en: "placeholder", "de-DE": "Platzhalter", "ja-JP": "プレースホルダー", "zh-CN": "占位文件" },
+  "files.error": { en: "couldn’t reach the daemon — the list fills in the moment it responds", "de-DE": "Daemon nicht erreichbar — die Liste erscheint, sobald er antwortet", "ja-JP": "デーモンに接続できません — 応答すると一覧が表示されます", "zh-CN": "无法连接守护进程 — 响应后列表会自动出现" },
 
   "team.myRole": { en: "your role", "de-DE": "deine Rolle", "ja-JP": "あなたの役割", "zh-CN": "你的角色" },
   "team.invite": { en: "invite a machine — join code", "de-DE": "Maschine einladen — Beitrittscode", "ja-JP": "マシンを招待 — 参加コード", "zh-CN": "邀请设备 — 加入码" },
@@ -346,6 +347,17 @@ function renderOnboarding() {
   setStep("ob-step-3", "todo");
   const note = $("ob-note");
   note.textContent = "";
+
+  // footer track (72x3) over the real state machine, never faked: the hero
+  // only exists at zero roots, so the track honestly sits at 1/3 — attach
+  // a root (button or CLI) and the next poll replaces this card entirely.
+  const stage = 1;
+  const fill = $("ob-track-fill");
+  const track = $("ob-track");
+  const label = $("ob-stage-label");
+  if (fill) fill.style.width = `${(stage / 3) * 100}%`;
+  if (track) track.setAttribute("aria-valuenow", String(stage));
+  if (label) label.textContent = `${stage} / 3 · ${t("ob.step1.name")}`;
 }
 
 /* ---------- status header + overview ---------- */
@@ -543,12 +555,65 @@ async function refreshProjects() {
   } catch { /* covered by status chip */ }
 }
 
-/* ---------- project files (audit #7: badges, not `ls`) ---------- */
+/* ---------- files (audit #2: Finder-style overlays, honest loading) ----------
+   The list is a table, but the state column carries 16px overlay icons —
+   cloud + a status pip, the way an editor already reads file state in a
+   file browser. Skeleton rows shimmer while the first load is in flight;
+   a failed first load shows the mark + a plain sentence (never a spinny
+   nothing). Once data exists, a failed refresh keeps the last honest rows. */
+
+/* 16px overlay icons — cloud outline + corner pip (currentColor + pip color) */
+const F_CLOUD =
+  '<svg class="f-ic" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" aria-hidden="true">' +
+  '<path d="M4.6 10.9a2.1 2.1 0 0 1-.2-4.2 3.5 3.5 0 0 1 6.8-.7 2.3 2.3 0 0 1-.3 4.9z" stroke-width="1.2" stroke-linejoin="round"/>' +
+  '<circle cx="12.2" cy="11.6" r="3.4" class="ov" stroke="none"/>{MARK}</svg>';
+const F_DOC =
+  '<svg class="f-ic f-doc" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.1" aria-hidden="true">' +
+  '<path d="M4 1.8h5.2L12 4.6V14.2H4z" stroke-linejoin="round"/><path d="M9.2 1.8v2.8H12" stroke-linejoin="round"/></svg>';
+const F_MARKS = {
+  synced: '<path d="M10.9 11.6l1.3 1.3 2.2-2.3" class="ov-stroke" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
+  syncing: '<path d="M12.2 10.3v2.6M11 11.2l1.2-1.2 1.2 1.2" class="ov-stroke" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/>',
+  conflict: '<path d="M12.2 10.4v1.6" class="ov-stroke" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/><circle cx="12.2" cy="13.1" r="0.5" fill="currentColor" stroke="none"/>',
+  placeholder: '<path d="M11 11.6h2.4" class="ov-stroke" stroke="currentColor" stroke-width="1.4" fill="none" stroke-linecap="round"/>',
+};
+
+function fileIcon(st) {
+  return F_CLOUD.replace("{MARK}", F_MARKS[st] || F_MARKS.syncing);
+}
+
+/* shimmer skeleton rows — widths vary so it reads as a list, not a ladder */
+function renderFilesSkeleton() {
+  const body = $("files-body");
+  body.innerHTML = "";
+  for (let i = 0; i < 6; i++) {
+    const tr = document.createElement("tr");
+    tr.className = "f-skel";
+    tr.innerHTML =
+      `<td><span class="skel" style="width:${46 + ((i * 29) % 38)}%; display:inline-block"></span></td>` +
+      `<td class="num"><span class="skel" style="width:34px; display:inline-block"></span></td>` +
+      `<td class="sans"><span class="skel" style="width:70px; display:inline-block"></span></td>` +
+      `<td class="sans"><span class="skel" style="width:${72 + ((i * 17) % 30)}px; display:inline-block"></span></td>`;
+    body.appendChild(tr);
+  }
+}
+
+/* the 76px fallback mark — the stack, dimmed, plus one plain sentence */
+function renderFilesError() {
+  const body = $("files-body");
+  body.innerHTML =
+    `<tr><td colspan="4" class="f-error">` +
+    `<svg class="f-error-mark" width="76" height="76" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">` +
+    `<rect x="9" y="3.5" width="6" height="4" rx="1.2" fill="currentColor" opacity="0.35"/>` +
+    `<rect x="6.5" y="9" width="11" height="4" rx="1.2" fill="currentColor" opacity="0.5"/>` +
+    `<rect x="3.5" y="14.5" width="17" height="4" rx="1.2" fill="currentColor" opacity="0.65"/></svg>` +
+    `<p class="f-error-note">${esc(t("files.error"))}</p></td></tr>`;
+}
 
 function renderFiles(r) {
   const body = $("files-body");
   const sum = $("files-summary");
   const fill = $("files-meter-fill");
+  if (!body) return;
   body.innerHTML = "";
   if (!r || r.ok !== true || !r.files || r.files.length === 0) {
     body.innerHTML = `<tr><td colspan="4" class="empty">${esc(t("empty.files"))}</td></tr>`;
@@ -571,15 +636,14 @@ function renderFiles(r) {
     const tr = document.createElement("tr");
     const st = f.state || "syncing";
     const tagCls = st === "conflict" ? "bad" : st === "synced" ? "ok" : "info";
-    const badges =
-      `<span class="tag ${tagCls}">${esc(t("files." + st))}</span>` +
-      (f.pinned ? ` <span class="tag pin">${esc(t("files.pinned"))}</span>` : "") +
-      (f.placeholder ? ` <span class="tag info">${esc(t("files.placeholder"))}</span>` : "");
+    const extras =
+      (f.pinned ? `<span class="tag pin">${esc(t("files.pinned"))}</span>` : "") +
+      (f.placeholder ? `<span class="tag info">${esc(t("files.placeholder"))}</span>` : "");
     tr.innerHTML =
-      `<td>${esc(f.path)}</td>` +
+      `<td class="sans"><span class="f-name">${F_DOC}${esc(f.path)}</span></td>` +
       `<td class="num">${esc(fmtBytes(f.size))}</td>` +
-      `<td class="sans"><span class="tag ${tagCls}">${esc(t("files." + st))}</span></td>` +
-      `<td class="sans">${badges}</td>`;
+      `<td class="sans"><span class="f-state ${tagCls}">${fileIcon(st)}<span class="tag ${tagCls}">${esc(t("files." + st))}</span></span></td>` +
+      `<td class="sans">${extras || '<span class="dim">—</span>'}</td>`;
     body.appendChild(tr);
   }
 }
@@ -588,11 +652,20 @@ async function refreshFiles() {
   const project = selectedProject("files-project");
   if (!project) { LAST_FILES = null; renderFiles(null); return; }
   const filter = $("files-filter").value.trim();
+  const key = `${project}::${filter}`;
+  if (FILES_KEY !== key) {
+    FILES_KEY = key;
+    renderFilesSkeleton();   // new surface, no data yet — shimmer, don't lie
+  }
+  const q = filter ? `&q=${encodeURIComponent(filter)}` : "";
   try {
-    const q = filter ? `&q=${encodeURIComponent(filter)}` : "";
     LAST_FILES = await getJSON(`/api/v1/files?project=${encodeURIComponent(project)}${q}`);
     renderFiles(LAST_FILES);
-  } catch { /* files stay at their last honest value */ }
+  } catch {
+    // no data yet -> the honest fallback mark; data exists -> keep the last
+    // truthful rows rather than blanking to an error the user can't act on
+    if (!LAST_FILES || LAST_FILES.ok !== true) renderFilesError();
+  }
 }
 
 /* ---------- team (audit #5: members, my role, invite, audit ledger) ---------- */
@@ -981,6 +1054,7 @@ function toggleHelp(force) {
   ov.hidden = force !== undefined ? !force : !ov.hidden;
 }
 $("help-close").addEventListener("click", () => toggleHelp(false));
+$("foot-help").addEventListener("click", () => toggleHelp(true));
 
 /* ---------- keyboard: / search, ? help, g-then-x navigation ---------- */
 
@@ -1060,6 +1134,7 @@ async function refreshAll() {
 }
 
 let LAST_FILES = null;
+let FILES_KEY = null;   // project+filter the current rows describe
 let LAST_REVIEW = [];
 let LAST_LOCKS = [];
 let LAST_ACTIVITY = [];
