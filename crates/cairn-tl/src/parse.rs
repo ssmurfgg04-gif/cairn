@@ -9,6 +9,18 @@
 //! ADR §1.2): every parsed element and marker gets `metadata.cairn.uuid`, so
 //! side A and side B see stable identity even for hand-authored files that
 //! never went through `tl-capture`.
+//!
+//! Round 15 (ADR-0019 §3) — PRE-INGESTION SCHEMA LENIENCY: third-party
+//! editors and generators emit structurally-variant OTIO (a bare `Track.1`
+//! root instead of a `Timeline`, `Timeline.tracks` as an ARRAY of tracks or
+//! a single Track object instead of the `Stack.1`, `children` as a single
+//! object instead of an array, roots with no `OTIO_SCHEMA` tag at all).
+//! [`normalize_otio_value`] coerces those shapes into the canonical
+//! hierarchy BEFORE the strict parse — capture stops crashing on real-world
+//! files. Coercion is STRUCTURAL ONLY: unknown schema-version tags are still
+//! refused with the exact error (a wrong version rewrite could silently
+//! change semantics — honesty beats a bad guess), and unknown fields stay
+//! verbatim in `extra` as always.
 
 use std::collections::BTreeMap;
 
@@ -44,10 +56,146 @@ impl std::fmt::Display for ParseError {
 
 impl std::error::Error for ParseError {}
 
-/// Parse an OTIO JSON document (Timeline.1, or a bare Stack.1 wrapped as one).
+/// Parse an OTIO JSON document (Timeline.1, or a bare Stack.1 wrapped as one),
+/// after pre-ingestion schema leniency ([`normalize_otio_value`]).
 pub fn parse_otio(input: &str) -> Result<Timeline, ParseError> {
     let v: Value = serde_json::from_str(input).map_err(|e| ParseError::BadJson(e.to_string()))?;
+    let v = normalize_otio_value(&v);
     parse_timeline_value(&v)
+}
+
+/// Pre-ingestion schema leniency (ADR-0019 §3): coerce structurally-variant
+/// OTIO into the canonical `Timeline{tracks: Stack{children: [...]}}`
+/// hierarchy. Pure JSON→JSON; idempotent (canonical input passes through
+/// unchanged). Refuses nothing — the STRICT parse after it still rejects
+/// genuinely broken documents.
+///
+/// Coercions (each seen in third-party editor output):
+/// 1. root without `OTIO_SCHEMA`: object with `tracks` → Timeline;
+///    object with `children` → Stack (wrapped as the timeline's tracks);
+///    otherwise left alone (the strict parse errors honestly).
+/// 2. bare `Track.1` / `Sequence.1` root → wrapped as
+///    `Timeline{tracks: Stack{children: [root]}}`.
+/// 3. `Timeline.tracks` is an ARRAY → wrapped in a synthetic Stack.
+/// 4. `Timeline.tracks` is a single Track-ish OBJECT (not a Stack) →
+///    wrapped as `Stack{children: [tracks]}`.
+/// 5. a container's `children` is a single OBJECT → `[children]`.
+pub fn normalize_otio_value(v: &Value) -> Value {
+    let Some(obj) = v.as_object() else {
+        return v.clone();
+    };
+    let tag = obj.get("OTIO_SCHEMA").and_then(Value::as_str).unwrap_or("");
+    match tag {
+        // a Timeline whose `tracks` is malformed (array / bare track)
+        "Timeline.1" | "" if obj.contains_key("tracks") => {
+            let mut out = obj.clone();
+            let tracks = out.get("tracks").cloned().unwrap_or(Value::Null);
+            out.insert("tracks".into(), normalize_tracks(tracks));
+            if tag.is_empty() {
+                out.insert("OTIO_SCHEMA".into(), Value::String("Timeline.1".into()));
+            }
+            Value::Object(out)
+        }
+        // bare track root → wrap
+        "Track.1" | "Sequence.1" => wrap_as_timeline(v.clone()),
+        // bare stack root: normalize its children only (the strict parse
+        // already wraps Stack roots as timelines)
+        "Stack.1" => normalize_children(v.clone()),
+        // no tag and no tracks: maybe a bare stack without a schema tag
+        "" if obj.contains_key("children") => {
+            let mut out = obj.clone();
+            out.insert("OTIO_SCHEMA".into(), Value::String("Stack.1".into()));
+            normalize_children(Value::Object(out))
+        }
+        // anything else (Clip roots, unknown schemas, arrays): unchanged —
+        // the strict parse accepts or refuses it on its own merits
+        _ => v.clone(),
+    }
+}
+
+fn wrap_as_timeline(track: Value) -> Value {
+    let mut stack = serde_json::Map::new();
+    stack.insert("OTIO_SCHEMA".into(), Value::String("Stack.1".into()));
+    stack.insert("children".into(), Value::Array(vec![track]));
+    let mut tl = serde_json::Map::new();
+    tl.insert("OTIO_SCHEMA".into(), Value::String("Timeline.1".into()));
+    tl.insert("tracks".into(), Value::Object(stack));
+    Value::Object(tl)
+}
+
+/// `Timeline.tracks` must be the Stack; an array or a single track object
+/// gets wrapped in a synthetic Stack.
+fn normalize_tracks(tracks: Value) -> Value {
+    match &tracks {
+        Value::Array(_) => {
+            let mut stack = serde_json::Map::new();
+            stack.insert("OTIO_SCHEMA".into(), Value::String("Stack.1".into()));
+            stack.insert("children".into(), tracks);
+            Value::Object(stack)
+        }
+        Value::Object(o) => {
+            let tag = o.get("OTIO_SCHEMA").and_then(Value::as_str).unwrap_or("");
+            match tag {
+                "Stack.1" => normalize_children(tracks),
+                // an untagged object WITH children is an untagged Stack
+                "" if o.contains_key("children") => {
+                    let mut out = o.clone();
+                    out.insert("OTIO_SCHEMA".into(), Value::String("Stack.1".into()));
+                    normalize_children(Value::Object(out))
+                }
+                // a single Track → stack it
+                "Track.1" | "Sequence.1" | "" => wrap_as_timeline_children(tracks),
+                _ => tracks,
+            }
+        }
+        _ => tracks,
+    }
+}
+
+fn wrap_as_timeline_children(track: Value) -> Value {
+    let mut stack = serde_json::Map::new();
+    stack.insert("OTIO_SCHEMA".into(), Value::String("Stack.1".into()));
+    stack.insert("children".into(), Value::Array(vec![track]));
+    Value::Object(stack)
+}
+
+/// A container whose `children` is a single object → one-element array.
+fn normalize_children(v: Value) -> Value {
+    let Some(obj) = v.as_object() else {
+        return v;
+    };
+    let Some(children) = obj.get("children") else {
+        return v;
+    };
+    match children {
+        Value::Object(_) => {
+            let mut out = obj.clone();
+            out.insert("children".into(), Value::Array(vec![children.clone()]));
+            Value::Object(out)
+        }
+        Value::Array(items) => {
+            // recurse one level: array children that are themselves containers
+            // with single-object children
+            let fixed: Vec<Value> = items
+                .iter()
+                .map(|c| match c {
+                    Value::Object(o)
+                        if o.contains_key("children")
+                            && o.get("children").is_some_and(Value::is_object) =>
+                    {
+                        normalize_children(c.clone())
+                    }
+                    _ => c.clone(),
+                })
+                .collect();
+            Value::Object({
+                let mut out = obj.clone();
+                out.insert("children".into(), Value::Array(fixed));
+                out
+            })
+        }
+        _ => v,
+    }
 }
 
 fn parse_timeline_value(v: &Value) -> Result<Timeline, ParseError> {
@@ -711,5 +859,117 @@ mod tests {
         let mut tl2 = tl.clone();
         stamp_all(&mut tl2);
         assert!(tl2.walk().iter().all(|e| e.cairn_uuid().is_some()));
+    }
+}
+
+/// Round-15 leniency tests (ADR-0019 §3): structurally-variant OTIO parses;
+/// garbage still refuses; canonical documents pass through UNCHANGED
+/// (idempotence — the corpus gate depends on it).
+#[cfg(test)]
+mod leniency_tests {
+    use super::*;
+
+    fn clip(name: &str) -> Value {
+        serde_json::json!({
+            "OTIO_SCHEMA": "Clip.2",
+            "name": name,
+            "media_references": {},
+            "metadata": {}, "effects": [], "markers": []
+        })
+    }
+    fn track(name: &str, children: Value) -> Value {
+        let mut t = serde_json::json!({
+            "OTIO_SCHEMA": "Track.1", "kind": "Video", "name": name,
+            "metadata": {}, "effects": [], "markers": []
+        });
+        t.as_object_mut()
+            .unwrap()
+            .insert("children".into(), children);
+        t
+    }
+
+    #[test]
+    fn bare_track_root_parses() {
+        let doc = track("V1", serde_json::json!([clip("A"), clip("B")]));
+        let tl = parse_otio(&doc.to_string()).unwrap();
+        assert_eq!(tl.tracks.kind, Kind::Stack);
+        assert_eq!(tl.tracks.children.len(), 1);
+        assert_eq!(tl.tracks.children[0].name, "V1");
+        assert_eq!(tl.tracks.children[0].children.len(), 2);
+        assert_eq!(tl.tracks.children[0].children[1].name, "B");
+    }
+
+    #[test]
+    fn timeline_tracks_as_array_parses() {
+        let doc = serde_json::json!({
+            "OTIO_SCHEMA": "Timeline.1", "name": "arr",
+            "tracks": [track("V1", serde_json::json!([clip("A")])),
+                        track("A1", serde_json::json!([clip("B")]))]
+        });
+        let tl = parse_otio(&doc.to_string()).unwrap();
+        assert_eq!(tl.tracks.children.len(), 2, "both array tracks land");
+        assert_eq!(tl.tracks.children[0].name, "V1");
+        assert_eq!(tl.tracks.children[1].name, "A1");
+    }
+
+    #[test]
+    fn timeline_tracks_as_single_track_parses() {
+        let doc = serde_json::json!({
+            "OTIO_SCHEMA": "Timeline.1", "name": "one",
+            "tracks": track("V2", serde_json::json!([clip("X")]))
+        });
+        let tl = parse_otio(&doc.to_string()).unwrap();
+        assert_eq!(tl.tracks.kind, Kind::Stack);
+        assert_eq!(tl.tracks.children.len(), 1);
+        assert_eq!(tl.tracks.children[0].name, "V2");
+    }
+
+    #[test]
+    fn missing_schema_tag_sniffed() {
+        // tracks present, no OTIO_SCHEMA anywhere
+        let doc = serde_json::json!({
+            "name": "sneaky",
+            "tracks": {
+                "children": [ track("V1", serde_json::json!([clip("A")])) ]
+            }
+        });
+        let tl = parse_otio(&doc.to_string()).unwrap();
+        assert_eq!(tl.tracks.children[0].children[0].name, "A");
+        // children as a single OBJECT also coerces
+        let doc2 = serde_json::json!({
+            "OTIO_SCHEMA": "Timeline.1",
+            "tracks": {
+                "OTIO_SCHEMA": "Stack.1",
+                "children": track("V9", serde_json::json!([clip("Z")]))
+            }
+        });
+        let tl2 = parse_otio(&doc2.to_string()).unwrap();
+        assert_eq!(tl2.tracks.children.len(), 1);
+        assert_eq!(tl2.tracks.children[0].name, "V9");
+    }
+
+    #[test]
+    fn garbage_still_refuses() {
+        // an array root is not an OTIO document
+        assert!(parse_otio("[1,2,3]").is_err());
+        // an unknown schema version is REFUSED (no version rewriting)
+        let doc = serde_json::json!({"OTIO_SCHEMA": "Timeline.2", "tracks": {}});
+        assert!(parse_otio(&doc.to_string()).is_err());
+        // a lone clip root (no hierarchy) still fails honestly
+        assert!(parse_otio(&clip("orphan").to_string()).is_err());
+    }
+
+    #[test]
+    fn canonical_documents_pass_through_unchanged() {
+        // idempotence: the normalizer must not touch already-canonical docs
+        let canonical = serde_json::json!({
+            "OTIO_SCHEMA": "Timeline.1", "name": "canon",
+            "tracks": {
+                "OTIO_SCHEMA": "Stack.1", "name": "tracks",
+                "children": [track("V1", serde_json::json!([clip("A")]))]
+            }
+        });
+        let out = normalize_otio_value(&canonical);
+        assert_eq!(out, canonical, "canonical input must be a fixed point");
     }
 }
