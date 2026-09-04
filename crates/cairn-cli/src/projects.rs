@@ -327,13 +327,15 @@ pub async fn attach(
         // already attached: just refresh the workspace binding + identity
         rt.stop();
         let root2 = root_path.to_path_buf();
-        let pid2 = pid.clone();
+        let ns2 = cairn_sync::workspace::local_ns(&pid, &root_id);
         let id2 = identity.clone();
         let url2 = server_url.clone();
         let store2 = store.clone();
         let ca2 = ca_pem.clone();
+        let _ = cairn_shell_ext::core::RootInfo::write(root_path, &pid);
         spawn_loop(Arc::clone(&rt), store, identity, server_url, ca_pem);
-        connect_cfapi(&store2, &root2, &pid2, &id2, &url2, ca2.as_deref()).await;
+        connect_cfapi(&store2, &root2, &ns2, &id2, &url2, ca2.as_deref()).await;
+        spawn_cfapi_watchdog(rt, store2, root2, ns2, id2, url2, ca2);
         return Ok(pid);
     }
 
@@ -355,13 +357,17 @@ pub async fn attach(
     });
     RUNTIMES.write().await.insert(ns.clone(), Arc::clone(&rt));
     let root2 = root_path.to_path_buf();
-    let pid2 = pid.clone();
+    let ns2 = ns.clone();
     let id2 = identity.clone();
     let url2 = server_url.clone();
     let store2 = store.clone();
     let ca2 = ca_pem.clone();
+    // shell-ext root marker (ADR-0019 §5): its presence marks a cairn root
+    // for the Explorer extension; the overlay state file lands per pass.
+    let _ = cairn_shell_ext::core::RootInfo::write(root_path, &pid);
     spawn_loop(Arc::clone(&rt), store, identity, server_url, ca_pem);
-    connect_cfapi(&store2, &root2, &pid2, &id2, &url2, ca2.as_deref()).await;
+    connect_cfapi(&store2, &root2, &ns2, &id2, &url2, ca2.as_deref()).await;
+    spawn_cfapi_watchdog(Arc::clone(&rt), store2, root2, ns2, id2, url2, ca2);
     Ok(pid)
 }
 
@@ -467,6 +473,68 @@ async fn connect_cfapi(
             tracing::warn!(project = %pid, "CfAPI attach failed: {e}");
         }
     }
+}
+
+/// CfAPI lifecycle watchdog (ADR-0019 §1): Explorer shows "cloud file provider
+/// not running" whenever the sync-root connection drops mid-session (filter
+/// reload, transient CfConnectSyncRoot failure). The supervisor re-attaches
+/// with the same idempotent path the boot attach uses — jittered interval,
+/// aborts with the runtime. Windows-only; other platforms compile nothing.
+#[cfg(windows)]
+fn spawn_cfapi_watchdog(
+    rt: Arc<ProjectRuntime>,
+    store: Store,
+    root: PathBuf,
+    ns: String,
+    identity: Identity,
+    server_url: String,
+    ca_pem: Option<Vec<u8>>,
+) {
+    use std::sync::atomic::Ordering;
+    let mut shutdown = rt.abort.subscribe();
+    tokio::spawn(async move {
+        let interval: u64 = std::env::var("CAIRN_CFAPI_WATCHDOG_SECS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(30);
+        loop {
+            let jitter = std::time::Duration::from_secs(
+                interval + (rt.sweep_counter.load(Ordering::Relaxed) as u64 % 5),
+            );
+            tokio::select! {
+                _ = shutdown.changed() => return,
+                () = tokio::time::sleep(jitter) => {}
+            }
+            let alive = CFAPI_CONNS
+                .lock()
+                .map(|m| m.contains_key(&ns))
+                .unwrap_or(false);
+            if !alive {
+                tracing::warn!(ns = %ns, "CfAPI connection lost; watchdog re-attaching");
+                connect_cfapi(
+                    &store,
+                    &root,
+                    &ns,
+                    &identity,
+                    &server_url,
+                    ca_pem.as_deref(),
+                )
+                .await;
+            }
+        }
+    });
+}
+
+#[cfg(not(windows))]
+fn spawn_cfapi_watchdog(
+    _rt: Arc<ProjectRuntime>,
+    _store: Store,
+    _root: PathBuf,
+    _ns: String,
+    _identity: Identity,
+    _server_url: String,
+    _ca_pem: Option<Vec<u8>>,
+) {
 }
 
 #[cfg(not(windows))]
@@ -655,6 +723,36 @@ async fn lease_keepalive(store: &Store, plane: &dyn Plane, tenant_id: &str, proj
             _ => {} // legacy rows (no pid): expire via TTL, as before
         }
     }
+}
+
+/// Write the per-root overlay state file for the Explorer extension
+/// (ADR-0019 §5). Best-effort by design: a failed write costs icons, never
+/// sync. Bounded to the states that matter for icons (conflicts first).
+fn write_overlay_snapshot(store: &Store, ns: &str, workspace: &std::path::Path, generation: u64) {
+    use cairn_shell_ext::core::{write_state_file, OverlayState};
+    let rows = store.list_files(ns);
+    let mut entries: Vec<(String, OverlayState)> = Vec::new();
+    for r in &rows {
+        if r.mode != "file" {
+            continue;
+        }
+        let state = match cairn_store::state::LocalState::parse(&r.local_state) {
+            Some(LocalState::Conflict) => OverlayState::Conflict,
+            Some(LocalState::Placeholder) => OverlayState::Fetching,
+            Some(LocalState::Synced) | Some(LocalState::Clean) => {
+                // pinned outranks plain synced for icon purposes
+                if r.local_state == LocalState::Pinned.as_str() {
+                    OverlayState::Pinned
+                } else {
+                    OverlayState::Synced
+                }
+            }
+            Some(LocalState::Pinned) => OverlayState::Pinned,
+            _ => continue, // dirty/outbox rows carry no icon yet
+        };
+        entries.push((r.path.clone(), state));
+    }
+    let _ = write_state_file(workspace, &entries, generation, 4096);
 }
 
 async fn run_loop(
@@ -905,6 +1003,10 @@ async fn run_loop(
             &rt.local_ns, // rows + workspace are the root's local namespace
         )
         .await;
+        // shell-ext overlay state (ADR-0019 §5): one best-effort write per
+        // pass — the Explorer extension reads this file, never sqlite.
+        let gen = rt.files_synced.load(std::sync::atomic::Ordering::Relaxed);
+        write_overlay_snapshot(store, &rt.local_ns, &rt.workspace, gen);
         match (pass, hydr) {
             (Ok(p), Ok(h)) => {
                 if h.materialized > 0 {
