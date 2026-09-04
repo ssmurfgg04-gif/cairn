@@ -5,10 +5,37 @@
 //! contract. Run: `cargo kani --harness <name> -p cairn-tl`; CI runs these
 //! as kani.yml shards.
 //!
-//! Tractability note (inherited from cairn-core's proof round): symbolic
-//! Strings through Rust's allocator model do not converge — the bounded op
-//! model here uses FIXED identity keys and exact-rational deltas with
-//! symbolic discriminants, which CBMC handles without allocation blowup.
+//! Round-13/14 hardening (the STATUS.md named follow-up, now landed), two
+//! moves that took the pair space from >90-min-per-harness to runner-friendly:
+//!
+//! 1. STUBS: the original model built its fixed strings/values with real
+//!    `String::from`/`serde_json::json!` construction, and CBMC spent >90 min
+//!    exploring allocator/serde internals across the 121 symbolic op pairs —
+//!    longer than any shared-runner preemption window (killed at 50–95 min
+//!    mid-exploration, never a refutation, never completed; evidence in
+//!    STATUS.md). Construction in `bounded_op` is now STUBBED
+//!    (`stub_string`/`stub_value` below): allocation-free, identical op
+//!    SHAPES, same symbolic discriminant surface.
+//! 2. SHARDING: each proof family is split into 11 per-kind shards — the
+//!    OURS kind is a CONCRETE constant per shard (the 11 harness entries
+//!    `proof_classifier_shard_kind_0..10`, `proof_symmetry_shard_kind_0..10`),
+//!    the THEIRS kind stays symbolic. The union of a family's 11 shards is
+//!    EXACTLY the original 121-pair space (every (ours, theirs) pair appears
+//!    in shard `ours`), so sharding loses no coverage — each CBMC job
+//!    explores 11 pairs instead of 121, and kani.yml gives every shard its
+//!    own GitHub runner.
+//!
+//! Stub soundness (why the proof statements are unchanged): within the
+//! bounded model the classifier never branches on string or JSON CONTENT —
+//! only on op shape (kinds, sides, base coords, tracks, indexes, anchors,
+//! deltas) and on EQUALITY between fields the model constructs identically
+//! on both sides (key == key, marker name == name, attr value == value).
+//! Empty-on-both-sides preserves every equality outcome the fixed-content
+//! model had ("uuid:kani" == "uuid:kani" and "" == "" are both `true`), so
+//! totality, panic-freedom, class-range, verdict-closure, and interaction
+//! symmetry all keep their original meaning. The real construction paths
+//! (identity keys, serde values, markers) stay pinned by the 89 cairn-tl
+//! tests + the 18-file real-timeline corpus gate.
 
 // Compiled only by `cargo kani` (the cairn-core cfg(kani) pattern) — normal
 // builds see none of these imports.
@@ -23,12 +50,55 @@ use crate::ops::{AttrKind, Op, Side, Slot, TrackLoc};
 #[cfg(kani)]
 use crate::rational::Rational;
 
-/// Build a bounded op from a symbolic discriminant (0..=9) + symbolic
-/// parameters. Every op kind is reachable; element content is FIXED (no
-/// symbolic strings).
+/// CBMC-cheap string stub: allocation-free (`String::new` never calls the
+/// allocator, no memcpy, no RawVec internals). See the module doc for why
+/// content may be empty without weakening the proof statements.
+#[cfg(kani)]
+fn stub_string() -> String {
+    String::new()
+}
+
+/// CBMC-cheap attribute-value stub: keeps the `Value::String` variant the
+/// real model uses (equality outcomes preserved — both sides construct it
+/// identically) without the `serde_json::json!` construction internals.
+#[cfg(kani)]
+fn stub_value() -> serde_json::Value {
+    serde_json::Value::String(stub_string())
+}
+
+/// CBMC-cheap marker stub: fixed shape, stub strings, empty maps — both
+/// sides build the identical marker, so the MarkerAdd-vs-MarkerAdd
+/// equality check keeps its original outcome.
+#[cfg(kani)]
+fn stub_marker() -> Marker {
+    Marker {
+        schema: stub_string(),
+        name: stub_string(),
+        color: stub_string(),
+        comment: stub_string(),
+        marked_range: TimeRange {
+            start: TimeVal {
+                value: Rational::ZERO,
+                rate: Rational::new(1, 1).unwrap(),
+            },
+            duration: TimeVal {
+                value: Rational::ZERO,
+                rate: Rational::new(1, 1).unwrap(),
+            },
+        },
+        metadata: JsonMap::new(),
+        extra: JsonMap::new(),
+    }
+}
+
+/// Build a bounded op from a symbolic discriminant (0..=10) + symbolic
+/// parameters. Every op kind is reachable; element content is STUBBED
+/// (empty strings/values — see the module doc); the symbolic surface is
+/// otherwise unchanged from the round-12 model: kinds, sides, `a`/`b`
+/// integers, and the exact-rational trim deltas.
 #[cfg(kani)]
 fn bounded_op(kind: u8, side: Side, a: i64, b: i64) -> Op {
-    let key = ElementKey("uuid:kani".into());
+    let key = ElementKey(stub_string());
     let base = (0usize, 0usize);
     let r = |n: i128| Rational::new(n, 24).unwrap_or(Rational::ZERO);
     match kind {
@@ -55,40 +125,23 @@ fn bounded_op(kind: u8, side: Side, a: i64, b: i64) -> Op {
             key,
             base,
             attr: AttrKind::Name,
-            value: serde_json::json!("x"),
+            value: stub_value(),
         },
         4 => Op::MarkerAdd {
             side,
             key,
             base,
-            marker: Marker {
-                schema: "Marker.2".into(),
-                name: "m".into(),
-                color: "RED".into(),
-                comment: String::new(),
-                marked_range: TimeRange {
-                    start: TimeVal {
-                        value: Rational::ZERO,
-                        rate: Rational::new(1, 1).unwrap(),
-                    },
-                    duration: TimeVal {
-                        value: Rational::ZERO,
-                        rate: Rational::new(1, 1).unwrap(),
-                    },
-                },
-                metadata: JsonMap::new(),
-                extra: JsonMap::new(),
-            },
+            marker: stub_marker(),
         },
         5 => Op::MarkerRemove {
             side,
             key,
             base,
-            marker_key: "m".into(),
+            marker_key: stub_string(),
         },
         6 => Op::Insert {
             side,
-            element: Element::leaf(Kind::Clip, "kani"),
+            element: Element::leaf(Kind::Clip, stub_string()),
             to: TrackLoc::Base(0),
             slot: Slot::Before {
                 track: 0,
@@ -98,7 +151,7 @@ fn bounded_op(kind: u8, side: Side, a: i64, b: i64) -> Op {
         7 => Op::TrackAdd {
             side,
             ordinal: a.unsigned_abs() as usize,
-            track: Element::leaf(Kind::Track(TrackKind::Video), "T"),
+            track: Element::leaf(Kind::Track(TrackKind::Video), stub_string()),
             slot: Slot::EndOf { track: 0 },
         },
         8 => Op::TrackRemove {
@@ -109,7 +162,7 @@ fn bounded_op(kind: u8, side: Side, a: i64, b: i64) -> Op {
             side,
             track: a.unsigned_abs() as usize,
             attr: AttrKind::Name,
-            value: serde_json::json!("x"),
+            value: stub_value(),
         },
         _ => Op::TrackReorder {
             side,
@@ -118,15 +171,16 @@ fn bounded_op(kind: u8, side: Side, a: i64, b: i64) -> Op {
     }
 }
 
-/// Totality + panic-freedom: EVERY (ours-kind × theirs-kind) pair over the
-/// bounded op model classifies to a verdict with a legal class code, and
-/// nothing panics. 11×11 = 121 symbolic pairs, allocation-free.
+/// Totality + panic-freedom, SHARDED: for a concrete OURS kind, EVERY
+/// theirs-kind (0..=10) classifies to a verdict with a legal class code,
+/// and nothing panics. The 11 `proof_classifier_shard_kind_*` harnesses
+/// below pass 0..=10 as `ours_kind`; their union is the full 121-pair space
+/// of the original single harness (identical assertions, identical symbolic
+/// surface — only the ours-kind discriminant moved from symbolic to
+/// per-shard concrete).
 #[cfg(kani)]
-#[kani::proof]
-fn proof_classifier_total_and_panic_free() {
-    let ours_kind: u8 = kani::any();
+fn classifier_body(ours_kind: u8) {
     let theirs_kind: u8 = kani::any();
-    kani::assume(ours_kind < 11);
     kani::assume(theirs_kind < 11);
     let a: i64 = kani::any();
     let b: i64 = kani::any();
@@ -153,18 +207,152 @@ fn proof_classifier_total_and_panic_free() {
     }
 }
 
-/// Interaction symmetry: interacts(a, b) == interacts(b, a) over the bounded
-/// model — an asymmetric interaction test would silently drop conflicts.
+// 11 shards: ours-kind concrete 0..=10 (Remove, Move, Trim, Attr, MarkerAdd,
+// MarkerRemove, Insert, TrackAdd, TrackRemove, TrackAttr, TrackReorder).
+// One harness per runner — see the module doc and kani.yml.
 #[cfg(kani)]
 #[kani::proof]
-fn proof_interaction_symmetry() {
-    let ka: u8 = kani::any();
+fn proof_classifier_shard_kind_0() {
+    classifier_body(0);
+}
+
+#[cfg(kani)]
+#[kani::proof]
+fn proof_classifier_shard_kind_1() {
+    classifier_body(1);
+}
+
+#[cfg(kani)]
+#[kani::proof]
+fn proof_classifier_shard_kind_2() {
+    classifier_body(2);
+}
+
+#[cfg(kani)]
+#[kani::proof]
+fn proof_classifier_shard_kind_3() {
+    classifier_body(3);
+}
+
+#[cfg(kani)]
+#[kani::proof]
+fn proof_classifier_shard_kind_4() {
+    classifier_body(4);
+}
+
+#[cfg(kani)]
+#[kani::proof]
+fn proof_classifier_shard_kind_5() {
+    classifier_body(5);
+}
+
+#[cfg(kani)]
+#[kani::proof]
+fn proof_classifier_shard_kind_6() {
+    classifier_body(6);
+}
+
+#[cfg(kani)]
+#[kani::proof]
+fn proof_classifier_shard_kind_7() {
+    classifier_body(7);
+}
+
+#[cfg(kani)]
+#[kani::proof]
+fn proof_classifier_shard_kind_8() {
+    classifier_body(8);
+}
+
+#[cfg(kani)]
+#[kani::proof]
+fn proof_classifier_shard_kind_9() {
+    classifier_body(9);
+}
+
+#[cfg(kani)]
+#[kani::proof]
+fn proof_classifier_shard_kind_10() {
+    classifier_body(10);
+}
+
+/// Interaction symmetry, SHARDED: for a concrete OURS kind,
+/// interacts(a, b) == interacts(b, a) for every theirs-kind — an asymmetric
+/// interaction test would silently drop conflicts. Union of the 11 shards
+/// = the full 121-pair space of the original single harness.
+#[cfg(kani)]
+fn symmetry_body(ka: u8) {
     let kb: u8 = kani::any();
-    kani::assume(ka < 11);
     kani::assume(kb < 11);
     let a: i64 = kani::any();
     let b: i64 = kani::any();
     let ours = bounded_op(ka, Side::Ours, a, b);
     let theirs = bounded_op(kb, Side::Theirs, a, b);
     assert_eq!(interacts(&ours, &theirs), interacts(&theirs, &ours));
+}
+
+#[cfg(kani)]
+#[kani::proof]
+fn proof_symmetry_shard_kind_0() {
+    symmetry_body(0);
+}
+
+#[cfg(kani)]
+#[kani::proof]
+fn proof_symmetry_shard_kind_1() {
+    symmetry_body(1);
+}
+
+#[cfg(kani)]
+#[kani::proof]
+fn proof_symmetry_shard_kind_2() {
+    symmetry_body(2);
+}
+
+#[cfg(kani)]
+#[kani::proof]
+fn proof_symmetry_shard_kind_3() {
+    symmetry_body(3);
+}
+
+#[cfg(kani)]
+#[kani::proof]
+fn proof_symmetry_shard_kind_4() {
+    symmetry_body(4);
+}
+
+#[cfg(kani)]
+#[kani::proof]
+fn proof_symmetry_shard_kind_5() {
+    symmetry_body(5);
+}
+
+#[cfg(kani)]
+#[kani::proof]
+fn proof_symmetry_shard_kind_6() {
+    symmetry_body(6);
+}
+
+#[cfg(kani)]
+#[kani::proof]
+fn proof_symmetry_shard_kind_7() {
+    symmetry_body(7);
+}
+
+#[cfg(kani)]
+#[kani::proof]
+fn proof_symmetry_shard_kind_8() {
+    symmetry_body(8);
+}
+
+#[cfg(kani)]
+#[kani::proof]
+fn proof_symmetry_shard_kind_9() {
+    symmetry_body(9);
+}
+
+#[cfg(kani)]
+#[kani::proof]
+fn proof_symmetry_shard_kind_10() {
+    symmetry_body(10);
 }
