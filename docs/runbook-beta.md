@@ -4,6 +4,22 @@ Prerequisites read: SPEC.md, docs/ctl-api.md, docs/runbooks/*.
 
 ## Per-studio onboarding (CLI end-to-end)
 
+0. **(Optional but recommended) swarm transport.** On one reachable machine
+   (the bay server or any always-on box):
+   ```
+   cairn signal                       # prints a fresh join code — share it
+                                      # ONLY with the editors who may join
+   ```
+   Then each editor's daemon joins with the code the host shared:
+   ```
+   cairn daemon --swarm-signal <host>:17780 --swarm-join-code <code>
+   ```
+   Effect: block hydration goes peer-first (LAN-speed blocks before cloud
+   egress — the big media caches warm from the bay, not the bucket). A
+   daemon started WITHOUT a code cannot join that swarm: wrong codes are
+   dropped silently, and no session ever forms (ADR-0017 §7). Rotating the
+   code (restart `cairn signal --join-code <new>`) locks out every old
+   holder. Smoke tests use `--dev-key`/`--swarm-dev-key` on both sides.
 1. **Provision.** Create the tenant + admin:
    `cairn-server --data-dir /srv/cairn --grpc 0.0.0.0:7443 --objects 0.0.0.0:7444 --dev-insecure`
    (dev bootstrap; production disables `--dev-insecure` and issues codes via an admin

@@ -19,6 +19,26 @@ Legend: ✅ implemented + tests green · 🟨 implemented, platform-gated / hard
 | M7 | fuzz targets; flags flip w/o restart; audit log; SLO metrics; runbooks; ctl-api frozen | ✅ / fuzz execution on nightly CI (targets build locally) |
 | M8 | onboarding e2e; doctor; THIRD_PARTY complete; beta runbook | ✅ (docs/runbook-beta.md; onboarding e2e) |
 
+## Round 14 (2026-09-04) — the swarm: P2P block transport, join-code gated + review notes + round-trip audit
+
+The user-mandated P2P leg (SPEC §3 exception, ADR-0017/0018). Environment note: this round
+was built twice — the first build was lost pre-push to an environment reset; every lesson from
+its transcript was baked into the rebuild from line one.
+
+| Item | Status | Evidence |
+|---|---|---|
+| `cairn-p2p` crate (ADR-0017) | ✅ | Signal rendezvous (HMAC-bound business cards, project isolation, relay grants, TTL sweep) + RFC 5389 STUN binding client + learn-then-forward encrypted relay + X25519/XChaCha20-Poly1305 sessions (role-bound KDF contexts, fragment reassembly, NAK retransmit) + swarm orchestrator (rarest-first wants, change-driven Bloom HAVEs, paced serving, holder rotation). **50 unit + 7 e2e tests green** (three-node converge, mesh effect, forced-relay fallback, corrupt-peer rejection, join-code gate). 5 real bugs caught during the rebuild, each now pinned by a test: register self-deadlock, bare (unroutable) relay hellos, relays invisible cross-project, handshaking with the relay node itself, missing relay-hello retry |
+| **Join-code admission (the security feature)** | ✅ | 144-bit Crockford-Base32 join codes (18 CSPRNG bytes + CRC-16/ARC, alphabet excludes I/L/O/U; input aliases I→1 L→1 O→0; every-position typo rejection pinned by test). Cluster key is KDF-derived (`blake3::derive_key("cairn-p2p-join/v1")`), never the code itself. **Host flow**: `cairn signal` generates + prints the code and the exact join command. **Join flow**: `cairn daemon --swarm-signal <addr> --swarm-join-code <code>` — REQUIRED, no silent dev-key fallback. A wrong code is dropped silently by the server (no oracle), never enters any member list, and every peer fail-closes its HELLO — strangers cannot even establish a session. Typo = instant local checksum error; sustained registration failure = loud two-cause diagnosis (unreachable OR wrong code). Rotation = restart with a fresh `--join-code`; persisted (never logged) in the user-private daemon home for rejoins. `--dev-key`/`--swarm-dev-key` smoke path kept, mutually exclusive with real codes |
+| Peer-first hydration (ADR-0017 §3) | ✅ | `PeerSource` trait in cairn-sync (`may_have` Bloom pre-check → `fetch_peer_block` → `warm_blocks` pre-walk); `materialize_missing` consults peers BEFORE the cloud plane, `None` always means plane fallback; `Cas::list_hashes` powers the serving side; sim stays plane-only by explicit `None` |
+| Review notes (ADR-0018 A) | ✅ | Frame-anchored (exact `frame@rate` rational + clip-identity ladder), content-derived ids (blake3 of anchor‖body‖author) giving edit=new-id / status-lattice / deletion-wins merge semantics; same-anchor-same-author surfaced as the one real conflict; `.notes.json` sidecar; CSV import/export with the `Frame Number` alias + timecode at rational rates. CLI `cairn notes import/list/export/merge` |
+| Round-trip audit (ADR-0018 B) | ✅ | `verify_roundtrip`: clip inventory, frame-exact duration drift (rational arithmetic), per-clip effect inventory (the dropped speed ramp/lost grade class), markers, transitions, gaps, audio links — every check names element + exact delta, severity Loss/Warn. CLI `cairn tl-verify --base --roundtrip [--json]` with tl-merge's exit contract |
+| Bin-locks (ADR-0014 local pen) | ✅ | `cairn lock/unlock --project --path`: visible write-authority pen (path or directory prefix) so collaborators see "locked by \<device\>" before saving into it |
+| Docs | ✅ | ADR-0017, ADR-0018; SPEC §3 user exception + ADR index completed (0012–0018); THIRD_PARTY orion row; runbook-beta swarm step |
+| Gates | ✅ | fmt + clippy `-D warnings` clean across the workspace; full test suite green; live CLI smoke: `signal` prints a generated code, a daemon joins with it, a daemon with a wrong code never registers |
+
+Human-gated (unchanged): WAN punch success rates across real ISP NATs, a real relay on a public
+VPS, studio WAN RTT legs (the swarm's loopback evidence is the CI-executable subset).
+
 ## Round 13 (2026-09-03/04) — real-NLE realism, executed where it can be
 
 Part 1 (commit `1f9f688`): the pinned real-timeline corpus gate.

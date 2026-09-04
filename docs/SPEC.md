@@ -46,6 +46,11 @@ header cache while the rest streams in.
 - No billing UI (server-side metering counters are in scope; presentation is not).
 - No AI/ONNX runtime, no smart-tagging.
 - No LAN/P2P sync (design hooks only: chunk store must be shareable in-process).
+  *User-mandated exception (2026-09-04, ADR-0017): a P2P swarm transport — rendezvous,
+  NAT punching, encrypted relay fallback, peer-first block hydration — ships as an
+  overlay on the data plane. It never replaces the cloud control plane (journal/leases/
+  cursors stay authoritative), and admission is join-code gated by the host. Review notes
+  and the timeline round-trip audit (ADR-0018) are editorial tooling, not a chat network.*
 - No OPRF/DupLESS. Encryption tiers per §13 (T3 uses AES-SIV; nothing else).
 - No CRDTs. Last-writer-wins per path + conflict copies + leases.
 - No QUIC, no mobile clients, no sharing links, no multi-region routing (leave a region column on
@@ -455,3 +460,10 @@ remain:
 | ADR-0009 | Local diagnostics dashboard served by daemon at :17778 over loopback-only HTTP gateway (user-mandated UI exception; headless rule otherwise intact) |
 | ADR-0010 | Error taxonomy: single retry-class table, codes carried in proto ErrorDetail |
 | ADR-0011 | Device tokens: PASETO v4.public via pasetors crate (ed25519), 90d rotation |
+| ADR-0012 | Rename + object formats: metadata-only renames, upload staging `.cairn.part` → atomic promote |
+| ADR-0013 | zstd dictionary compression cross-device (per-tenant trained dict, chunk-granular apply) |
+| ADR-0014 | NLE collaboration concurrency: leases are the correctness primitive, phases for sync passes |
+| ADR-0015 | OTIO/FCPXML three-way timeline merge (deterministic, identity ladder, conflict surfacing) |
+| ADR-0016 | Clicky-Clicky onboarding: install.ps1 + system tray (tray never links the engine) |
+| ADR-0017 | P2P swarm transport: signal rendezvous, NAT punch, encrypted relay fallback, peer-first hydration — join-code gated, cloud plane stays authoritative (user-mandated §3 exception) |
+| ADR-0018 | Frame-anchored review notes (content-derived ids, deterministic 3-way merge, CSV interop) + timeline round-trip audit (frame-exact drift, effect inventory, severity contract) |
