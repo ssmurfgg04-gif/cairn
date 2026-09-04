@@ -15,6 +15,8 @@ mod members;
 mod projects;
 mod proxy;
 mod review;
+mod search;
+mod tlbranch;
 mod win_attach;
 
 use clap::{Parser, Subcommand};
@@ -219,6 +221,13 @@ pub enum Cmd {
         /// Explicit output path (default: <ours>.merged.otio)
         #[arg(long)]
         out: Option<String>,
+        /// Zero-touch semantic policy (ADR-0023, OPT-IN): frame-disjoint
+        /// re-cuts of the same clip auto-merge (C11) instead of escalating
+        /// C3 — "ours re-cut the head, theirs re-cut the tail" lands without
+        /// asking. Same-edge re-cuts still conflict under every policy.
+        /// Without this flag the merge is bit-for-bit the conservative default.
+        #[arg(long)]
+        semantic: bool,
     },
     /// Round-trip audit (ADR-0018): verify a timeline that traveled through
     /// another NLE kept its clips, durations, effects, markers — the
@@ -231,6 +240,35 @@ pub enum Cmd {
         #[arg(long)]
         roundtrip: String,
         /// Machine-readable JSON report
+        #[arg(long)]
+        json: bool,
+    },
+    /// Timeline branches (ADR-0023): git-for-video, the foolproof cut —
+    /// experiment fearlessly, cherry-pick the good parts back, soft-delete
+    /// the failures. The working timeline is never mutated by branch ops.
+    TlBranch {
+        #[command(subcommand)]
+        cmd: tlbranch::TlBranchCmd,
+    },
+    /// Intelligent clip search (ADR-0023): "search by what you see" — files
+    /// by name/path tokens + every timeline's clips with their positions
+    /// ("worried closeup" finds the clip AND where it was cut in). Offline,
+    /// deterministic, no AI.
+    Search {
+        /// The query (quoted if multi-word)
+        query: String,
+        /// Project id (uses its attached workspace; requires --home with a
+        /// store) OR a raw directory with --path
+        #[arg(long)]
+        project: Option<String>,
+        /// Search a directory directly (no store needed — works on any
+        /// machine, great for tests)
+        #[arg(long)]
+        path: Option<String>,
+        /// Max results (default 50)
+        #[arg(long, default_value = "50")]
+        limit: usize,
+        /// JSON output (machines) instead of the human table
         #[arg(long)]
         json: bool,
     },
@@ -589,6 +627,41 @@ pub mod review_cmd {
             #[arg(long)]
             timeline: Option<String>,
         },
+        /// Export a version's comments as an EDIT CHANGE LIST (the 3-step
+        /// no-AI recipe, ADR-0023 §3): mechanical notes (cut/trim/delete/
+        /// replace/gain) become structured ops; creative notes ride along
+        /// highlighted for the human. Formats: json (the authoritative,
+        /// applyable form), edl (CMX3600), fcpxml (FCP7 markers).
+        ExportChangelist {
+            #[arg(long, default_value = ".")]
+            root: String,
+            #[arg(long)]
+            version: u32,
+            /// Output file
+            #[arg(long)]
+            out: String,
+            /// json (default) | edl | fcpxml
+            #[arg(long, default_value = "json")]
+            format: String,
+        },
+        /// Apply a JSON changelist to a timeline — the editor's YES/NO gate:
+        /// PREVIEW by default (exit 1, nothing written); --yes writes
+        /// <timeline>.changelist.otio (never in-place). Every op reports
+        /// Applied or the honest Unresolved reason.
+        ApplyChangelist {
+            /// The timeline to edit
+            #[arg(long)]
+            timeline: String,
+            /// Changelist JSON from `export-changelist`
+            #[arg(long)]
+            changelist: String,
+            /// Explicit output path (default: <timeline>.changelist.otio)
+            #[arg(long)]
+            out: Option<String>,
+            /// Actually write the result. Without this flag: preview only.
+            #[arg(long)]
+            yes: bool,
+        },
         /// Mark a comment resolved (or reopened with --status OPEN)
         Resolve {
             #[arg(long, default_value = ".")]
@@ -857,6 +930,14 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
         Cmd::Member { cmd } => run_member(cmd),
         Cmd::Proxy { cmd } => run_proxy(cmd),
         Cmd::Review { cmd } => run_review(cmd),
+        Cmd::TlBranch { cmd } => tlbranch::run(cmd),
+        Cmd::Search {
+            query,
+            project,
+            path,
+            limit,
+            json,
+        } => run_search(&query, project.as_deref(), path.as_deref(), limit, json),
         Cmd::TlCapture { path, in_place } => run_tl_capture(&path, in_place),
         Cmd::TlMerge {
             base,
@@ -864,7 +945,8 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
             theirs,
             dry_run,
             out,
-        } => run_tl_merge(&base, &ours, &theirs, dry_run, out.as_deref()),
+            semantic,
+        } => run_tl_merge(&base, &ours, &theirs, dry_run, out.as_deref(), semantic),
         Cmd::TlVerify {
             base,
             roundtrip,
@@ -1476,6 +1558,7 @@ fn run_tl_merge(
     theirs: &str,
     dry_run: bool,
     out_arg: Option<&str>,
+    semantic: bool,
 ) -> anyhow::Result<()> {
     // The exit-code contract: 3 means REFUSED — structural mismatch or any
     // input that cannot be parsed. Parsing failures are refusals (C10), not
@@ -1498,7 +1581,8 @@ fn run_tl_merge(
         }
     }
 
-    match cairn_tl::merge::merge(&base_tl, &ours_tl, &theirs_tl) {
+    let options = cairn_tl::merge::MergeOptions { semantic };
+    match cairn_tl::merge::merge_with(&base_tl, &ours_tl, &theirs_tl, &options) {
         Ok((merged, report)) => {
             let code = match report.outcome {
                 cairn_tl::merge::Outcome::Clean => 0,
@@ -1929,14 +2013,31 @@ fn run_review(cmd: review_cmd::ReviewCmd) -> anyhow::Result<()> {
                 timeline.as_deref(),
             )?;
         }
+        ReviewCmd::ExportChangelist {
+            root,
+            version,
+            out,
+            format,
+        } => {
+            run_export_changelist(Path::new(&root), version, &out, &format)?;
+        }
+        ReviewCmd::ApplyChangelist {
+            timeline,
+            changelist,
+            out,
+            yes,
+        } => {
+            run_apply_changelist(&timeline, &changelist, out.as_deref(), yes)?;
+        }
         ReviewCmd::Resolve {
             root,
             version,
             id,
             status,
         } => {
-            let st = cairn_tl::notes::NoteStatus::parse(&status)
-                .unwrap_or_else(|| panic!("--status must be OPEN, RESOLVED, or REJECTED"));
+            let st = cairn_tl::notes::NoteStatus::parse(&status).ok_or_else(|| {
+                anyhow::anyhow!("--status must be OPEN, RESOLVED, or REJECTED (got {status:?})")
+            })?;
             review::cmd_resolve(Path::new(&root), version, &id, st)?;
             println!("comment {id} -> {}", st.as_str());
         }
@@ -2057,6 +2158,268 @@ fn run_handoff(cmd: handoff_cmd::HandoffCmd) -> anyhow::Result<()> {
         }
         HandoffCmd::List { root } => handoff::cmd_list(Path::new(&root))?,
     }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Search — intelligent clip search (ADR-0023 §5)
+// ---------------------------------------------------------------------------
+
+fn cli_home() -> String {
+    std::env::var("CAIRN_HOME").unwrap_or_else(|_| default_home())
+}
+
+fn run_search(
+    query: &str,
+    project: Option<&str>,
+    path: Option<&str>,
+    limit: usize,
+    json: bool,
+) -> anyhow::Result<()> {
+    let (root, files): (std::path::PathBuf, Vec<(String, u64)>) = match (project, path) {
+        (Some(pid), None) => {
+            let home = std::path::PathBuf::from(cli_home());
+            let store =
+                cairn_store::Store::open(&home, std::sync::Arc::new(cairn_core::clock::WallClock))
+                    .map_err(|e| anyhow::anyhow!("cannot open home store: {}", e.message))?;
+            let root = cairn_sync::workspace::workspace_dir(&store, pid);
+            if !root.exists() {
+                anyhow::bail!("project `{pid}` has no attached workspace on this machine");
+            }
+            let rows = store.list_files(pid);
+            let files = rows.into_iter().map(|r| (r.path, r.size)).collect();
+            (root, files)
+        }
+        (None, Some(p)) => {
+            let root = std::path::PathBuf::from(p);
+            if !root.is_dir() {
+                anyhow::bail!("{} is not a directory", root.display());
+            }
+            // direct mode: walk the disk (bounded, sorted, deterministic)
+            fn walk(dir: &std::path::Path, out: &mut Vec<(String, u64)>, root: &std::path::Path) {
+                let Ok(rd) = std::fs::read_dir(dir) else {
+                    return;
+                };
+                let mut entries: Vec<_> = rd.filter_map(|e| e.ok()).collect();
+                entries.sort_by_key(|e| e.file_name());
+                for e in entries {
+                    let Ok(meta) = e.metadata() else { continue };
+                    let p = e.path();
+                    if meta.is_dir() {
+                        let name = e.file_name().to_string_lossy().into_owned();
+                        if name.starts_with(".cairn") {
+                            continue;
+                        }
+                        walk(&p, out, root);
+                    } else {
+                        let rel = p
+                            .strip_prefix(root)
+                            .map(|r| r.to_string_lossy().into_owned())
+                            .unwrap_or_else(|_| p.to_string_lossy().into_owned());
+                        out.push((rel, meta.len()));
+                    }
+                }
+            }
+            let mut files = Vec::new();
+            walk(&root, &mut files, &root);
+            (root, files)
+        }
+        _ => anyhow::bail!("pass exactly one of --project <id> or --path <dir>"),
+    };
+    let hits = search::search_project(&root, &files, query, limit);
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "query": query,
+                "root": root.to_string_lossy(),
+                "hits": hits.iter().map(|h| serde_json::json!({
+                    "kind": h.kind,
+                    "path": h.path,
+                    "score": h.score,
+                    "clip_name": h.clip_name,
+                    "clip_media": h.clip_media,
+                    "clip_tc_in": h.clip_tc_in,
+                    "clip_dur": h.clip_dur,
+                })).collect::<Vec<_>>(),
+            }))?
+        );
+    } else {
+        println!("searching: {}", root.display());
+        search::render(&hits);
+        println!("{} hit(s)", hits.len());
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Changelist — the 3-step no-AI recipe (ADR-0023 §3)
+// ---------------------------------------------------------------------------
+
+fn run_export_changelist(
+    root: &std::path::Path,
+    version: u32,
+    out: &str,
+    format: &str,
+) -> anyhow::Result<()> {
+    let file = cairn_review::Store::load(root)
+        .map_err(|e| anyhow::anyhow!("cannot load review session: {e}"))?;
+    let file = file.ok_or_else(|| anyhow::anyhow!("no review session in {}", root.display()))?;
+    let vn = file
+        .version(version)
+        .ok_or_else(|| anyhow::anyhow!("version {version} not found"))?;
+    let notes = cairn_review::Store::load_comments(root, version)
+        .map_err(|e| anyhow::anyhow!("cannot load comments: {e}"))?;
+    if notes.is_empty() {
+        anyhow::bail!("version {version} has no comments to turn into a changelist");
+    }
+    let cl = cairn_tl::note_ops::Changelist::from_notes(&notes);
+    let title = format!("{} v{version}", file.title);
+    let body = match format {
+        "json" => serde_json::to_vec_pretty(&cl.to_json(&title))?,
+        "edl" => cairn_tl::note_ops::changelist_edl(&cl, &title).into_bytes(),
+        "fcpxml" => {
+            let (timebase, ntsc) =
+                cairn_tl::markers::fcpxml_rate_fields(i64::from(vn.fps_num), i64::from(vn.fps_den));
+            cairn_tl::note_ops::changelist_fcpxml(&cl, timebase, ntsc, &title).into_bytes()
+        }
+        other => anyhow::bail!("unknown format {other:?} (json | edl | fcpxml)"),
+    };
+    std::fs::write(out, body).map_err(|e| anyhow::anyhow!("cannot write {out}: {e}"))?;
+    println!("changelist: {out} (format {format})");
+    println!(
+        "  mechanical: {} note(s) — the robot applies these after your YES",
+        cl.mechanical.len()
+    );
+    println!(
+        "  creative:   {} note(s) — highlighted + timestamped, YOUR call",
+        cl.creative.len()
+    );
+    for m in &cl.mechanical {
+        for op in &m.ops {
+            println!("  [mech] @{} {}: {}", m.frame, m.author, op.summary());
+        }
+    }
+    for c in &cl.creative {
+        println!("  [creative] @{} {}: {}", c.frame, c.author, c.body);
+    }
+    Ok(())
+}
+
+fn run_apply_changelist(
+    timeline: &str,
+    changelist: &str,
+    out_arg: Option<&str>,
+    yes: bool,
+) -> anyhow::Result<()> {
+    let raw = std::fs::read_to_string(changelist)
+        .map_err(|e| anyhow::anyhow!("cannot read {changelist}: {e}"))?;
+    let v: serde_json::Value = serde_json::from_str(&raw)
+        .map_err(|e| anyhow::anyhow!("cannot parse {changelist}: {e}"))?;
+    if v["schema"] != "cairn-changelist/v1" {
+        anyhow::bail!(
+            "{changelist} is not a cairn changelist (schema {:?})",
+            v["schema"]
+        );
+    }
+    // rebuild MechItems from the JSON (note ops + anchors)
+    let mut items: Vec<cairn_tl::note_ops::MechItem> = Vec::new();
+    for m in v["mechanical"].as_array().unwrap_or(&Vec::new()) {
+        let mut ops = Vec::new();
+        for op in m["ops"].as_array().unwrap_or(&Vec::new()) {
+            let kind = op["kind"].as_str().unwrap_or("");
+            let seconds = op["seconds"]["num"]
+                .as_i64()
+                .zip(op["seconds"]["den"].as_i64());
+            let mag = seconds
+                .map(|(num, den)| {
+                    let r =
+                        cairn_tl::rational::Rational::new(i128::from(num), i128::from(den)).ok();
+                    r.map(|r| {
+                        let f = r.to_f64_approx();
+                        if (f - f.round()).abs() < 1e-9 {
+                            format!("{}", f.round() as i64)
+                        } else {
+                            let s = format!("{f:.3}");
+                            s.trim_end_matches('0').trim_end_matches('.').to_string()
+                        }
+                    })
+                    .unwrap_or_default()
+                })
+                .unwrap_or_default();
+            let op = match kind {
+                "trim_out" => cairn_tl::note_ops::MechOp::TrimOut { seconds: mag },
+                "trim_in" => cairn_tl::note_ops::MechOp::TrimIn { seconds: mag },
+                "delete" => cairn_tl::note_ops::MechOp::Delete,
+                "replace" => cairn_tl::note_ops::MechOp::Replace {
+                    target: m["body"]
+                        .as_str()
+                        .unwrap_or("")
+                        .to_lowercase()
+                        .trim_start_matches("replace with ")
+                        .to_string(),
+                },
+                "gain" => cairn_tl::note_ops::MechOp::Gain { db: mag },
+                _ => continue,
+            };
+            ops.push(op);
+        }
+        if ops.is_empty() {
+            continue;
+        }
+        items.push(cairn_tl::note_ops::MechItem {
+            note_id: m["note_id"].as_str().unwrap_or("").to_string(),
+            author: m["author"].as_str().unwrap_or("").to_string(),
+            frame: m["frame"].as_i64().unwrap_or(0).into(),
+            rate: m["rate"].as_i64().unwrap_or(24).into(),
+            body: m["body"].as_str().unwrap_or("").to_string(),
+            ops,
+            remainder: Vec::new(),
+        });
+    }
+    if items.is_empty() {
+        anyhow::bail!("changelist carries no mechanical ops — nothing to apply");
+    }
+    let (tl, _) = load_timeline_sidecar(timeline)
+        .map_err(|e| anyhow::anyhow!("cannot parse {timeline}: {e}"))?;
+    let (out_tl, ledger) = cairn_tl::note_ops::apply_changelist(&tl, &items);
+
+    // the YES/NO gate: preview is the default; nothing is written without it
+    println!("changelist apply — preview ({} op(s)):", ledger.len());
+    let mut applied = 0usize;
+    for l in &ledger {
+        match &l.status {
+            cairn_tl::note_ops::ApplyStatus::Applied => {
+                applied += 1;
+                println!("  [applied]   {} — {}", l.note_id, l.summary);
+            }
+            cairn_tl::note_ops::ApplyStatus::Unresolved(why) => {
+                println!("  [unresolved] {} — {} ({why})", l.note_id, l.summary);
+            }
+        }
+    }
+    if !yes {
+        println!(
+            "\nDRY RUN — nothing written. Pass --yes to write the result ({} of {} ops would land).",
+            applied,
+            ledger.len()
+        );
+        std::process::exit(1);
+    }
+    let out = out_arg.map(str::to_string).unwrap_or_else(|| {
+        format!(
+            "{}.changelist.otio",
+            timeline.strip_suffix(".otio").unwrap_or(timeline)
+        )
+    });
+    let bytes = cairn_tl::canon::serialize_file(&out_tl)
+        .map(String::into_bytes)
+        .map_err(|e| anyhow::anyhow!("serialize: {e}"))?;
+    std::fs::write(&out, bytes).map_err(|e| anyhow::anyhow!("cannot write {out}: {e}"))?;
+    println!(
+        "\nwrote {out} ({applied}/{}) ops applied — the source timeline is untouched",
+        ledger.len()
+    );
     Ok(())
 }
 

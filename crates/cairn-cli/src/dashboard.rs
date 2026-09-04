@@ -10,6 +10,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use axum::extract::{Path as UrlPath, State};
+use axum::response::IntoResponse as _;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::json;
@@ -18,12 +19,12 @@ use tonic::Request;
 use cairn_core::clock::{SystemClock, WallClock};
 use cairn_store::Store;
 
-use crate::daemon::{CtlPinsSvc, CtlRecallSvc, CtlSnapshotsSvc, DaemonState};
+use crate::daemon::{CtlPinsSvc, CtlPresenceSvc, CtlRecallSvc, CtlSnapshotsSvc, DaemonState};
 use cairn_proto::pb::{
-    ctl_pins_server::CtlPins as _, ctl_recall_server::CtlRecall as _,
-    ctl_snapshots_server::CtlSnapshots as _, CreateSnapshotRequest, ListPinsRequest,
-    ListSnapshotsRequest, PinRequest, RecallStatusRequest, RestoreSnapshotRequest,
-    StartRecallRequest, UnpinRequest,
+    ctl_pins_server::CtlPins as _, ctl_presence_server::CtlPresence as _,
+    ctl_recall_server::CtlRecall as _, ctl_snapshots_server::CtlSnapshots as _,
+    CreateSnapshotRequest, ListPinsRequest, ListSnapshotsRequest, PinRequest, RecallStatusRequest,
+    RestoreSnapshotRequest, SendPresenceRequest, StartRecallRequest, UnpinRequest,
 };
 
 const INDEX_HTML: &str = include_str!("../assets/dashboard/index.html");
@@ -64,6 +65,11 @@ pub async fn serve(addr: String, state: Arc<DaemonState>) -> anyhow::Result<()> 
         // round 19: the NLE marker bridge — the same body the CLI exports,
         // served on loopback for the Premiere UXP panel (ADR-0022 follow-up)
         .route("/api/v1/markers", get(markers))
+        // round 20 (ADR-0023 §2): live presence — SSE stream + submit +
+        // snapshot. Same flag + RBAC gates as the ctl service (delegated,
+        // never re-implemented — the set_flag drift lesson).
+        .route("/api/v1/live", get(live_sse).post(live_send))
+        .route("/api/v1/live/snapshot", get(live_snapshot))
         .with_state(state);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!(%addr, "dashboard listening (loopback only)");
@@ -971,4 +977,130 @@ async fn update_state(State(state): State<Arc<DaemonState>>) -> Json<serde_json:
         "update_offered": offered,
         "check_failed": check_failed,
     }))
+}
+
+// ---------- live presence (ADR-0023 §2) ----------
+
+#[derive(serde::Deserialize)]
+struct LiveSendBody {
+    project: String,
+    editor: String,
+    frame: i64,
+    #[serde(default = "default_rate")]
+    rate: i64,
+    #[serde(default = "default_action")]
+    action: String,
+}
+fn default_rate() -> i64 {
+    24
+}
+fn default_action() -> String {
+    "playhead".into()
+}
+
+/// POST /api/v1/live — submit a presence event (playhead/drag/selection).
+/// Delegates to the ctl service: same flag gate, same RBAC ledger entry,
+/// same swarm relay. The payload is BUILT here (editor/frame/rate/action)
+/// so JS callers stay schema-simple; the wire bound (1200 B) still applies.
+async fn live_send(
+    State(state): State<Arc<DaemonState>>,
+    axum::Json(body): axum::Json<LiveSendBody>,
+) -> axum::response::Response {
+    let payload = serde_json::json!({
+        "editor": body.editor,
+        "frame": body.frame,
+        "rate": body.rate,
+        "action": body.action,
+    });
+    let svc = CtlPresenceSvc {
+        state: Arc::clone(&state),
+    };
+    let req = tonic::Request::new(SendPresenceRequest {
+        project: body.project,
+        payload: serde_json::to_vec(&payload).unwrap_or_default(),
+    });
+    match svc.send_presence(req).await {
+        Ok(_) => axum::Json(json!({ "ok": true })).into_response(),
+        Err(st) => (
+            axum::http::StatusCode::PRECONDITION_FAILED,
+            axum::Json(json!({ "ok": false, "error": st.message() })),
+        )
+            .into_response(),
+    }
+}
+
+/// GET /api/v1/live — SSE stream of presence events (dashboard live view).
+/// 403-shape JSON error (not an error EVENT) when the flag is off — the
+/// client shows the honest "presence off" chip instead of a dead stream.
+async fn live_sse(State(state): State<Arc<DaemonState>>) -> axum::response::Response {
+    let on = {
+        state
+            .flags
+            .read()
+            .await
+            .iter()
+            .any(|(k, v)| k == "live_presence" && v == "true")
+    };
+    if !on {
+        return (
+            axum::http::StatusCode::PRECONDITION_FAILED,
+            axum::Json(json!({
+                "ok": false,
+                "error": "live presence is OFF on this device (flag live_presence)",
+            })),
+        )
+            .into_response();
+    }
+    use tokio_stream::StreamExt as _;
+    let rx = crate::projects::PRESENCE_TX.subscribe();
+    let stream = tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(|res| match res {
+        Ok(ev) => {
+            let data = ev.to_json().to_string();
+            Some(Ok::<_, std::convert::Infallible>(
+                axum::response::sse::Event::default().data(data),
+            ))
+        }
+        Err(_) => None, // Lagged — presence is a signal, not a log
+    });
+    use axum::response::sse::{KeepAlive, Sse};
+    Sse::new(stream)
+        .keep_alive(KeepAlive::default())
+        .into_response()
+}
+
+/// GET /api/v1/live/snapshot — the current presence view per project
+/// (remote peers from each swarm's last-event-wins map; local events are
+/// stream-only). Honest `enabled` field so the UI can show the off state.
+async fn live_snapshot(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
+    let on = {
+        state
+            .flags
+            .read()
+            .await
+            .iter()
+            .any(|(k, v)| k == "live_presence" && v == "true")
+    };
+    let mut projects_out = Vec::new();
+    {
+        let map = crate::projects::RUNTIMES.read().await;
+        for rt in map.values() {
+            if let Some(swarm) = rt.swarm.lock().await.as_ref() {
+                let events: Vec<serde_json::Value> = swarm
+                    .presence_snapshot()
+                    .into_iter()
+                    .map(|ev| {
+                        json!({
+                            "from": ev.from,
+                            "payload": String::from_utf8_lossy(&ev.payload),
+                        })
+                    })
+                    .collect();
+                projects_out.push(json!({
+                    "project": project_id_of(rt),
+                    "events": events,
+                }));
+            }
+        }
+    }
+    Json(json!({ "enabled": on, "projects": projects_out }))
 }

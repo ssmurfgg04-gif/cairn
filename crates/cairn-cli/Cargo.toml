@@ -24,7 +24,7 @@ cairn-proxy = { path = "../cairn-proxy" }
 tonic = { workspace = true }
 prost = { workspace = true }
 async-trait = { workspace = true }
-tokio-stream = "0.1"
+tokio-stream = { version = "0.1", features = ["sync"] }
 tokio = { workspace = true }
 clap = { workspace = true }
 uuid = { workspace = true }

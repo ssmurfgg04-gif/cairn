@@ -114,6 +114,12 @@ pub struct ProjectRuntime {
 }
 
 impl ProjectRuntime {
+    /// A receiver that fires when this runtime stops (detach/daemon exit).
+    /// Background tasks select on it so they never outlive the project.
+    pub fn abort_rx(&self) -> tokio::sync::watch::Receiver<bool> {
+        self.abort.subscribe()
+    }
+
     pub async fn note_hydrated(&self, rel: &str) {
         self.hydrated_recently
             .lock()
@@ -255,6 +261,10 @@ async fn ensure_swarm(
     let serving = Arc::new(CasServeBlocks {
         cas: Cas::open(&store.root().join("blobs"), store.conn_handle()).ok()?,
     });
+    let presence_on = store
+        .meta_get("flag:live_presence")
+        .map(|v| v == "true")
+        .unwrap_or(false);
     let swarm = Swarm::spawn(
         SwarmConfig {
             bind: "0.0.0.0:0".parse().expect("static"),
@@ -267,15 +277,47 @@ async fn ensure_swarm(
             // ADR-0023: live presence rides the swarm ONLY when this device's
             // editor flipped their own flag (default false — read per join so
             // the flip takes effect on the next attach/swarm join).
-            presence: store
-                .meta_get("flag:live_presence")
-                .map(|v| v == "true")
-                .unwrap_or(false),
+            presence: presence_on,
         },
         serving,
     )
     .await
     .ok()?;
+    if presence_on {
+        // Forwarder: swarm presence events -> the daemon-wide hub. Tied to
+        // the runtime's abort so detach/stop ends it (the swarm handle's
+        // Arc alone would keep the channel — and this loop — alive).
+        let swarm2 = swarm.clone();
+        let ns = rt.local_ns.clone();
+        let mut stop = rt.abort_rx();
+        tokio::spawn(async move {
+            let mut rx = swarm2.subscribe_presence();
+            loop {
+                tokio::select! {
+                    _ = stop.changed() => break,
+                    r = rx.recv() => match r {
+                        Ok(ev) => {
+                            let _ = PRESENCE_TX.send(LocalPresence {
+                                from: ev.from,
+                                project: ns.clone(),
+                                payload: ev.payload,
+                                seen_at_ms: std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| d.as_millis() as i64)
+                                    .unwrap_or(0),
+                                local: false,
+                            });
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            // presence is a signal, not a log — skip missed
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    },
+                }
+            }
+        });
+        tracing::info!(project = %rt.local_ns, "live presence forwarder up (flag on)");
+    }
     tracing::info!(
         project = %rt.project_id,
         node = %swarm.node_id(),
@@ -432,6 +474,42 @@ pub async fn detach(home: &Path, project_id: &str) -> Result<(), CairnError> {
 /// Registry of live runtimes for the daemon process (ctl status/list surface).
 pub static RUNTIMES: std::sync::LazyLock<RwLock<HashMap<String, Arc<ProjectRuntime>>>> =
     std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
+
+/// One live-presence event flowing through the daemon (ADR-0023 §2):
+/// local echoes (SendPresence) and remote peers (swarm forwarder) land on
+/// the same channel, so subscribers (ctl stream, dashboard SSE) get one
+/// consistent view. Ephemeral by contract: never persisted, never synced.
+#[derive(Clone, Debug)]
+pub struct LocalPresence {
+    /// Sending device id ("local" when this daemon echoed itself).
+    pub from: String,
+    /// Project namespace (runtime key).
+    pub project: String,
+    /// Opaque app JSON (bounded by the swarm codec to 1200 bytes).
+    pub payload: Vec<u8>,
+    /// Receive time, unix ms.
+    pub seen_at_ms: i64,
+    /// True when the event originated on THIS device.
+    pub local: bool,
+}
+
+impl LocalPresence {
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "from": self.from,
+            "project": self.project,
+            "payload": String::from_utf8_lossy(&self.payload),
+            "seen_at_ms": self.seen_at_ms,
+            "local": self.local,
+        })
+    }
+}
+
+/// The machine-wide presence fanout (ctl WatchPresence + dashboard SSE both
+/// subscribe). Capacity matches the swarm's channel: lagging subscribers
+/// resync from the per-project swarm snapshots.
+pub static PRESENCE_TX: std::sync::LazyLock<tokio::sync::broadcast::Sender<LocalPresence>> =
+    std::sync::LazyLock::new(|| tokio::sync::broadcast::channel(256).0);
 
 /// Live CfAPI write-back connections (Windows only): the connection must outlive
 /// the attach — dropping it disconnects the root from the filter driver.
