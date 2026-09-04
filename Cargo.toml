@@ -19,7 +19,7 @@ members = [
     "crates/cairn-review",
     "crates/cairn-proxy",
 ]
-exclude = ["crates/cairn-x/fuzz"]
+exclude = ["crates/cairn-x/fuzz", "crates/cairn-app"]
 
 [workspace.package]
 version = "4.0.0"

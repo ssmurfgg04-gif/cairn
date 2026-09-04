@@ -126,8 +126,7 @@ impl AuditFile {
             Err(e) => return Err(format!("read audit: {e}")),
         };
         let f = AuditFile::from_json(&bytes)?;
-        let mut rows: Vec<(String, AuditEntry)> =
-            f.entries.into_iter().map(|(k, v)| (k, v)).collect();
+        let mut rows: Vec<(String, AuditEntry)> = f.entries.into_iter().collect();
         rows.sort_by(|a, b| a.1.ts_ms.cmp(&b.1.ts_ms).then_with(|| a.0.cmp(&b.0)));
         Ok(rows)
     }

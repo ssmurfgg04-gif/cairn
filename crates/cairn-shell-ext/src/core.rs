@@ -180,6 +180,11 @@ pub enum MenuAction {
     Unlock { project: String, rel: String },
     /// `cairn snapshot create --project P [--label L]`.
     Snapshot { project: String, label: String },
+    /// Open the file with its system default handler — for media that is
+    /// the NLE's own file association ("open with Resolve", via the
+    /// association, never a hard-coded NLE path). Not a cairn argv: the
+    /// COM layer ShellExecute's the FILE itself.
+    OpenDefault { path: String },
 }
 
 impl MenuAction {
@@ -214,6 +219,8 @@ impl MenuAction {
                 }
                 v
             }
+            // not a cairn command — the file opens with its association
+            MenuAction::OpenDefault { .. } => Vec::new(),
         }
     }
 
@@ -223,6 +230,7 @@ impl MenuAction {
             MenuAction::Lock { .. } => "Cairn: Lock this file",
             MenuAction::Unlock { .. } => "Cairn: Unlock this file",
             MenuAction::Snapshot { .. } => "Cairn: Create snapshot",
+            MenuAction::OpenDefault { .. } => "Cairn: Open (default editor)",
         }
     }
 }

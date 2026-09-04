@@ -234,6 +234,24 @@ async fn ensure_swarm(
         return Some(existing.clone());
     }
     let signal_addr: std::net::SocketAddr = signal.parse().ok()?;
+    // WAN NAT discovery (the Mumbai<->London leg): explicit override via
+    // the `swarm/stun` home meta ("host:port" or "off"), else the default
+    // public servers. Dormant-by-omission was the gap — the swarm had the
+    // whole STUN+punch+relay machinery and the CLI never turned it on.
+    let stun_server: Option<std::net::SocketAddr> = match store.meta_get("swarm/stun") {
+        Some(s) if s.eq_ignore_ascii_case("off") => None,
+        Some(s) => match s.parse() {
+            Ok(a) => Some(a),
+            Err(_) => {
+                tracing::warn!(value = %s, "swarm/stun override is not host:port — ignoring");
+                cairn_p2p::stun::resolve_default().await
+            }
+        },
+        None => cairn_p2p::stun::resolve_default().await,
+    };
+    if let Some(stun) = stun_server {
+        tracing::info!(stun = %stun, "wan punch enabled (reflexive candidates via STUN)");
+    }
     let serving = Arc::new(CasServeBlocks {
         cas: Cas::open(&store.root().join("blobs"), store.conn_handle()).ok()?,
     });
@@ -244,7 +262,7 @@ async fn ensure_swarm(
             cluster_key,
             project: format!("{}:{}", identity.tenant_id, rt.project_id),
             node_id: Some(identity.device_id.clone()),
-            stun: None,
+            stun: stun_server,
             force_relay: false,
         },
         serving,
