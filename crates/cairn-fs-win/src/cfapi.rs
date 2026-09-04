@@ -859,6 +859,144 @@ fn transfer_placeholders(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Asynchronous FETCH_PLACEHOLDERS completion (ADR-0019 §1)
+// ---------------------------------------------------------------------------
+
+/// A captured population request: the three keys are plain handles the
+/// filter owns (valid after the callback returns — the documented async
+/// pattern), so the enumeration can run on a worker thread without
+/// blocking the filter's callback thread. Explorer then never hides
+/// directory nodes behind a cold cache hit.
+struct FetchPlaceholdersJob {
+    connection_key: windows::Win32::Foundation::HANDLE,
+    transfer_key: i64,
+    request_key: i64,
+    path: String,
+    pattern: String,
+    src: std::sync::Arc<dyn PlaceholderSource>,
+}
+
+/// Complete a captured job: same wire format as `transfer_placeholders`,
+/// built from the captured keys instead of the (expired) callback info.
+fn transfer_placeholders_keys(job: &FetchPlaceholdersJob, entries: &[PopulateEntry], status: i32) {
+    use windows::Win32::Storage::CloudFilters::{
+        CfExecute, CF_OPERATION_INFO, CF_OPERATION_PARAMETERS, CF_OPERATION_PARAMETERS_0_7,
+        CF_OPERATION_TRANSFER_PLACEHOLDERS_FLAGS,
+        CF_OPERATION_TRANSFER_PLACEHOLDERS_FLAG_DISABLE_ON_DEMAND_POPULATION,
+        CF_OPERATION_TYPE_TRANSFER_PLACEHOLDERS, CF_PLACEHOLDER_CREATE_FLAGS,
+        CF_PLACEHOLDER_CREATE_FLAG_DISABLE_ON_DEMAND_POPULATION,
+        CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC, CF_PLACEHOLDER_CREATE_INFO,
+    };
+    use windows::Win32::Storage::FileSystem::FILE_ATTRIBUTE_DIRECTORY;
+    let names: Vec<Vec<u16>> = entries.iter().map(|e| wide(&e.name)).collect();
+    let idents: Vec<Vec<u16>> = entries.iter().map(|e| wide(&e.identity_hex)).collect();
+    let ft = filetime_now();
+    let infos: Vec<CF_PLACEHOLDER_CREATE_INFO> = entries
+        .iter()
+        .zip(names.iter())
+        .zip(idents.iter())
+        .map(|((e, name), ident)| {
+            let mut info = CF_PLACEHOLDER_CREATE_INFO {
+                RelativeFileName: PCWSTR(name.as_ptr()),
+                FsMetadata: Default::default(),
+                FileIdentity: ident.as_ptr().cast::<c_void>(),
+                FileIdentityLength: (ident.len() as u32) * 2,
+                Flags: CF_PLACEHOLDER_CREATE_FLAGS(
+                    CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC.0
+                        | CF_PLACEHOLDER_CREATE_FLAG_DISABLE_ON_DEMAND_POPULATION.0,
+                ),
+                Result: Default::default(),
+                CreateUsn: 0,
+            };
+            info.FsMetadata.FileSize = e.size as i64;
+            info.FsMetadata.BasicInfo.FileAttributes = if e.is_directory {
+                FILE_ATTRIBUTE_DIRECTORY.0 as u32
+            } else {
+                0
+            };
+            info.FsMetadata.BasicInfo.CreationTime = ft;
+            info.FsMetadata.BasicInfo.LastWriteTime = ft;
+            info.FsMetadata.BasicInfo.LastAccessTime = ft;
+            info.FsMetadata.BasicInfo.ChangeTime = ft;
+            info
+        })
+        .collect();
+    let mut op_params = CF_OPERATION_PARAMETERS::default();
+    op_params.Anonymous.TransferPlaceholders = CF_OPERATION_PARAMETERS_0_7 {
+        Flags: CF_OPERATION_TRANSFER_PLACEHOLDERS_FLAGS(
+            CF_OPERATION_TRANSFER_PLACEHOLDERS_FLAG_DISABLE_ON_DEMAND_POPULATION.0,
+        ),
+        CompletionStatus: windows::Win32::Foundation::NTSTATUS(status),
+        PlaceholderTotalCount: infos.len() as i64,
+        PlaceholderArray: if infos.is_empty() {
+            std::ptr::null_mut()
+        } else {
+            infos.as_ptr() as *mut CF_PLACEHOLDER_CREATE_INFO
+        },
+        PlaceholderCount: infos.len() as u32,
+        EntriesProcessed: infos.len() as u32,
+    };
+    op_params.ParamSize = (std::mem::offset_of!(CF_OPERATION_PARAMETERS, Anonymous)
+        + std::mem::size_of::<CF_OPERATION_PARAMETERS_0_7>()) as u32;
+    let op = CF_OPERATION_INFO {
+        StructSize: std::mem::size_of::<CF_OPERATION_INFO>() as u32,
+        Type: CF_OPERATION_TYPE_TRANSFER_PLACEHOLDERS,
+        ConnectionKey: job.connection_key,
+        TransferKey: job.transfer_key,
+        CorrelationVector: std::ptr::null(),
+        SyncStatus: std::ptr::null(),
+        RequestKey: job.request_key,
+    };
+    // SAFETY: the keys are the filter's own (owned handles per the async
+    // completion contract); infos/names/idents outlive the call.
+    unsafe {
+        let _ = CfExecute(&op, &mut op_params);
+    }
+}
+
+/// Bounded worker pool for population enumeration: the callback posts the
+/// captured job and returns immediately; N workers drain. A poisoned pool
+/// (worker panic) falls back to inline completion — never a hung Explorer.
+static FETCH_POOL: std::sync::OnceLock<PoolHandle> = std::sync::OnceLock::new();
+
+struct PoolHandle {
+    tx: std::sync::mpsc::Sender<FetchPlaceholdersJob>,
+}
+
+fn fetch_pool() -> &'static PoolHandle {
+    FETCH_POOL.get_or_init(|| {
+        // 4 workers; the queue depth is bounded by the directory fan-out the
+        // filter itself issues (it serializes population per directory)
+        let (tx, rx) = std::sync::mpsc::channel::<FetchPlaceholdersJob>();
+        for i in 0..4 {
+            let rx = rx.clone();
+            std::thread::Builder::new()
+                .name(format!("cairn-fetch-{i}"))
+                .spawn(move || loop {
+                    match rx.recv() {
+                        Ok(job) => {
+                            let entries = job.src.fetch_placeholders(&job.path, &job.pattern);
+                            transfer_placeholders_keys(&job, &entries, 0);
+                        }
+                        Err(_) => return,
+                    }
+                })
+                .expect("spawn cfapi fetch worker");
+        }
+        PoolHandle { tx }
+    })
+}
+
+fn post_fetch_job(job: FetchPlaceholdersJob) {
+    if fetch_pool().tx.send(job).is_err() {
+        // pool gone (should not happen — static): complete inline so the
+        // filter never waits forever
+        let entries = job.src.fetch_placeholders(&job.path, &job.pattern);
+        transfer_placeholders_keys(&job, &entries, 0);
+    }
+}
+
 /// FETCH_PLACEHOLDERS handler: the filter wants remote entries under a directory
 /// (population policy PARTIAL makes answering MANDATORY — quirk W10). Self-PID
 /// requests complete with a failed empty transfer (nextcloud: implicit population
@@ -888,8 +1026,18 @@ extern "system" fn on_fetch_placeholders(
         } else {
             pcwstr_to_string(params.Anonymous.FetchPlaceholders.Pattern)
         };
-        let entries = (**src).fetch_placeholders(&path, &pattern);
-        transfer_placeholders(info, &entries, 0);
+        // ADR-0019 §1: capture the keys (plain filter-owned handles, valid
+        // past the callback per the async completion contract) and complete
+        // on the worker pool — the filter's callback thread returns NOW, so
+        // Explorer never blocks or hides directory nodes on cold cache hits.
+        post_fetch_job(FetchPlaceholdersJob {
+            connection_key: info.ConnectionKey,
+            transfer_key: info.TransferKey,
+            request_key: info.RequestKey,
+            path,
+            pattern,
+            src: std::sync::Arc::clone(src),
+        });
     }
 }
 

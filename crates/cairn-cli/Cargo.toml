@@ -18,6 +18,7 @@ cairn-fs-win = { path = "../cairn-fs-win" }
 cairn-sync = { path = "../cairn-sync" }
 cairn-proto = { path = "../cairn-proto" }
 cairn-server = { path = "../cairn-server" }
+cairn-shell-ext = { path = "../cairn-shell-ext" }
 tonic = { workspace = true }
 prost = { workspace = true }
 async-trait = { workspace = true }
