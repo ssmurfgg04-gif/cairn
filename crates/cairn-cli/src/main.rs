@@ -9,7 +9,9 @@
 mod daemon;
 mod dashboard;
 mod doctor;
+mod members;
 mod projects;
+mod proxy;
 mod review;
 mod win_attach;
 
@@ -288,6 +290,17 @@ pub enum Cmd {
         #[arg(long)]
         swarm_mdns: bool,
     },
+    /// Role-based access control (ADR-0020 §4): members, roles, checks
+    Member {
+        #[command(subcommand)]
+        cmd: member_cmd::MemberCmd,
+    },
+    /// Proxy workflow (ADR-0020 §3): generate/list lightweight media
+    /// proxies for remote editors + the review portal
+    Proxy {
+        #[command(subcommand)]
+        cmd: proxy_cmd::ProxyCmd,
+    },
     /// Client review portal (ADR-0020): publish versions, mint guest
     /// links, read frame-accurate comments. The daemon's --review flag
     /// serves the web player to clients.
@@ -324,6 +337,100 @@ pub enum Cmd {
         #[arg(long)]
         no_mdns: bool,
     },
+}
+
+pub mod member_cmd {
+    use clap::Subcommand;
+
+    #[derive(Subcommand)]
+    pub enum MemberCmd {
+        /// Add or change a member's role (owner action; syncs with the
+        /// project via .cairn/members.json)
+        Add {
+            #[arg(long, default_value = ".")]
+            root: String,
+            /// Member device id
+            #[arg(long)]
+            device: String,
+            /// Display name
+            #[arg(long, default_value = "")]
+            name: String,
+            /// owner | lead-editor | editor | assistant | colorist |
+            /// sound-designer | reviewer
+            #[arg(long, default_value = "editor")]
+            role: String,
+            /// Acting device id (default $CAIRN_DEVICE or 'local')
+            #[arg(long)]
+            as_device: Option<String>,
+        },
+        /// Remove a member (owner action)
+        Remove {
+            #[arg(long, default_value = ".")]
+            root: String,
+            #[arg(long)]
+            device: String,
+            #[arg(long)]
+            as_device: Option<String>,
+        },
+        /// List members + the implicit default role
+        List {
+            #[arg(long, default_value = ".")]
+            root: String,
+        },
+        /// Does DEVICE hold PERM? (exit 1 = deny; for scripts/hooks)
+        Check {
+            #[arg(long, default_value = ".")]
+            root: String,
+            #[arg(long)]
+            device: String,
+            /// read | write-files | organize-bins | lock-file |
+            /// lock-timeline | edit-timeline | color-grade | mix-audio |
+            /// comment | manage-review | manage-members | verify |
+            /// snapshot | restore
+            #[arg(long)]
+            perm: String,
+        },
+    }
+}
+
+pub mod proxy_cmd {
+    use clap::Subcommand;
+
+    #[derive(Subcommand)]
+    pub enum ProxyCmd {
+        /// Generate (or reuse) a lightweight proxy for one media file —
+        /// remote editors and the review portal stream this instead of
+        /// the full-res original
+        Generate {
+            #[arg(long, default_value = ".")]
+            root: String,
+            /// Media file, RELATIVE to the root
+            #[arg(long)]
+            media: String,
+            /// Long-edge pixel cap (no upscaling)
+            #[arg(long, default_value_t = 1080)]
+            max_height: u32,
+            /// H.264 CRF quality (lower = better)
+            #[arg(long, default_value_t = 23)]
+            crf: u32,
+            /// Byte-copy transcoder (pipeline smoke tests ONLY — a copy is
+            /// not a proxy)
+            #[arg(long)]
+            copy: bool,
+        },
+        /// List every indexed proxy with its status
+        List {
+            #[arg(long, default_value = ".")]
+            root: String,
+        },
+        /// One media file's proxy state
+        Status {
+            #[arg(long, default_value = ".")]
+            root: String,
+            #[arg(long)]
+            media: String,
+        },
+    }
 }
 
 pub mod review_cmd {
@@ -631,6 +738,8 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
             dev_key,
             no_mdns,
         } => run_signal_server(&bind, &relay_bind, join_code, dev_key, no_mdns).await,
+        Cmd::Member { cmd } => run_member(cmd),
+        Cmd::Proxy { cmd } => run_proxy(cmd),
         Cmd::Review { cmd } => run_review(cmd),
         Cmd::TlCapture { path, in_place } => run_tl_capture(&path, in_place),
         Cmd::TlMerge {
@@ -1565,6 +1674,12 @@ fn run_review(cmd: review_cmd::ReviewCmd) -> anyhow::Result<()> {
             snapshot,
             by,
         } => {
+            // RBAC (ADR-0020 §4): publishing is ManageReview
+            members::guard(
+                Path::new(&root),
+                &members::acting_device(None),
+                cairn_core::rbac::Permission::ManageReview,
+            )?;
             let fps = review::parse_fps(&fps)
                 .map_err(|e| anyhow::anyhow!("--fps: {e}"))
                 .unwrap();
@@ -1595,6 +1710,12 @@ fn run_review(cmd: review_cmd::ReviewCmd) -> anyhow::Result<()> {
             ttl_hours,
             latest_only,
         } => {
+            // RBAC: minting client links is ManageReview
+            members::guard(
+                Path::new(&root),
+                &members::acting_device(None),
+                cairn_core::rbac::Permission::ManageReview,
+            )?;
             let role = cairn_review::model::GuestRole::parse(&role)
                 .unwrap_or_else(|| panic!("--role must be commenter or viewer"));
             let (token, exp) =
@@ -1648,6 +1769,61 @@ fn chrono_like(ms: i64) -> String {
     let mth = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if mth <= 2 { y + 1 } else { y };
     format!("{y:04}-{mth:02}-{d:02} {h:02}:{m:02}:{s:02} UTC")
+}
+
+// ---------- proxy workflow (ADR-0020 §3) ----------
+
+fn run_proxy(cmd: proxy_cmd::ProxyCmd) -> anyhow::Result<()> {
+    use proxy_cmd::ProxyCmd;
+    use std::path::Path;
+    match cmd {
+        ProxyCmd::Generate {
+            root,
+            media,
+            max_height,
+            crf,
+            copy,
+        } => {
+            proxy::cmd_generate(Path::new(&root), &media, max_height, crf, copy)?;
+        }
+        ProxyCmd::List { root } => proxy::cmd_list(Path::new(&root))?,
+        ProxyCmd::Status { root, media } => proxy::cmd_status(Path::new(&root), &media)?,
+    }
+    Ok(())
+}
+
+// ---------- membership / RBAC (ADR-0020 §4) ----------
+
+fn run_member(cmd: member_cmd::MemberCmd) -> anyhow::Result<()> {
+    use member_cmd::MemberCmd;
+    use std::path::Path;
+    match cmd {
+        MemberCmd::Add {
+            root,
+            device,
+            name,
+            role,
+            as_device,
+        } => {
+            let role = cairn_core::rbac::Role::parse(&role)
+                .ok_or_else(|| anyhow::anyhow!("--role: unknown role '{role}'"))?;
+            members::cmd_add(Path::new(&root), &device, &name, role, as_device.as_deref())?;
+        }
+        MemberCmd::Remove {
+            root,
+            device,
+            as_device,
+        } => {
+            members::cmd_remove(Path::new(&root), &device, as_device.as_deref())?;
+        }
+        MemberCmd::List { root } => members::cmd_list(Path::new(&root))?,
+        MemberCmd::Check { root, device, perm } => {
+            if !members::cmd_check(Path::new(&root), &device, &perm)? {
+                std::process::exit(1);
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

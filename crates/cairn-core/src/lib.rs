@@ -21,6 +21,7 @@ pub mod pathutil;
 // normal builds (cfg(kani) is set by the Kani driver).
 #[cfg(kani)]
 pub mod proofs;
+pub mod rbac;
 
 pub use error::{CairnError, ErrorKind, RetryClass};
 

@@ -1,0 +1,20 @@
+[package]
+name = "cairn-proxy"
+description = "Proxy workflow for cairn (ADR-0020 §3): the remote-editor bandwidth story. Proxies are ordinary project files generated from full-res media (ffmpeg when present, pluggable otherwise), indexed under .cairn/proxies.json, and pinned small — so a laptop on café Wi-Fi pulls megabytes of proxy, not 50 GB of ARRIRAW. Full-res stays cold until explicitly recalled. The review portal streams the proxy by default."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+blake3 = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true
