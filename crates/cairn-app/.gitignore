@@ -1,0 +1,5 @@
+# tauri's generated context dir (regenerated on every build — never a source)
+gen/
+# the standalone crate's lock: intentionally untracked like the rest of the
+# workspace (workspace-root Cargo.lock is the one that ships)
+Cargo.lock
