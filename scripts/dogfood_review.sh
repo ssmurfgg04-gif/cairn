@@ -11,7 +11,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 BIN=target/debug/cairn
-PORT=17799
+PORT=17795
 ROOT=$(mktemp -d /tmp/cairn-dogfood.XXXXXX)
 mkdir -p "$ROOT/cuts"
 rm -f /tmp/dogfood-session.json /tmp/dogfood-comment.json /tmp/dogfood-range.bin
