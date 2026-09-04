@@ -30,7 +30,7 @@
     "icon": ["icons/cairn.ico"],
     "windows": {
       "webviewInstallMode": {
-        "type": "embed"
+        "type": "downloadBootstrapper"
       }
     }
   }
