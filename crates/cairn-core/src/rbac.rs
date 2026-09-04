@@ -91,6 +91,14 @@ pub enum Permission {
     ManageReview,
     /// Add/remove members, change roles.
     ManageMembers,
+    /// Flip daemon kill switches (set_flag) — global effect on every
+    /// attached project.
+    ManageFlags,
+    /// Attach (bind) a project root on this machine.
+    AttachRoot,
+    /// Detach (unbind) a project root — stops sync for everyone on this
+    /// machine; the machine-level equivalent of leaving the project.
+    DetachRoot,
     /// Verify integrity, snapshot, restore.
     Verify,
     Snapshot,
@@ -114,6 +122,9 @@ const MATRIX: &[(Role, &[Permission])] = &[
             Permission::Comment,
             Permission::ManageReview,
             Permission::ManageMembers,
+            Permission::ManageFlags,
+            Permission::AttachRoot,
+            Permission::DetachRoot,
             Permission::Verify,
             Permission::Snapshot,
             Permission::Restore,
@@ -132,6 +143,9 @@ const MATRIX: &[(Role, &[Permission])] = &[
             Permission::MixAudio,
             Permission::Comment,
             Permission::ManageReview,
+            Permission::ManageFlags,
+            Permission::AttachRoot,
+            Permission::DetachRoot,
             Permission::Verify,
             Permission::Snapshot,
         ],
@@ -146,6 +160,8 @@ const MATRIX: &[(Role, &[Permission])] = &[
             Permission::EditTimeline,
             Permission::Comment,
             Permission::ManageReview,
+            Permission::AttachRoot,
+            Permission::DetachRoot,
             Permission::Verify,
             Permission::Snapshot,
         ],
@@ -157,6 +173,7 @@ const MATRIX: &[(Role, &[Permission])] = &[
             Permission::WriteFiles,
             Permission::OrganizeBins,
             Permission::Comment,
+            Permission::AttachRoot,
             Permission::Verify,
             Permission::Snapshot,
         ],
@@ -169,6 +186,7 @@ const MATRIX: &[(Role, &[Permission])] = &[
             Permission::LockFile,
             Permission::ColorGrade,
             Permission::Comment,
+            Permission::AttachRoot,
             Permission::Verify,
         ],
     ),
@@ -180,6 +198,7 @@ const MATRIX: &[(Role, &[Permission])] = &[
             Permission::LockFile,
             Permission::MixAudio,
             Permission::Comment,
+            Permission::AttachRoot,
             Permission::Verify,
         ],
     ),
@@ -284,14 +303,51 @@ mod tests {
         // Sound: audio, not color
         assert!(allows(Role::SoundDesigner, Permission::MixAudio));
         assert!(!allows(Role::SoundDesigner, Permission::ColorGrade));
-        // Reviewer: read + comment only
+        // Reviewer: read + comment only — no filesystem attach (the
+        // portal is their surface)
         assert!(allows(Role::Reviewer, Permission::Comment));
         assert!(!allows(Role::Reviewer, Permission::WriteFiles));
         assert!(!allows(Role::Reviewer, Permission::ManageReview));
+        assert!(!allows(Role::Reviewer, Permission::AttachRoot));
         // Editor: the cut + locks, no timeline-wide lock authority
         assert!(allows(Role::Editor, Permission::LockFile));
         assert!(allows(Role::Editor, Permission::EditTimeline));
         assert!(!allows(Role::Editor, Permission::LockTimeline));
+    }
+
+    #[test]
+    fn ctl_boundary_permissions_follow_the_machine_role() {
+        // attach: every creative role may bind their machine; reviewers
+        // live in the portal
+        for r in [
+            Role::Owner,
+            Role::LeadEditor,
+            Role::Editor,
+            Role::Assistant,
+            Role::Colorist,
+            Role::SoundDesigner,
+        ] {
+            assert!(allows(r, Permission::AttachRoot), "{r:?} must attach");
+        }
+        assert!(!allows(Role::Reviewer, Permission::AttachRoot));
+        // detach: editor and above (an assistant cannot unbind the lead's
+        // machine from the project — the daemon-guard story)
+        for r in [Role::Owner, Role::LeadEditor, Role::Editor] {
+            assert!(allows(r, Permission::DetachRoot), "{r:?} must detach");
+        }
+        for r in [
+            Role::Assistant,
+            Role::Colorist,
+            Role::SoundDesigner,
+            Role::Reviewer,
+        ] {
+            assert!(!allows(r, Permission::DetachRoot), "{r:?} must NOT detach");
+        }
+        // kill switches: owner + lead only
+        assert!(allows(Role::Owner, Permission::ManageFlags));
+        assert!(allows(Role::LeadEditor, Permission::ManageFlags));
+        assert!(!allows(Role::Editor, Permission::ManageFlags));
+        assert!(!allows(Role::Assistant, Permission::ManageFlags));
     }
 
     #[test]
