@@ -17,6 +17,11 @@
 //! Icon priority (highest first): Conflict > Fetching > Pinned > Synced —
 //! a conflict must never be masked by a stale "synced" badge.
 
+// deny (not forbid): the Windows-only `com` module MUST contain `unsafe` —
+// COM is raw C FFI — and opts back in explicitly with a documented safety
+// rationale per block (the cairn-fs-win::cfapi pattern).
+#![deny(unsafe_code)]
+
 pub mod core;
 
 #[cfg(windows)]

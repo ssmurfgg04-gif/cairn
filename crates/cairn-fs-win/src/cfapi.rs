@@ -869,13 +869,19 @@ fn transfer_placeholders(
 /// blocking the filter's callback thread. Explorer then never hides
 /// directory nodes behind a cold cache hit.
 struct FetchPlaceholdersJob {
-    connection_key: windows::Win32::Foundation::HANDLE,
+    connection_key: windows::Win32::Storage::CloudFilters::CF_CONNECTION_KEY,
     transfer_key: i64,
     request_key: i64,
     path: String,
     pattern: String,
     src: std::sync::Arc<dyn PlaceholderSource>,
 }
+
+// SAFETY: the connection/transfer/request keys are filter-owned handles the
+// Cloud Filter API's async-completion contract keeps valid past the callback
+// (they are values, not Rust references — moving them to a worker thread is
+// the documented pattern). The Arc source is Send+Sync by trait bound.
+unsafe impl Send for FetchPlaceholdersJob {}
 
 /// Complete a captured job: same wire format as `transfer_placeholders`,
 /// built from the captured keys instead of the (expired) callback info.
@@ -966,15 +972,19 @@ struct PoolHandle {
 
 fn fetch_pool() -> &'static PoolHandle {
     FETCH_POOL.get_or_init(|| {
-        // 4 workers; the queue depth is bounded by the directory fan-out the
-        // filter itself issues (it serializes population per directory)
+        // 4 workers over one shared receiver (mpsc receivers are
+        // single-consumer — the Arc<Mutex> fans the pool out); the queue
+        // depth is bounded by the directory fan-out the filter itself
+        // issues (it serializes population per directory)
         let (tx, rx) = std::sync::mpsc::channel::<FetchPlaceholdersJob>();
+        let rx = std::sync::Arc::new(std::sync::Mutex::new(rx));
         for i in 0..4 {
-            let rx = rx.clone();
+            let rx = std::sync::Arc::clone(&rx);
             std::thread::Builder::new()
                 .name(format!("cairn-fetch-{i}"))
                 .spawn(move || loop {
-                    match rx.recv() {
+                    let job = { rx.lock().expect("fetch pool").recv() };
+                    match job {
                         Ok(job) => {
                             let entries = job.src.fetch_placeholders(&job.path, &job.pattern);
                             transfer_placeholders_keys(&job, &entries, 0);
@@ -989,9 +999,10 @@ fn fetch_pool() -> &'static PoolHandle {
 }
 
 fn post_fetch_job(job: FetchPlaceholdersJob) {
-    if fetch_pool().tx.send(job).is_err() {
-        // pool gone (should not happen — static): complete inline so the
-        // filter never waits forever
+    // pool gone (should not happen — static): recover the job from the send
+    // error and complete inline so the filter never waits forever
+    if let Err(e) = fetch_pool().tx.send(job) {
+        let job = e.0;
         let entries = job.src.fetch_placeholders(&job.path, &job.pattern);
         transfer_placeholders_keys(&job, &entries, 0);
     }
