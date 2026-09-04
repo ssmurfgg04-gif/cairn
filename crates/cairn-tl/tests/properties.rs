@@ -275,3 +275,124 @@ proptest! {
         prop_assert_eq!(r.stats.applied + r.stats.withheld + r.stats.deduped, r.stats.ops_ours + r.stats.ops_theirs);
     }
 }
+
+// ---- Round 20 / ADR-0023: semantic-policy properties ----
+use cairn_tl::classifier::Verdict;
+use cairn_tl::merge::{merge_with, MergeOptions};
+
+/// Head trim: in point moves, end preserved (the missing twin of `Trim`).
+#[derive(Clone, Debug)]
+enum HeadMutation {
+    HeadTrim(usize, i128),
+}
+
+fn apply_head(tl: &mut Timeline, m: &HeadMutation) {
+    let items = &mut tl.tracks.children[0].children;
+    let HeadMutation::HeadTrim(i, frames) = *m;
+    if let Some(el) = items.get_mut(i) {
+        if let Some(sr) = el.source_range.clone() {
+            let dur = sr.duration.value.num;
+            let delta = frames.clamp(1 - dur, dur - 1);
+            el.source_range = Some(TimeRange {
+                start: TimeVal {
+                    value: Rational::new(sr.start.value.num + delta, 1).unwrap(),
+                    rate: sr.start.rate,
+                },
+                duration: TimeVal {
+                    value: Rational::new(dur - delta, 1).unwrap(),
+                    rate: sr.duration.rate,
+                },
+            });
+        }
+    }
+}
+
+// A head-trims + B tail-trims the SAME clip → C11 under semantic, C3 under
+// conservative, and the composed range is exactly A's start + B's end.
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(200))]
+    #[test]
+    fn semantic_head_tail_pair_composes_exactly(
+        dur in 24i128..240,
+        a_cut in 1i128..12,
+        b_cut in 1i128..12,
+    ) {
+        // keep the cuts legal: a_cut + b_cut < dur
+        let a_cut = a_cut.min(dur / 2 - 1).max(1);
+        let b_cut = b_cut.min(dur / 2 - 1).max(1);
+        let mut base = doc(vec![clip("Hero".into(), "hero".into(), dur)]);
+        stamp(&mut base);
+        let mut a = base.clone();
+        let mut b = base.clone();
+        apply_head(&mut a, &HeadMutation::HeadTrim(0, a_cut));
+        apply(&mut b, &Mutation::Trim(0, -b_cut));
+
+        // conservative: C3
+        let (_, cons) = merge(&base, &a, &b).unwrap();
+        prop_assert_eq!(cons.outcome, Outcome::Conflicts);
+        prop_assert_eq!(cons.histogram.get(&3), Some(&1));
+
+        // semantic: C11, composed exactly
+        let (merged, sem) = merge_with(&base, &a, &b, &MergeOptions { semantic: true }).unwrap();
+        prop_assert_eq!(sem.outcome, Outcome::Notes);
+        prop_assert_eq!(sem.histogram.get(&11), Some(&1));
+        prop_assert!(sem.verdicts.iter().all(|v| v.verdict != Verdict::Human));
+        let hero = &merged.tracks.children[0].children[0];
+        let sr = hero.source_range.as_ref().unwrap();
+        prop_assert_eq!(sr.start.value.num, a_cut);
+        prop_assert_eq!(sr.duration.value.num, dur - a_cut - b_cut);
+        // end preserved exactly: composed end = A's start + composed dur = B's end
+        prop_assert_eq!(sr.start.value.num + sr.duration.value.num, dur - b_cut);
+    }
+}
+
+// Monotonicity + invariants under the semantic policy over RANDOM mutation
+// sequences: semantic never WITHHOLDS more than conservative, determinism
+// holds byte-for-byte, and the no-duplicate-identity invariant survives.
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(150))]
+    #[test]
+    fn semantic_policy_is_monotonic_total_and_deterministic(
+        n_items in 2usize..8,
+        steps in proptest::collection::vec((any::<u8>(), 0usize..10, -12i128..12), 1..8),
+    ) {
+        let mut base = doc((0..n_items).map(|i| clip(format!("c{i}"), format!("m{i}"), 48)).collect());
+        stamp(&mut base);
+        let mut a = base.clone();
+        let mut b = base.clone();
+        for (side, (pick, idx, mag)) in steps.iter().enumerate() {
+            let idx = idx % n_items;
+            let m = match pick % 6 {
+                0 => Mutation::Rename(idx, format!("r{idx}")),
+                1 => Mutation::Trim(idx, *mag),
+                2 => Mutation::Remove(idx),
+                3 => Mutation::Insert(idx, format!("i{idx}")),
+                4 => Mutation::Move(idx, (idx + 1) % n_items),
+                _ => Mutation::Toggle(idx),
+            };
+            if side % 2 == 0 { apply(&mut a, &m); } else { apply(&mut b, &m); }
+        }
+
+        let cons = merge(&base, &a, &b);
+        let sem = merge_with(&base, &a, &b, &MergeOptions { semantic: true });
+        if let (Ok((_mc, rc)), Ok((ms, rs))) = (cons, sem) {
+            // monotonic: semantic withholds <= conservative
+            prop_assert!(rs.stats.withheld <= rc.stats.withheld);
+            // determinism: byte-identical on re-run
+            let ms2 = merge_with(&base, &a, &b, &MergeOptions { semantic: true }).unwrap().0;
+            prop_assert_eq!(
+                cairn_tl::canon::serialize(&ms).unwrap(),
+                cairn_tl::canon::serialize(&ms2).unwrap()
+            );
+            // totality: no duplicate identities in the merged doc
+            let mut keys: Vec<String> = ms.walk()
+                .into_iter()
+                .filter_map(|e| e.cairn_uuid().map(str::to_string))
+                .collect();
+            let before = keys.len();
+            keys.sort();
+            keys.dedup();
+            prop_assert_eq!(before, keys.len(), "duplicate identities in semantic merge output");
+        }
+    }
+}
