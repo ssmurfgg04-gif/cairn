@@ -261,6 +261,49 @@ impl Engine {
             .put_manifest(&self.tenant_id, &manifest_hash.hex(), &manifest_bytes)
             .await?;
 
+        // Stat-only drift short-circuit (round 18, the W4 catch): a fork
+        // marker on this path means apply REFUSED a remote upsert (§7.1 guard
+        // or dirty-keep). If the freshly hashed content is IDENTICAL to the
+        // row's recorded manifest, there was never a local edit -- nothing to
+        // preserve. Falling through would re-assert bytes the server already
+        // has, clear the fork, and leave the refused remote permanently past
+        // the cursor: silent divergence, no conflict copy, no warning (the
+        // Windows-matrix W4 red: A held v1 forever while B held v2). Instead:
+        // refresh the row's stat from disk (the touch -- so the guard's exact
+        // comparison cannot re-fire), keep the row synced at this manifest,
+        // and re-pin replay to the fork point -- the conflict_copy
+        // re-delivery, minus the copy (content never changed). The next pull
+        // re-delivers the refused upsert onto a clean, stat-fresh row and
+        // converges normally. A REAL edit re-chunks to a different manifest
+        // and takes the fork-claim append below, W5 contract untouched.
+        if let Some(fork) = crate::apply::fork_seq(&self.store, &self.local_ns, path) {
+            let identical_to_row = self
+                .store
+                .get_file(&self.local_ns, path)
+                .and_then(|row| row.manifest_hash)
+                .is_some_and(|row_manifest| row_manifest == manifest_hash.hex());
+            if fork > 0 && identical_to_row {
+                self.store.mark_synced_with_stat(
+                    &self.local_ns,
+                    path,
+                    &manifest_hash.hex(),
+                    pushed_size,
+                    pushed_mtime,
+                )?;
+                crate::apply::clear_fork(&self.store, &self.local_ns, path)?;
+                let _ = self
+                    .store
+                    .set_cursor(&self.author_id, &self.local_ns, fork - 1);
+                tracing::info!(
+                    path = %path,
+                    fork,
+                    "stat-only drift resolved: content identical, replay re-pinned to \
+                     the fork point so the refused remote re-delivers"
+                );
+                return Ok(());
+            }
+        }
+
         // outbox → append (fencing token included when leased)
         // Content-lineage fork (round 13, the W5 catch): base_seq must declare
         // what the local BYTES descend from, not what this device has READ.
