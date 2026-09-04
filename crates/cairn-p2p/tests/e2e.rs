@@ -5,6 +5,17 @@
 //! The in-test block store mirrors the production wiring: fetched blocks are
 //! LANDED in the store (like hydrate lands them in the CAS) before the node's
 //! bloom re-advertises them — that landing is what powers the mesh effect.
+//!
+//! Timeout policy: these suites run under `cargo nextest run --workspace` on
+//! shared ubuntu-latest runners (up to 32 suites in parallel; see the burst
+//! job's contention note in ci.yml). The happy path is ~4 s locally, so the
+//! PROGRESS deadlines below (60 s fetch, 30 s convergence) are pure failure
+//! path headroom — they bind only when something is actually broken, and they
+//! keep UDP event loops from starving under runner contention. NEGATIVE
+//! deadlines (no-holder, stranger-gate, observation windows) stay tight: their
+//! semantics are "nothing happens within N", and widening would weaken the
+//! assertion (2026-09-04: 49d65a9 CI flake — `b fetched` at 15 s with zero
+//! p2p code touched; 6/6 local passes at ~4.2 s).
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -159,13 +170,13 @@ async fn three_nodes_converge() {
     wait_until(
         || a.stats().direct_links >= 2,
         "a links 2 peers",
-        Duration::from_secs(10),
+        Duration::from_secs(30),
     )
     .await;
     wait_until(
         || b.stats().direct_links >= 1 && c.stats().direct_links >= 1,
         "b/c linked",
-        Duration::from_secs(10),
+        Duration::from_secs(30),
     )
     .await;
 
@@ -176,7 +187,7 @@ async fn three_nodes_converge() {
     let fetch_b = tokio::spawn(async move {
         let mut got = Vec::new();
         for h in blk_b {
-            let bytes = b_sw.fetch_block(&h, Duration::from_secs(15)).await;
+            let bytes = b_sw.fetch_block(&h, Duration::from_secs(60)).await;
             got.push((h, bytes));
         }
         got
@@ -184,7 +195,7 @@ async fn three_nodes_converge() {
     let fetch_c = tokio::spawn(async move {
         let mut got = Vec::new();
         for h in blk_c {
-            let bytes = c_sw.fetch_block(&h, Duration::from_secs(15)).await;
+            let bytes = c_sw.fetch_block(&h, Duration::from_secs(60)).await;
             got.push((h, bytes));
         }
         got
@@ -247,7 +258,7 @@ async fn mesh_effect_late_joiner_pulls_from_two_holders() {
     wait_until(
         || a.stats().direct_links >= 1 && b.stats().direct_links >= 1,
         "a-b linked",
-        Duration::from_secs(10),
+        Duration::from_secs(30),
     )
     .await;
 
@@ -257,7 +268,7 @@ async fn mesh_effect_late_joiner_pulls_from_two_holders() {
     b.warm_blocks(&hashes);
     for (h, expected) in &blocks {
         let bytes = b
-            .fetch_block(h, Duration::from_secs(15))
+            .fetch_block(h, Duration::from_secs(60))
             .await
             .expect("b fetched");
         assert_eq!(&bytes, expected);
@@ -266,7 +277,7 @@ async fn mesh_effect_late_joiner_pulls_from_two_holders() {
     wait_until(
         || b_store.len() == 16,
         "b landed 16",
-        Duration::from_secs(5),
+        Duration::from_secs(30),
     )
     .await;
 
@@ -283,7 +294,7 @@ async fn mesh_effect_late_joiner_pulls_from_two_holders() {
     wait_until(
         || c.stats().peers_with_bloom == 2,
         "c sees both blooms",
-        Duration::from_secs(10),
+        Duration::from_secs(30),
     )
     .await;
     // also require B's bloom to actually cover the blocks (16 items)
@@ -293,7 +304,7 @@ async fn mesh_effect_late_joiner_pulls_from_two_holders() {
             cs.peers == 2 && cs.peers_with_bloom == 2 && cs.direct_links >= 1
         },
         "c fully linked",
-        Duration::from_secs(10),
+        Duration::from_secs(30),
     )
     .await;
 
@@ -301,7 +312,7 @@ async fn mesh_effect_late_joiner_pulls_from_two_holders() {
     c.warm_blocks(&hashes);
     for (h, expected) in &blocks {
         let bytes = c
-            .fetch_block(h, Duration::from_secs(15))
+            .fetch_block(h, Duration::from_secs(60))
             .await
             .expect("c fetched from the mesh");
         assert_eq!(&bytes, expected, "byte-identical through the mesh");
@@ -353,14 +364,14 @@ async fn relay_fallback_when_punching_is_disabled() {
     wait_until(
         || a.stats().relay_links >= 1 || b.stats().relay_links >= 1,
         "relay link established",
-        Duration::from_secs(15),
+        Duration::from_secs(30),
     )
     .await;
 
     // blocks flow THROUGH the relay
     for (h, expected) in &blocks {
         let bytes = b
-            .fetch_block(h, Duration::from_secs(20))
+            .fetch_block(h, Duration::from_secs(60))
             .await
             .expect("fetched via relay");
         assert_eq!(&bytes, expected, "byte-identical through the relay");
@@ -401,7 +412,7 @@ async fn fetch_returns_none_when_no_peer_holds_it() {
     wait_until(
         || a.stats().direct_links >= 1 && b.stats().direct_links >= 1,
         "linked",
-        Duration::from_secs(10),
+        Duration::from_secs(30),
     )
     .await;
     let missing = Hash::of(b"nobody-has-this-block");
@@ -456,13 +467,13 @@ async fn corrupt_peer_bytes_are_rejected_not_landed() {
     wait_until(
         || c.stats().direct_links >= 2,
         "c linked to both",
-        Duration::from_secs(10),
+        Duration::from_secs(30),
     )
     .await;
 
     // C fetches: if the lying peer is assigned first, its bytes FAIL blake3
     // and C rotates to the honest holder — either way C ends up with TRUTH.
-    let got = c.fetch_block(h, Duration::from_secs(15)).await;
+    let got = c.fetch_block(h, Duration::from_secs(60)).await;
     match got {
         Some(bytes) => assert_eq!(&bytes, expected, "only verified bytes can complete"),
         None => panic!("corrupt-first rotation must still fetch from the honest holder"),
@@ -551,19 +562,19 @@ async fn join_code_gate_stranger_never_joins() {
     wait_until(
         || a.stats().direct_links >= 1,
         "a linked to b",
-        Duration::from_secs(10),
+        Duration::from_secs(30),
     )
     .await;
     wait_until(
         || b.stats().direct_links >= 1,
         "b linked to a",
-        Duration::from_secs(10),
+        Duration::from_secs(30),
     )
     .await;
 
     // member transfer unaffected by the gate
     let (h0, expected0) = &blocks[0];
-    let got = b.fetch_block(h0, Duration::from_secs(10)).await;
+    let got = b.fetch_block(h0, Duration::from_secs(30)).await;
     assert_eq!(
         got.as_deref(),
         Some(expected0.as_slice()),
