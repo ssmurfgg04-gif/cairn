@@ -17,6 +17,12 @@
 //! Frame math is integer-exact: a note anchored at frame F becomes a
 //! marker at RationalTime { value: F, rate: R } — no float drift, so
 //! re-import lands on the identical frame the client clicked.
+//!
+//! The rate R must be the review version's TRUE rational (25/1,
+//! 24000/1001, …) — never a hardcoded default. The first dogfood run
+//! caught exactly that bug: markers exported at a fixed 24 while the cut
+//! was 25 fps landed 1.7 s late at the one-minute mark; a 23.976 cut
+//! with `ntsc=FALSE` drifted a frame every ~42 s.
 
 use crate::model::{JsonMap, Marker, TimeRange, TimeVal, Timeline};
 use crate::notes::{Note, NoteSet};
@@ -70,11 +76,23 @@ fn one_line(body: &str, cap: usize) -> String {
     s
 }
 
-/// Attach every note as a 1-frame marker on the timeline's stack,
-/// returning a NEW timeline (the input is untouched — the caller decides
-/// whether to write it out).
+/// Attach every note as a 1-frame marker on the timeline's stack at the
+/// timeline's own rate, returning a NEW timeline (the input is untouched
+/// — the caller decides whether to write it out). Prefer
+/// [`notes_to_otio_at`] when the notes belong to a review version: the
+/// version's true rate is the honest one.
 pub fn notes_to_otio(timeline: &Timeline, notes: &NoteSet) -> Timeline {
-    let rate = timeline_rate(timeline);
+    notes_to_otio_at(timeline, notes, None)
+}
+
+/// [`notes_to_otio`] with an explicit marker rate (the review version's
+/// true fps as a rational). `None` falls back to the timeline rate.
+/// The marker VALUE stays the frame index — NDF frames counted on the
+/// integer basis — so real time = frame / true-rate exactly as the media
+/// plays, and the NLE snaps the marker to the identical frame the client
+/// clicked.
+pub fn notes_to_otio_at(timeline: &Timeline, notes: &NoteSet, rate: Option<Rational>) -> Timeline {
+    let rate = rate.unwrap_or_else(|| timeline_rate(timeline));
     let mut out = timeline.clone();
     let mut markers: Vec<Marker> = notes
         .notes
@@ -102,9 +120,34 @@ fn timeline_rate(timeline: &Timeline) -> Rational {
         .unwrap_or_else(|| rat(24, 1))
 }
 
+/// FCP7 XML rate fields for a true rational fps: the `<timebase>` is the
+/// integer count basis and `<ntsc>TRUE</ntsc>` marks the 1001-derived
+/// rates (23.976 / 29.97 / 59.94). True integer rates (24, 25, 30, 60)
+/// are always `ntsc=FALSE` — PAL 25 with ntsc=TRUE is a real import bug
+/// some tools exhibit.
+///
+/// Exotic fractional rates that are neither integer nor 1001-derived
+/// (e.g. 12.5) cannot be expressed in FCP7 at all; they round up to the
+/// next basis here (documented drift — use the OTIO export, which is
+/// exact, for those).
+pub fn fcpxml_rate_fields(fps_num: i64, fps_den: i64) -> (i64, bool) {
+    let den = fps_den.max(1);
+    let ntsc = den > 1 && fps_num % den != 0;
+    // ceil: 24000/1001 -> 24, 30000/1001 -> 30, 25/1 -> 25
+    let basis = (fps_num + den - 1) / den;
+    (basis.max(1), ntsc)
+}
+
+/// The true rational rate for an fps pair, always well-formed.
+pub fn true_rate(fps_num: i64, fps_den: i64) -> Rational {
+    rat(i128::from(fps_num.max(1)), i128::from(fps_den.max(1)))
+}
+
 /// FCP7 XML markers for interchange (Premiere / Resolve / FCP import).
-/// Frame-anchored: `<start>` is the frame number at the note's rate.
-pub fn notes_to_fcpxml(notes: &NoteSet, rate: i64, sequence_name: &str) -> String {
+/// Frame-anchored: `<start>` is the frame number at the version's rate —
+/// pass the fields from [`fcpxml_rate_fields`] computed from the TRUE
+/// fps, never a hardcoded default.
+pub fn notes_to_fcpxml(notes: &NoteSet, timebase: i64, ntsc: bool, sequence_name: &str) -> String {
     let esc = |s: &str| {
         s.replace('&', "&amp;")
             .replace('<', "&lt;")
@@ -118,8 +161,8 @@ pub fn notes_to_fcpxml(notes: &NoteSet, rate: i64, sequence_name: &str) -> Strin
     out.push_str(&format!(
         "  <sequence id=\"cairn-notes\">\n    <name>{}</name>\n    <rate><timebase>{}</timebase><ntsc>{}</ntsc></rate>\n",
         esc(sequence_name),
-        rate,
-        if matches!(rate, 24 | 30 | 60) { "FALSE" } else { "TRUE" }
+        timebase,
+        if ntsc { "TRUE" } else { "FALSE" }
     ));
     let mut rows: Vec<&Note> = notes.notes.values().collect();
     rows.sort_by(|a, b| a.anchor.frame.cmp(&b.anchor.frame).then(a.id.cmp(&b.id)));
@@ -209,8 +252,38 @@ mod tests {
     }
 
     #[test]
+    fn fcpxml_rate_fields_match_the_standard_rates() {
+        // true integer rates: exact basis, never NTSC
+        assert_eq!(fcpxml_rate_fields(24, 1), (24, false));
+        assert_eq!(fcpxml_rate_fields(25, 1), (25, false));
+        assert_eq!(fcpxml_rate_fields(30, 1), (30, false));
+        assert_eq!(fcpxml_rate_fields(60, 1), (60, false));
+        // 1001-derived: integer basis + ntsc=TRUE
+        assert_eq!(fcpxml_rate_fields(24000, 1001), (24, true));
+        assert_eq!(fcpxml_rate_fields(30000, 1001), (30, true));
+        assert_eq!(fcpxml_rate_fields(60000, 1001), (60, true));
+    }
+
+    #[test]
+    fn otio_markers_can_carry_the_versions_true_rate() {
+        // the TC-drift regression: a 23.976 review version exported with
+        // the old timeline-default 24 rate drifted a frame every ~42 s
+        let tl = timeline();
+        let with = notes_to_otio_at(&tl, &notes(), Some(true_rate(24000, 1001)));
+        assert_eq!(
+            with.tracks.markers[0].marked_range.start.rate,
+            rat(24000, 1001)
+        );
+        // frame index unchanged: value stays the clicked frame
+        assert_eq!(with.tracks.markers[0].marked_range.start.value, rat(42, 1));
+        // and the plain variant still uses the timeline rate
+        let plain = notes_to_otio(&tl, &notes());
+        assert_eq!(plain.tracks.markers[0].marked_range.start.rate, rat(24, 1));
+    }
+
+    #[test]
     fn fcpxml_markers_are_frame_anchored_and_escaped() {
-        let xml = notes_to_fcpxml(&notes(), 24, "Brand Film & Co");
+        let xml = notes_to_fcpxml(&notes(), 24, false, "Brand Film & Co");
         assert!(xml.contains("<!DOCTYPE xmeml>"));
         assert!(xml.contains("Brand Film &amp; Co"));
         assert!(xml.contains("<start>42</start>"));
@@ -229,7 +302,11 @@ mod tests {
             NoteStatus::Open,
             1,
         )]);
-        let xml2 = notes_to_fcpxml(&long, 24, "t");
+        // ntsc=TRUE path renders the flag
+        let xml_ntsc = notes_to_fcpxml(&notes(), 24, true, "t");
+        assert!(xml_ntsc.contains("<ntsc>TRUE</ntsc>"));
+        assert!(xml.contains("<ntsc>FALSE</ntsc>"));
+        let xml2 = notes_to_fcpxml(&long, 25, false, "t");
         assert!(xml2.contains('\u{2026}'));
         // still exactly one marker element (long bodies never break the XML)
         assert_eq!(xml2.matches("<marker>").count(), 1);
@@ -262,7 +339,7 @@ mod tests {
         let tl = timeline();
         let with = notes_to_otio(&tl, &neg);
         assert_eq!(with.tracks.markers[0].marked_range.start.value, rat(0, 1));
-        let xml = notes_to_fcpxml(&neg, 24, "t");
+        let xml = notes_to_fcpxml(&neg, 24, false, "t");
         assert!(xml.contains("<start>0</start>"));
     }
 }

@@ -33,6 +33,70 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
+/// ffprobe the watchable media: (fps_num, fps_den, frames). `None` when
+/// ffprobe is absent or the file is not probeable media — callers then
+/// require explicit `--fps`/`--frames`.
+///
+/// This is the dogfood fix for the hand-counted-frames class of bugs:
+/// publish used to trust the human ("240 frames at 24"), and every wrong
+/// number silently corrupted every comment timecode bound after it.
+/// The probe is authoritative when present; the flags remain the manual
+/// override for prober-less machines.
+pub fn probe_media(path: &Path) -> Option<(u32, u32, u64)> {
+    let candidates = [
+        "ffprobe",
+        "ffprobe.exe",
+        "/usr/local/bin/ffprobe",
+        "/opt/homebrew/bin/ffprobe",
+    ];
+    let ffprobe = candidates.iter().find(|c| {
+        std::process::Command::new(c)
+            .arg("-version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success())
+    })?;
+    let out = std::process::Command::new(ffprobe)
+        .args([
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=r_frame_rate,nb_frames:format=duration",
+            "-of",
+            "json",
+        ])
+        .arg(path)
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+    let stream = v.get("streams")?.as_array()?.first()?;
+    let rate = stream.get("r_frame_rate")?.as_str()?;
+    let (n, d) = rate.split_once('/')?;
+    let n: u32 = n.parse().ok()?;
+    let d: u32 = d.parse().ok().filter(|d| *d > 0)?;
+    if n == 0 {
+        return None;
+    }
+    // nb_frames is a container hint, not a promise: derive from duration
+    // when missing or absurd
+    let from_count: Option<u64> = stream
+        .get("nb_frames")
+        .and_then(|f| f.as_str())
+        .and_then(|f| f.parse().ok())
+        .filter(|f| *f > 0);
+    let frames = from_count.or_else(|| {
+        let dur: f64 = v.get("format")?.get("duration")?.as_str()?.parse().ok()?;
+        Some((dur * f64::from(n) / f64::from(d)).round() as u64)
+    })?;
+    Some((n, d, frames.max(1)))
+}
+
 fn load_or_new(root: &Path, title: Option<&str>) -> anyhow::Result<ReviewFile> {
     match Store::load(root).map_err(anyhow::Error::msg)? {
         Some(mut f) => {
@@ -360,5 +424,48 @@ mod tests {
             "a"
         )
         .is_ok());
+    }
+
+    /// ffprobe round: a real 2 s 25 fps file must probe (25, 1, ~50) —
+    /// this is what publish auto-fills from. Skips without ffprobe.
+    #[test]
+    fn probe_media_reads_real_rate_and_frames() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("cut.mp4");
+        let ok = std::process::Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=size=320x180:rate=25",
+                "-t",
+                "2",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+            ])
+            .arg(&src)
+            .output()
+            .is_ok_and(|o| o.status.success());
+        if !ok {
+            eprintln!("skipping: no ffmpeg");
+            return;
+        }
+        let (n, d, frames) = probe_media(&src).expect("probe must succeed on real media");
+        assert_eq!((n, d), (25, 1));
+        assert!(
+            (45..=55).contains(&frames),
+            "2 s at 25 fps ≈ 50 frames, got {frames}"
+        );
+        // and a non-media file probes to None (fail-closed, not garbage)
+        let junk = dir.path().join("junk.txt");
+        std::fs::write(&junk, b"not media").unwrap();
+        assert!(probe_media(&junk).is_none());
+        assert!(probe_media(&dir.path().join("missing.mp4")).is_none());
     }
 }

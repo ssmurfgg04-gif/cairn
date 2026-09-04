@@ -31,14 +31,17 @@ pub trait Transcoder {
 /// The real one: ffmpeg. Invoked with:
 ///
 /// ```text
-/// ffmpeg -y -i SRC -vf scale=-2:HEIGHT -c:v libx264 -preset medium
-///        -crf CRF -pix_fmt yuv420p -c:a aac -b:a 128k
-///        -movflags +faststart DST
+/// ffmpeg -y -i SRC -vf scale=-2:'trunc(min(ih,H)/2)*2',setsar=1
+///        -c:v libx264 -preset medium -crf CRF -pix_fmt yuv420p
+///        -c:a aac -b:a 128k -movflags +faststart DST
 /// ```
 ///
-/// * `-vf scale=-2:H` — width auto (even, as H.264 requires), no upscale
-///   is handled by the caller choosing min(height, source height)...
-///   practically we cap: scale only downscales via `scale=-2:'min(ih,H)'`.
+/// * `-vf scale=-2:'trunc(min(ih,H)/2)*2'` — BOTH dimensions forced even
+///   (H.264/yuv420p requirement; `-2` alone only fixes width — odd-HEIGHT
+///   sources like 321x179 used to fail the encode outright, which the
+///   first dogfood run caught), downscale-only via `min(ih,H)`.
+/// * `setsar=1` — square pixels so a ±1px rounded dimension can never
+///   stretch the proxy against the original's aspect.
 /// * `-movflags +faststart` — the moov atom moves to the front so the
 ///   review player scrubs over HTTP ranges without full download.
 #[derive(Clone, Copy, Debug, Default)]
@@ -83,9 +86,10 @@ impl Transcoder for FfmpegTranscoder {
         profile: &super::model::ProxyProfile,
     ) -> Result<TranscodeOutput, String> {
         let ffmpeg = Self::detect_ffmpeg().ok_or_else(|| "ffmpeg not found".to_string())?;
+        // even dims on BOTH axes (see module doc), downscale-only
         let vf = format!(
-            "scale=-2:'min(ih,{})'",
-            profile.max_height.max(2) // even, downscale-only
+            "scale=-2:'trunc(min(ih,{})/2)*2',setsar=1",
+            profile.max_height.max(2)
         );
         let out = Command::new(&ffmpeg)
             .arg("-y")
@@ -181,5 +185,76 @@ mod tests {
             &crate::model::ProxyProfile::default(),
         );
         assert!(r.is_err());
+    }
+
+    /// The 1px/odd-dimension proxy regression, against real ffmpeg: an
+    /// odd source (321x179) used to fail the encode outright (x264 needs
+    /// even width AND height; `-2` only fixed width). Skipped when ffmpeg
+    /// is absent — CI installs it, dev boxes usually have it.
+    #[test]
+    fn ffmpeg_produces_even_dimensions_from_odd_sources() {
+        let t = FfmpegTranscoder;
+        if !t.available() {
+            eprintln!("skipping: no ffmpeg");
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        // odd-odd source: the worst case for even-dimension scaling
+        let src = dir.path().join("odd.mov");
+        let gen = Command::new("ffmpeg")
+            .args([
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=size=321x179:rate=24",
+                "-t",
+                "1",
+                "-c",
+                "ffv1",
+            ])
+            .arg(&src)
+            .output()
+            .expect("spawn ffmpeg for source");
+        assert!(gen.status.success(), "source generation failed");
+        let dst = dir.path().join("odd-proxy.mp4");
+        let profile = crate::model::ProxyProfile {
+            max_height: 1080,
+            ..Default::default()
+        };
+        t.transcode(&src, &dst, &profile)
+            .expect("odd source must transcode");
+        // probe the output: both dimensions even, aspect within 1%
+        let probe = Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height",
+                "-of",
+                "csv=p=0",
+            ])
+            .arg(&dst)
+            .output()
+            .expect("spawn ffprobe");
+        let dims = String::from_utf8_lossy(&probe.stdout);
+        let dims = dims.trim();
+        let (w, h): (u64, u64) = dims
+            .split_once(',')
+            .and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?)))
+            .expect("probe dims");
+        assert_eq!(w % 2, 0, "width must be even, got {dims}");
+        assert_eq!(h % 2, 0, "height must be even, got {dims}");
+        let src_ar = 321.0 / 179.0;
+        let out_ar = w as f64 / h as f64;
+        assert!(
+            (src_ar - out_ar).abs() / src_ar < 0.02,
+            "aspect drift too large: {src_ar} vs {out_ar}"
+        );
     }
 }

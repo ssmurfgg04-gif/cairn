@@ -27,6 +27,23 @@ impl Default for ProxyProfile {
     }
 }
 
+impl ProxyProfile {
+    /// The review-portal profile: 720p is the streaming sweet spot for
+    /// guests on hotel/venue WiFi. The default 1080 profile exists for
+    /// local editorial offline work; but a review proxy that is ~95% of
+    /// the source (the first dogfood finding: 1080p in, 1080p out)
+    /// defeats "remote reviewers pull MBs, not GBs" — 720 halves the
+    /// bytes while staying comment-legible (frame-accurate TC, not
+    /// pixel-peeping, is the portal's job).
+    pub fn review() -> ProxyProfile {
+        ProxyProfile {
+            max_height: 720,
+            codec: "h264".into(),
+            crf: 23,
+        }
+    }
+}
+
 /// Lifecycle of one proxy entry.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
