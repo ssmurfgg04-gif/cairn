@@ -100,7 +100,10 @@ wait_state(){ local i=0
   done
   [ -n "$last_err" ] && say "project $2 last_error: $last_err"
   return 1; }
-tree_hash(){ (cd "$1" && find . -type f -exec sha256sum {} \; | sort | sha256sum | cut -d' ' -f1); }
+# .cairn/ is the control directory (root marker + overlay state the daemon
+# rewrites per pass — ADR-0019 §5, the .git convention): content-identity
+# gates hash USER files only.
+tree_hash(){ (cd "$1" && find . -path ./.cairn -prune -o -type f -exec sha256sum {} \; | sort | sha256sum | cut -d' ' -f1); }
 
 [ -x "$BIN" ] || { say "missing $BIN — run: cargo build --release -p cairn-cli -p cairn-x"; exit 2; }
 [ -x "$XBIN" ] || { say "missing $XBIN — run: cargo build --release -p cairn-x"; exit 2; }
@@ -146,7 +149,7 @@ data = os.urandom(3072*1024)
 open(f"{root}/seq/take1/master.braw","wb").write(data)
 open(f"{root}/seq/take2_proxy.braw","wb").write(data[:-4096]+b"PROXY"+data[-4096:])
 PY
-N_FILES=$(find "$ROOT_A" -type f | wc -l)
+N_FILES=$(find "$ROOT_A" -path "$ROOT_A/.cairn" -prune -o -type f -print | wc -l)
 CORPUS_BYTES=$(du -sb "$ROOT_A" | cut -f1)
 say "corpus ready: $N_FILES files, $(human_mb "$CORPUS_BYTES")"
 
@@ -195,7 +198,7 @@ for i in range(24):
         f.write(os.urandom(4*1024*1024))
 PY
 W2_BYTES=$(( 24 * 4 * 1048576 ))
-N_ALL=$(find "$ROOT_A" -type f | wc -l)
+N_ALL=$(find "$ROOT_A" -path "$ROOT_A/.cairn" -prune -o -type f -print | wc -l)
 TREE_PRE_KILL=$(tree_hash "$ROOT_A")
 say "wave2 written: $N_ALL files on disk; pre-kill tree $TREE_PRE_KILL"
 T2=$(now_ms)

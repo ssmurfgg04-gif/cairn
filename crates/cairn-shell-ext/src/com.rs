@@ -16,6 +16,9 @@
 //! box, interfaces raw pointers into vtables we define.
 
 #![allow(clippy::missing_safety_doc)]
+// The whole module is Windows COM FFI: unsafe is the contract. Every unsafe
+// block below carries its own safety note (the fs-win::cfapi convention).
+#![allow(unsafe_code)]
 
 use std::ffi::c_void;
 use std::path::PathBuf;
