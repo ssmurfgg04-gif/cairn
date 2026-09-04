@@ -9,6 +9,7 @@
 mod daemon;
 mod dashboard;
 mod doctor;
+mod handoff;
 mod members;
 mod projects;
 mod proxy;
@@ -290,6 +291,11 @@ pub enum Cmd {
         #[arg(long)]
         swarm_mdns: bool,
     },
+    /// AAF/OMF handoff ledger (ADR-0020 §6): bind exports to picture lock
+    Handoff {
+        #[command(subcommand)]
+        cmd: handoff_cmd::HandoffCmd,
+    },
     /// Role-based access control (ADR-0020 §4): members, roles, checks
     Member {
         #[command(subcommand)]
@@ -337,6 +343,49 @@ pub enum Cmd {
         #[arg(long)]
         no_mdns: bool,
     },
+}
+
+pub mod handoff_cmd {
+    use clap::Subcommand;
+
+    #[derive(Subcommand)]
+    pub enum HandoffCmd {
+        /// Record an AAF/OMF export against the cut it came from (the
+        /// picture-lock binding for the sound team)
+        Record {
+            #[arg(long, default_value = ".")]
+            root: String,
+            /// Exported AAF/OMF file, RELATIVE to the root
+            #[arg(long)]
+            file: String,
+            /// The timeline (OTIO/FCPXML) the export was cut from
+            #[arg(long)]
+            timeline: Option<String>,
+            /// Snapshot/commit hash the export was made from
+            #[arg(long)]
+            snapshot: Option<String>,
+            #[arg(long, default_value = "")]
+            note: String,
+            #[arg(long, default_value = "editor")]
+            by: String,
+        },
+        /// Verify every handoff: file digest + picture-lock fingerprint
+        Verify {
+            #[arg(long, default_value = ".")]
+            root: String,
+            /// One file only (default: all)
+            #[arg(long)]
+            file: Option<String>,
+            /// Current timeline to check the picture-lock binding
+            #[arg(long)]
+            timeline: Option<String>,
+        },
+        /// List recorded handoffs
+        List {
+            #[arg(long, default_value = ".")]
+            root: String,
+        },
+    }
 }
 
 pub mod member_cmd {
@@ -505,6 +554,23 @@ pub mod review_cmd {
             /// one version (default: all)
             #[arg(long)]
             version: Option<u32>,
+        },
+        /// Export a version's comments as NLE markers (FCP7 XML by
+        /// default; --otio for the canonical timeline with markers)
+        ExportMarkers {
+            #[arg(long, default_value = ".")]
+            root: String,
+            #[arg(long)]
+            version: u32,
+            /// Output file (markers.xml or markers.otio)
+            #[arg(long)]
+            out: String,
+            /// Export OTIO with markers instead of FCP7 XML
+            #[arg(long)]
+            otio: bool,
+            /// Base timeline for OTIO export (default: marker-only shell)
+            #[arg(long)]
+            timeline: Option<String>,
         },
         /// Mark a comment resolved (or reopened with --status OPEN)
         Resolve {
@@ -738,6 +804,7 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
             dev_key,
             no_mdns,
         } => run_signal_server(&bind, &relay_bind, join_code, dev_key, no_mdns).await,
+        Cmd::Handoff { cmd } => run_handoff(cmd),
         Cmd::Member { cmd } => run_member(cmd),
         Cmd::Proxy { cmd } => run_proxy(cmd),
         Cmd::Review { cmd } => run_review(cmd),
@@ -1735,6 +1802,21 @@ fn run_review(cmd: review_cmd::ReviewCmd) -> anyhow::Result<()> {
         ReviewCmd::Comments { root, version } => {
             review::cmd_comments(Path::new(&root), version)?;
         }
+        ReviewCmd::ExportMarkers {
+            root,
+            version,
+            out,
+            otio,
+            timeline,
+        } => {
+            handoff::cmd_export_markers(
+                Path::new(&root),
+                version,
+                &out,
+                otio,
+                timeline.as_deref(),
+            )?;
+        }
         ReviewCmd::Resolve {
             root,
             version,
@@ -1842,4 +1924,44 @@ mod chrono_tests {
             "2000-02-29 12:30:45 UTC"
         );
     }
+}
+
+// ---------- AAF/OMF handoff ledger (ADR-0020 §6) ----------
+
+fn run_handoff(cmd: handoff_cmd::HandoffCmd) -> anyhow::Result<()> {
+    use handoff_cmd::HandoffCmd;
+    use std::path::Path;
+    match cmd {
+        HandoffCmd::Record {
+            root,
+            file,
+            timeline,
+            snapshot,
+            note,
+            by,
+        } => {
+            members::guard(
+                Path::new(&root),
+                &members::acting_device(None),
+                cairn_core::rbac::Permission::Snapshot,
+            )?;
+            handoff::cmd_record(
+                Path::new(&root),
+                &file,
+                timeline.as_deref(),
+                snapshot.as_deref(),
+                &note,
+                &by,
+            )?;
+        }
+        HandoffCmd::Verify {
+            root,
+            file,
+            timeline,
+        } => {
+            handoff::cmd_verify(Path::new(&root), file.as_deref(), timeline.as_deref())?;
+        }
+        HandoffCmd::List { root } => handoff::cmd_list(Path::new(&root))?,
+    }
+    Ok(())
 }
