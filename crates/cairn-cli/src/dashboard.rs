@@ -61,6 +61,9 @@ pub async fn serve(addr: String, state: Arc<DaemonState>) -> anyhow::Result<()> 
         .route("/api/v1/team", get(team))
         .route("/api/v1/search", get(search))
         .route("/api/v1/update", get(update_state))
+        // round 19: the NLE marker bridge — the same body the CLI exports,
+        // served on loopback for the Premiere UXP panel (ADR-0022 follow-up)
+        .route("/api/v1/markers", get(markers))
         .with_state(state);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!(%addr, "dashboard listening (loopback only)");
@@ -574,6 +577,62 @@ async fn review_summary(State(_state): State<Arc<DaemonState>>) -> Json<serde_js
             .cmp(b["project_id"].as_str().unwrap_or(""))
     });
     Json(json!({ "review": out }))
+}
+
+/// GET /api/v1/markers?project=&version=&format=fcpxml|otio|csv — the NLE
+/// marker bridge over the loopback gateway. The same body the CLI exports
+/// (`cairn review export-markers`), so the Premiere UXP panel and the
+/// terminal can never disagree. Read-only: comments live in the root's
+/// machine-local `.cairn` dir (ADR-0022's honest-scope note); RBAC's write
+/// boundary (attach/detach/flags) is untouched by a read.
+async fn markers(
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> axum::response::Response {
+    use axum::http::{header, StatusCode};
+    use axum::response::IntoResponse;
+
+    let project = q.get("project").cloned().unwrap_or_default();
+    let version: u32 = q.get("version").and_then(|v| v.parse().ok()).unwrap_or(0);
+    let format = q.get("format").cloned().unwrap_or_else(|| "fcpxml".into());
+
+    // resolve the root: the named project's runtime, else the first (the
+    // panel always names the project; the fallback keeps manual URL fetch
+    // on single-project machines working)
+    let root: Option<std::path::PathBuf> = {
+        let map = crate::projects::RUNTIMES.read().await;
+        map.values()
+            .find(|rt| project.is_empty() || rt.project_id == project)
+            .map(|rt| rt.workspace.clone())
+    };
+    let Some(root) = root else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({"ok": false, "error": format!("no attached project matches '{project}'")})),
+        )
+            .into_response();
+    };
+    match crate::handoff::markers_payload(&root, version, &format, None) {
+        Ok((body, ctype)) => {
+            let ext = match format.as_str() {
+                "otio" => "otio",
+                "csv" => "csv",
+                _ => "fcpxml",
+            };
+            let headers = [
+                (header::CONTENT_TYPE, ctype.to_string()),
+                (
+                    header::CONTENT_DISPOSITION,
+                    format!("attachment; filename=\"markers-v{version}.{ext}\""),
+                ),
+            ];
+            (StatusCode::OK, headers, body).into_response()
+        }
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({"ok": false, "error": e.to_string()})),
+        )
+            .into_response(),
+    }
 }
 
 async fn flags(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
