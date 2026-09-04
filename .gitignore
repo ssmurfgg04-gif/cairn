@@ -18,3 +18,4 @@ Cargo.lock.orig
 crates/cairn-core/corpus/**/*.dat
 .dashboard-smoke/
 real-corpus-report.json
+actionlint
