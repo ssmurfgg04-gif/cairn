@@ -23,6 +23,7 @@ const STR = {
   "nav.activity": { en: "Activity", "de-DE": "Aktivität", "ja-JP": "アクティビティ", "zh-CN": "动态" },
   "nav.review": { en: "Review", "de-DE": "Review", "ja-JP": "レビュー", "zh-CN": "审阅" },
   "nav.team": { en: "Team", "de-DE": "Team", "ja-JP": "チーム", "zh-CN": "团队" },
+  "nav.live": { en: "Live", "de-DE": "Live", "ja-JP": "ライブ", "zh-CN": "实时" },
   "nav.locks": { en: "Locks", "de-DE": "Sperren", "ja-JP": "ロック", "zh-CN": "锁定" },
   "nav.versions": { en: "Versions", "de-DE": "Versionen", "ja-JP": "バージョン", "zh-CN": "版本" },
   "nav.pins": { en: "Pins", "de-DE": "Angeheftet", "ja-JP": "ピン留め", "zh-CN": "置顶" },
@@ -101,6 +102,10 @@ const STR = {
   "empty.pins": { en: "No pins on this machine.", "de-DE": "Keine Pins auf dieser Maschine.", "ja-JP": "このマシンにピンはありません。", "zh-CN": "本机暂无置顶。" },
   "empty.recall": { en: "No recall jobs yet.", "de-DE": "Noch keine Abruf-Jobs.", "ja-JP": "リコールジョブはまだありません。", "zh-CN": "暂无取回任务。" },
   "empty.team": { en: "No project attached — the team roster syncs with the project.", "de-DE": "Kein Projekt verbunden — die Teamliste synchronisiert mit dem Projekt.", "ja-JP": "プロジェクトが未接続 — チーム名簿はプロジェクトと同期されます。", "zh-CN": "未连接项目 — 团队名册随项目同步。" },
+  "card.live": { en: "Live presence", "de-DE": "Live-Präsenz", "ja-JP": "ライブプレゼンス", "zh-CN": "实时在线" },
+  "note.live": { en: "Other editors' playheads, streamed in real time. Off by default — each editor opts in via the live_presence flag.", "de-DE": "Playheads anderer Editoren in Echtzeit. Standardmäßig aus — jede:r Editor:in aktiviert das Flag live_presence selbst.", "ja-JP": "他の編集者のプレイヘッドをリアルタイム表示。デフォルトはオフ — live_presence フラグで各自が有効化します。", "zh-CN": "实时显示其他剪辑的播放头。默认关闭 — 每位剪辑师自行开启 live_presence 标志。" },
+  "empty.live": { en: "No editors online right now.", "de-DE": "Gerade keine Editoren online.", "ja-JP": "現在オンラインの編集者はいません。", "zh-CN": "当前没有编辑在线。" },
+  "live.off": { en: "Live presence is OFF on this device — flip the live_presence flag (applies at next swarm join).", "de-DE": "Live-Präsenz ist auf diesem Gerät AUS — live_presence-Flag umschalten (greift beim nächsten Swarm-Join).", "ja-JP": "この端末ではライブプレゼンスはオフ — live_presence フラグを切り替えてください（次回の swarm 参加時に有効）。", "zh-CN": "本设备的实时在线已关闭 — 切换 live_presence 标志（下次加入 swarm 时生效）。" },
   "empty.review": { en: "no review sessions — publish one: cairn review publish --media cuts/v1.mp4", "de-DE": "keine Review-Sitzungen — veröffentliche eine: cairn review publish --media cuts/v1.mp4", "ja-JP": "レビューセッションはありません — 公開するには: cairn review publish --media cuts/v1.mp4", "zh-CN": "暂无审阅会话 — 发布一个：cairn review publish --media cuts/v1.mp4" },
 
   "files.filter": { en: "filter by name…", "de-DE": "nach Name filtern…", "ja-JP": "名前で絞り込み…", "zh-CN": "按名称筛选…" },
@@ -1109,6 +1114,102 @@ function copyBtn(ev) {
 }
 $("ob-cli-copy").addEventListener("click", copyBtn);
 
+/* ---------- live presence (round 20, ADR-0023 §2) ----------
+   SSE stream of editor playheads when this device opted in; the honest
+   "presence off" chip otherwise (never a fake empty roster). */
+
+let LIVE_SSE = null;
+let LIVE_ROWS = new Map(); // from -> {project, editor, frame, rate, action, at}
+
+function liveRow(ev) {
+  let payload = {};
+  try { payload = JSON.parse(ev.payload || "{}"); } catch { /* foreign schema — show raw */ }
+  return {
+    from: ev.from || "?",
+    project: ev.project || "",
+    editor: payload.editor || "",
+    frame: Number.isFinite(payload.frame) ? payload.frame : null,
+    rate: Number.isFinite(payload.rate) ? payload.rate : null,
+    action: payload.action || "",
+    local: ev.local === true,
+    at: Date.now(),
+  };
+}
+
+function renderLive() {
+  const body = $("live-body");
+  body.textContent = "";
+  if (!LIVE_ROWS.size) {
+    const empty = document.createElement("div");
+    empty.className = "muted-note";
+    empty.textContent = t("empty.live");
+    body.appendChild(empty);
+    return;
+  }
+  const list = document.createElement("ul");
+  list.className = "audit-list";
+  const rows = [...LIVE_ROWS.values()].sort((a, b) => (a.local === b.local ? a.editor.localeCompare(b.editor) : a.local ? -1 : 1));
+  for (const r of rows) {
+    const li = document.createElement("li");
+    const tc = r.frame !== null && r.rate
+      ? `${Math.floor(r.frame / (r.rate * 3600))}:${String(Math.floor((r.frame / (r.rate * 60)) % 60)).padStart(2, "0")}:${String(Math.floor((r.frame / r.rate) % 60)).padStart(2, "0")}:${String(Math.floor(r.frame % r.rate)).padStart(2, "0")}`
+      : "—";
+    li.innerHTML =
+      `<span class="dot ${r.local ? "ok" : ""}"></span>` +
+      `<span class="sans"><b>${esc(r.editor || r.from)}</b>${r.local ? " (you)" : ""}</span>` +
+      `<span class="mono">${esc(tc)}</span>` +
+      `<span class="dim">${esc(r.action || "")}</span>` +
+      `<span class="mono dim">${esc(r.project)}</span>`;
+    list.appendChild(li);
+  }
+  body.appendChild(list);
+}
+
+function liveSseOpen() {
+  if (LIVE_SSE) return;
+  try {
+    LIVE_SSE = new EventSource("/api/v1/live");
+    LIVE_SSE.onmessage = (msg) => {
+      try {
+        const ev = JSON.parse(msg.data);
+        LIVE_ROWS.set(ev.from, liveRow(ev));
+        // 15s staleness prune (matches the daemon-side TTL)
+        for (const [k, r] of LIVE_ROWS) if (Date.now() - r.at > 15000) LIVE_ROWS.delete(k);
+        renderLive();
+      } catch { /* skip malformed event */ }
+    };
+    LIVE_SSE.onerror = () => { /* stream closed (flag flip / daemon down): next refresh re-opens */ };
+  } catch { /* EventSource unavailable — snapshot polling still covers */ }
+}
+
+async function refreshLive() {
+  try {
+    const snap = await getJSON("/api/v1/live/snapshot");
+    if (snap.enabled !== true) {
+      if (LIVE_SSE) { LIVE_SSE.close(); LIVE_SSE = null; }
+      LIVE_ROWS.clear();
+      const note = $("live-note");
+      if (note) note.textContent = t("live.off");
+      const body = $("live-body");
+      body.textContent = "";
+      const chip = document.createElement("div");
+      chip.className = "muted-note";
+      chip.textContent = t("live.off");
+      body.appendChild(chip);
+      return;
+    }
+    const note = $("live-note");
+    if (note) note.textContent = t("note.live");
+    for (const p of snap.projects || []) {
+      for (const ev of p.events || []) {
+        LIVE_ROWS.set(ev.from, liveRow({ ...ev, project: p.project, local: false }));
+      }
+    }
+    liveSseOpen();
+    renderLive();
+  } catch { /* daemon gone — status chip covers */ }
+}
+
 /* ---------- orchestration ---------- */
 
 async function refreshAll() {
@@ -1131,6 +1232,7 @@ async function refreshAll() {
     const f = await getJSON("/api/v1/flags");
     renderFlags(f.flags);
   } catch { /* covered */ }
+  refreshLive();
 }
 
 let LAST_FILES = null;

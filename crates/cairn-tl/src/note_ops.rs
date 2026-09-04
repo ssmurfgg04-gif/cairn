@@ -554,16 +554,38 @@ pub struct AppliedItem {
 
 /// Apply a changelist to a timeline. Returns the new timeline plus the
 /// per-item ledger. Items resolve in frame order (deterministic).
+///
+/// TWO-PASS, identity-based (the bug this prevents: a trim shifts every
+/// downstream clip, so resolving later notes against the MID-APPLY timeline
+/// mis-targets them — the merge engine's "ops follow their element" rule,
+/// applied here):
+///   pass 1: resolve each note's frame → element REFERENCE (uuid or name)
+///           against the SOURCE timeline, exactly as the client saw it;
+///   pass 2: apply the ops to the working copy by reference — trims can
+///           shift positions freely, the targets never drift.
 pub fn apply_changelist(tl: &Timeline, items: &[MechItem]) -> (Timeline, Vec<AppliedItem>) {
     let mut out = tl.clone();
     let mut ledger = Vec::new();
     // frame order, then note id — stable regardless of NoteSet iteration
     let mut ordered: Vec<&MechItem> = items.iter().collect();
     ordered.sort_by(|a, b| (a.frame, &a.note_id).cmp(&(b.frame, &b.note_id)));
-    for item in ordered {
+    // pass 1: pin each item's target against the SOURCE doc
+    let mut pinned: Vec<(&MechItem, Option<String>)> = Vec::new();
+    for item in &ordered {
+        let target = element_at(tl, item.frame, item.rate)
+            .map(|(ti, ii)| el_ref(&tl.tracks.children[ti].children[ii]));
+        pinned.push((item, target));
+    }
+    // pass 2: apply by reference on the working copy
+    for (item, target) in pinned {
         for op in &item.ops {
             let summary = format!("{} — {}", op.summary(), item.body);
-            let status = apply_one(&mut out, op, item.frame, item.rate);
+            let status = match &target {
+                None => {
+                    ApplyStatus::Unresolved("no clip at that frame (in the published cut)".into())
+                }
+                Some(r) => apply_one(&mut out, op, r),
+            };
             ledger.push(AppliedItem {
                 note_id: item.note_id.clone(),
                 summary,
@@ -574,35 +596,36 @@ pub fn apply_changelist(tl: &Timeline, items: &[MechItem]) -> (Timeline, Vec<App
     (out, ledger)
 }
 
-fn apply_one(tl: &mut Timeline, op: &MechOp, frame: i128, rate: i128) -> ApplyStatus {
-    let locate = || element_at(tl, frame, rate);
+/// Stable element reference: uuid when stamped (rung a), else name (rung b).
+fn el_ref(el: &Element) -> String {
+    match el.cairn_uuid() {
+        Some(u) => format!("uuid:{u}"),
+        None => format!("name:{}", el.name),
+    }
+}
+
+/// Find an element by the reference form of [`el_ref`] and apply the op to
+/// it, wherever it currently lives. `None` = the element is gone (deleted by
+/// an earlier op — recorded, never silent).
+fn apply_one(tl: &mut Timeline, op: &MechOp, target: &str) -> ApplyStatus {
+    // locate by reference on the CURRENT doc (identity follows the element)
+    let found = find_by_ref(tl, target);
+    let Some((t_idx, i_idx)) = found else {
+        return ApplyStatus::Unresolved("clip was removed by an earlier op".into());
+    };
     match op {
         MechOp::Delete => {
-            let Some((t_idx, i_idx)) = locate() else {
-                return ApplyStatus::Unresolved("no clip at that frame".into());
-            };
-            let track = &mut tl.tracks.children[t_idx];
-            if i_idx < track.children.len() {
-                track.children.remove(i_idx);
-                ApplyStatus::Applied
-            } else {
-                ApplyStatus::Unresolved("track index out of range".into())
-            }
+            tl.tracks.children[t_idx].children.remove(i_idx);
+            ApplyStatus::Applied
         }
         MechOp::TrimOut { seconds, .. } | MechOp::TrimIn { seconds } => {
             let Some(n) = parse_rational(seconds) else {
                 return ApplyStatus::Unresolved(format!("unparseable magnitude {seconds:?}"));
             };
-            let Some((t_idx, i_idx)) = locate() else {
-                return ApplyStatus::Unresolved("no clip at that frame".into());
-            };
             let el = &mut tl.tracks.children[t_idx].children[i_idx];
             trim_element(el, matches!(op, MechOp::TrimIn { .. }), n)
         }
         MechOp::Replace { target } => {
-            let Some((t_idx, i_idx)) = locate() else {
-                return ApplyStatus::Unresolved("no clip at that frame".into());
-            };
             let el = &mut tl.tracks.children[t_idx].children[i_idx];
             let Some(media) = el.media.as_mut() else {
                 return ApplyStatus::Unresolved("element has no media to replace".into());
@@ -619,9 +642,6 @@ fn apply_one(tl: &mut Timeline, op: &MechOp, frame: i128, rate: i128) -> ApplySt
         MechOp::Gain { db } => {
             let Some(n) = parse_rational(db) else {
                 return ApplyStatus::Unresolved(format!("unparseable gain {db:?}"));
-            };
-            let Some((t_idx, i_idx)) = locate() else {
-                return ApplyStatus::Unresolved("no clip at that frame".into());
             };
             let el = &mut tl.tracks.children[t_idx].children[i_idx];
             el.effects.push(crate::model::Effect {
@@ -642,6 +662,21 @@ fn apply_one(tl: &mut Timeline, op: &MechOp, frame: i128, rate: i128) -> ApplySt
             ApplyStatus::Applied
         }
     }
+}
+
+/// Find a top-level track item by uuid-or-name reference.
+fn find_by_ref(tl: &Timeline, reference: &str) -> Option<(usize, usize)> {
+    for (ti, tr) in tl.tracks.children.iter().enumerate() {
+        if !matches!(tr.kind, Kind::Track(_)) {
+            continue;
+        }
+        for (ii, item) in tr.children.iter().enumerate() {
+            if el_ref(item) == reference {
+                return Some((ti, ii));
+            }
+        }
+    }
+    None
 }
 
 fn trim_element(el: &mut Element, head: bool, amount: Rational) -> ApplyStatus {

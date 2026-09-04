@@ -37,6 +37,7 @@
       <a href="#activity" class="nav-item" data-i18n="nav.activity">Activity</a>
       <a href="#review" class="nav-item" data-i18n="nav.review">Review</a>
       <a href="#team" class="nav-item" data-i18n="nav.team">Team</a>
+      <a href="#live" class="nav-item" data-i18n="nav.live">Live</a>
       <a href="#locks" class="nav-item" data-i18n="nav.locks">Locks</a>
       <a href="#versions" class="nav-item" data-i18n="nav.versions">Versions</a>
       <a href="#pins" class="nav-item" data-i18n="nav.pins">Pins</a>
@@ -160,6 +161,16 @@
         <div class="meter"><div class="meter-fill" id="i1-meter"></div></div>
         <p class="note" data-i18n="note.i1">target &lt; 50 ms · measured from the header cache</p>
       </article>
+    </section>
+
+    <!-- round 20 (ADR-0023 §2): live presence — other editors' playheads,
+         streamed over SSE when this device opted in (flag off = honest chip) -->
+    <section id="live" class="card">
+      <h3 class="card-title" data-i18n="card.live">Live presence</h3>
+      <p class="note" id="live-note" data-i18n="note.live">See other editors' playheads in real time. Off by default — each editor opts in via the live_presence flag.</p>
+      <div id="live-body" class="team-body">
+        <div class="skel"></div>
+      </div>
     </section>
 
     <section id="projects" class="card">

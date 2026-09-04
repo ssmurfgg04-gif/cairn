@@ -492,6 +492,50 @@ service CtlDiagnostics {
   rpc GetFlags(GetFlagsRequest) returns (GetFlagsResponse);
 }
 
+// Live presence telemetry (ADR-0023 §2): the first ctl-side SERVER-STREAMING
+// RPC. Additive surface — old clients never see it, new clients degrade via
+// UNIMPLEMENTED on old daemons. Off by default: the daemon's
+// `live_presence` flag gates both directions, and the acting device needs
+// ViewPresence (all roles have it).
+service CtlPresence {
+  // Push one presence event (playhead/drag/selection): relayed to the
+  // project swarm + local subscribers. Rate-limited by contract
+  // (callers poll at 0.5-2s), not by the server.
+  rpc SendPresence(SendPresenceRequest) returns (Ack);
+  // Subscribe to inbound presence events (editor playheads, remote peers).
+  rpc WatchPresence(WatchPresenceRequest) returns (stream PresenceEventMsg);
+}
+
+message SendPresenceRequest {
+  reserved 100 to 199;
+  // Project (namespace) the event belongs to.
+  string project = 1;
+  // App payload (opaque JSON, <= 1200 bytes — same bound as the swarm
+  // codec). Content: editor name, playhead frame, rate, action tag.
+  bytes payload = 2;
+}
+
+message WatchPresenceRequest {
+  reserved 100 to 199;
+  // Optional project filter; empty = all attached projects.
+  string project = 1;
+}
+
+message PresenceEventMsg {
+  reserved 100 to 199;
+  // Sending node/device id.
+  string from = 1;
+  // Project (namespace) the event belongs to.
+  string project = 2;
+  // Opaque app payload (the sender's JSON, verbatim).
+  bytes payload = 3;
+  // Server-side receive time, unix ms.
+  int64 seen_at_ms = 4;
+  // True when the event originated on THIS device (echo of SendPresence —
+  // subscribers get a consistent view without a second round-trip).
+  bool local = 5;
+}
+
 message StatusRequest {
   reserved 100 to 199;
 }

@@ -9,15 +9,17 @@ use std::time::Instant;
 
 use cairn_core::clock::WallClock;
 use cairn_proto::pb::ctl_diagnostics_server::{CtlDiagnostics, CtlDiagnosticsServer};
+use cairn_proto::pb::ctl_presence_server::{CtlPresence, CtlPresenceServer};
 use cairn_proto::pb::ctl_projects_server::{CtlProjects, CtlProjectsServer};
 use cairn_proto::pb::ctl_status_server::{CtlStatus, CtlStatusServer};
 use cairn_proto::pb::{
     Ack, AttachRootRequest, AttachRootResponse, DetachRootRequest, DoctorCheck, DoctorReport,
     DoctorRequest, FlagInfo, GetFlagsRequest, GetFlagsResponse, ListProjectsCtlRequest,
-    ListProjectsCtlResponse, ProjectInfoCtl, ProjectStatus, SetFlagRequest, StatusRequest,
-    StatusResponse,
+    ListProjectsCtlResponse, PresenceEventMsg, ProjectInfoCtl, ProjectStatus, SendPresenceRequest,
+    SetFlagRequest, StatusRequest, StatusResponse, WatchPresenceRequest,
 };
 use tokio::sync::RwLock;
+use tokio_stream::StreamExt as _;
 use tonic::{Request, Response, Status};
 
 use crate::audit::AuditFile;
@@ -73,6 +75,15 @@ fn default_flags() -> Vec<(String, String)> {
         ("placeholder_driver".into(), "native".into()),
         // chunk-input normalization: OFF until it soaks behind AttachRoot (flag-gated)
         ("normalize_containers".into(), "false".into()),
+        // ADR-0023: live presence — OFF until the editor of THIS device opts
+        // in. Presence is per-device by construction (the flag lives in this
+        // machine's home store): flipping it never exposes anyone else.
+        // Applies at swarm join (attach/daemon start).
+        ("live_presence".into(), "false".into()),
+        // ADR-0023: zero-touch semantic timeline merge — OFF by default; every
+        // editor decides for themselves whether frame-disjoint re-cuts
+        // auto-merge (C11) or escalate (C3).
+        ("semantic_merge".into(), "false".into()),
     ]
 }
 
@@ -128,6 +139,126 @@ pub struct CtlDiagSvc {
 
 pub struct CtlProjectsSvc {
     pub state: Arc<DaemonState>,
+}
+
+// ---------- live presence (ADR-0023 §2) ----------
+
+/// The daemon's live-presence service: the ctl-boundary front door for
+/// playhead/drag/selection telemetry. OFF by default — both RPCs fail with
+/// `failed_precondition` naming the flag until the editor opts in.
+pub struct CtlPresenceSvc {
+    pub state: Arc<DaemonState>,
+}
+
+impl CtlPresenceSvc {
+    /// Is live presence on for this device? (In-memory mirror of the flag —
+    /// the same copy `set_flag` mutates and mirrors into the home store.)
+    async fn presence_on(&self) -> bool {
+        self.state
+            .flags
+            .read()
+            .await
+            .iter()
+            .any(|(k, v)| k == "live_presence" && v == "true")
+    }
+}
+
+#[tonic::async_trait]
+impl CtlPresence for CtlPresenceSvc {
+    async fn send_presence(
+        &self,
+        request: Request<SendPresenceRequest>,
+    ) -> Result<Response<Ack>, Status> {
+        if !self.presence_on().await {
+            return Err(Status::failed_precondition(
+                "live presence is OFF on this device — flip flag 'live_presence' (applies at \
+                 next swarm join/daemon start)",
+            ));
+        }
+        let req = request.into_inner();
+        if req.payload.len() > 1200 {
+            return Err(Status::invalid_argument(format!(
+                "presence payload {} bytes exceeds the 1200-byte telemetry bound",
+                req.payload.len()
+            )));
+        }
+        let project = req.project;
+        // RBAC: ViewPresence for the acting device against that project's
+        // members (ledgered, fail-closed on corrupt members)
+        rbac_guard(
+            &self.state,
+            &project,
+            None,
+            Permission::ViewPresence,
+            "ctl/send-presence",
+        )
+        .await?;
+        // 1) local echo: subscribers see this device's own events without a
+        //    second round-trip
+        let from = {
+            let store = cairn_store::Store::open(&self.state.home, Arc::new(WallClock))
+                .map_err(|e| Status::failed_precondition(e.message))?;
+            acting_device(&store)
+        };
+        let _ = projects::PRESENCE_TX.send(projects::LocalPresence {
+            from,
+            project: project.clone(),
+            payload: req.payload.clone(),
+            seen_at_ms: now_ms_i64(),
+            local: true,
+        });
+        // 2) relay into the project's swarm (encrypted sessions; no-op when
+        //    the project has no swarm or the join predates the flag flip)
+        let reached = {
+            let map = projects::RUNTIMES.read().await;
+            map.get(&project)
+                .and_then(|rt| rt.swarm.blocking_lock().clone())
+                .map(|sw| sw.broadcast_presence(&req.payload))
+                .unwrap_or(0)
+        };
+        tracing::trace!(project = %project, peers = reached, "presence sent");
+        Ok(Response::new(Ack { ok: true }))
+    }
+
+    type WatchPresenceStream =
+        std::pin::Pin<Box<dyn futures::Stream<Item = Result<PresenceEventMsg, Status>> + Send>>;
+
+    async fn watch_presence(
+        &self,
+        request: Request<WatchPresenceRequest>,
+    ) -> Result<Response<Self::WatchPresenceStream>, Status> {
+        if !self.presence_on().await {
+            return Err(Status::failed_precondition(
+                "live presence is OFF on this device — flip flag 'live_presence' (applies at \
+                 next swarm join/daemon start)",
+            ));
+        }
+        rbac_guard(
+            &self.state,
+            "",
+            None,
+            Permission::ViewPresence,
+            "ctl/watch-presence",
+        )
+        .await?;
+        let filter = request.into_inner().project;
+        let rx = projects::PRESENCE_TX.subscribe();
+        // BroadcastStream: Lagged (slow consumer) yields Err items we skip —
+        // presence is a signal, not a log; the next event resyncs.
+        let stream =
+            tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(move |res| match res {
+                Ok(ev) if filter.is_empty() || ev.project == filter => Some(Ok(PresenceEventMsg {
+                    from: ev.from,
+                    project: ev.project,
+                    payload: ev.payload,
+                    seen_at_ms: ev.seen_at_ms,
+                    local: ev.local,
+                })),
+                Ok(_) => None,
+                Err(_) => None, // Lagged — skip missed events
+            });
+        Ok(Response::new(Box::pin(stream)))
+    }
 }
 
 // ---------- daemon-side RBAC (the Ctl boundary, ADR-0020 §4) ----------
@@ -466,6 +597,10 @@ pub async fn run(
     let recall_svc = CtlRecallServer::new(CtlRecallSvc {
         state: Arc::clone(&state),
     });
+    // ADR-0023: live presence (first ctl-side streaming RPC)
+    let presence_svc = CtlPresenceServer::new(CtlPresenceSvc {
+        state: Arc::clone(&state),
+    });
 
     // resume any durably-bound workspaces from a previous run (kill -9 safe, I2)
     let resume_home = state.home.clone();
@@ -483,6 +618,7 @@ pub async fn run(
         .add_service(snapshots_svc)
         .add_service(pins_svc)
         .add_service(recall_svc)
+        .add_service(presence_svc)
         .serve(ctl_addr.parse()?);
 
     let ui = crate::dashboard::serve(ui_addr, Arc::clone(&state));
