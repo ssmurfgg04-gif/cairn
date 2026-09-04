@@ -733,3 +733,64 @@ async fn presence_broadcasts_reach_peers_and_default_off() {
     c.shutdown();
     signal.task.abort();
 }
+
+/// ADR-0023 presence flood: 2,000 rapid broadcasts (far beyond the ~2Hz
+/// real-world heartbeat) — the receiver keeps up via the channel's
+/// lag-then-resync contract, the snapshot stays bounded (ONE entry per
+/// peer, last-event-wins), and the counters record exactly what happened.
+/// This is the "hostile or buggy client" bracket.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn presence_flood_stays_bounded() {
+    init_tracing();
+    let signal = SignalServer::spawn("127.0.0.1:0".parse().unwrap(), KEY)
+        .await
+        .expect("signal spawn");
+    let sig_addr = signal.local_addr;
+    let mut on_cfg = cfg(sig_addr, "flood-a", "flood", false);
+    on_cfg.presence = true;
+    let a = Swarm::spawn(on_cfg, Arc::new(MapServe::default()))
+        .await
+        .expect("a spawn");
+    let mut on_cfg_b = cfg(sig_addr, "flood-b", "flood", false);
+    on_cfg_b.presence = true;
+    let b = Swarm::spawn(on_cfg_b, Arc::new(MapServe::default()))
+        .await
+        .expect("b spawn");
+    wait_until(
+        || a.stats().peers == 1 && b.stats().peers == 1,
+        "flood pair session",
+        Duration::from_secs(10),
+    )
+    .await;
+
+    // flood: 2000 events, no awaits between sends
+    let payload = br#"{"editor":"alice","frame":1000,"rate":24,"action":"playhead"}"#;
+    let mut reached_total = 0usize;
+    for _ in 0..2000 {
+        reached_total += a.broadcast_presence(payload);
+    }
+    assert_eq!(
+        reached_total, 2000,
+        "every broadcast reached the session peer"
+    );
+
+    // b's inbound counter recorded the flood (or its lagged remainder) —
+    // the guarantee is: NO crash, NO unbounded growth, ONE snapshot entry
+    let events = b.stats().presence_events;
+    assert!(events > 0, "some events accepted (lag-skips allowed)");
+    // give the recv loop a moment to drain, then snapshot
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let snap = b.presence_snapshot();
+    assert_eq!(snap.len(), 1, "last-event-wins: one entry per peer");
+    assert_eq!(snap[0].payload, payload.to_vec());
+    // oversize refused throughout — the flood never widened the bound
+    let fat = vec![0u8; 5000];
+    assert_eq!(a.broadcast_presence(&fat), 0);
+    // the swarms are still healthy after the flood
+    assert!(a.stats().peers >= 1);
+    assert!(b.stats().peers >= 1);
+
+    a.shutdown();
+    b.shutdown();
+    signal.task.abort();
+}

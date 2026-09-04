@@ -1309,10 +1309,6 @@ fn ctl_addr(home: &std::path::Path) -> String {
         .unwrap_or_else(default_ctl)
 }
 
-fn ctl_label(_label: &str) -> String {
-    default_ctl()
-}
-
 fn daemon_down(e: tonic::transport::Error) -> anyhow::Error {
     anyhow::anyhow!("daemon not reachable (run `cairn daemon`): {e}")
 }

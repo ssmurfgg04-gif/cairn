@@ -273,3 +273,143 @@ pub fn render(hits: &[Hit]) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write_tl(dir: &Path, name: &str, clips: &[(&str, &str, i128)]) -> anyhow::Result<()> {
+        use cairn_tl::model::*;
+        let mut tl = Timeline {
+            name: name.into(),
+            global_start_time: None,
+            metadata: JsonMap::new(),
+            tracks: Element::leaf(Kind::Stack, "tracks"),
+            extra: JsonMap::new(),
+        };
+        let items: Vec<Element> = clips
+            .iter()
+            .map(|(n, url, dur)| {
+                let mut c = Element::leaf(Kind::Clip, *n);
+                c.media = Some(MediaRef::single(
+                    MediaKind::External,
+                    String::new(),
+                    Some(format!("file:///{url}")),
+                ));
+                c.source_range = Some(TimeRange {
+                    start: TimeVal {
+                        value: cairn_tl::rational::Rational::ZERO,
+                        rate: cairn_tl::rational::Rational::new(24, 1).unwrap(),
+                    },
+                    duration: TimeVal {
+                        value: cairn_tl::rational::Rational::new(*dur, 1).unwrap(),
+                        rate: cairn_tl::rational::Rational::new(24, 1).unwrap(),
+                    },
+                });
+                c
+            })
+            .collect();
+        tl.tracks = Element::container(
+            Kind::Stack,
+            "tracks",
+            vec![Element::container(
+                Kind::Track(TrackKind::Video),
+                "V1",
+                items,
+            )],
+        );
+        std::fs::write(
+            dir.join(name),
+            cairn_tl::canon::serialize_file(&tl)
+                .map(String::into_bytes)
+                .map_err(|e| anyhow::anyhow!("{e}"))?,
+        )?;
+        Ok(())
+    }
+
+    /// 10k file rows + 25 timelines: the "50GB of BRAW" bracket (row count
+    /// is the search surface). Correct hits, deterministic order, and a
+    /// timing artifact printed (no time assert — CI boxes vary).
+    #[test]
+    fn search_ten_k_files_and_timelines() {
+        let dir = tempfile::tempdir().expect("tmp");
+        // 25 timelines × 40 clips each = 1,000 clips indexed
+        for t in 0..25 {
+            let clips: Vec<(String, String, i128)> = (0..40)
+                .map(|c| {
+                    (
+                        format!("clip_{t:02}_{c:02}"),
+                        format!("media_{t:02}_{c:02}.mov"),
+                        48 + i128::from(c),
+                    )
+                })
+                .collect();
+            let refs: Vec<(&str, &str, i128)> = clips
+                .iter()
+                .map(|(a, b, c)| (a.as_str(), b.as_str(), *c))
+                .collect();
+            write_tl(dir.path(), &format!("seq_{t:02}.otio"), &refs).unwrap();
+        }
+        // one NEEDLE timeline with a human-named clip
+        write_tl(
+            dir.path(),
+            "interviews.otio",
+            &[
+                (
+                    "interview_worried_closeup",
+                    "interview_worried_closeup_braw.mov",
+                    96,
+                ),
+                ("broll_city_wide", "broll_city_wide.mov", 48),
+            ],
+        )
+        .unwrap();
+
+        // 10,000 file rows (names only — the row surface)
+        let files: Vec<(String, u64)> = (0..10_000)
+            .map(|i| {
+                (
+                    format!("footage/bins/bin_{:02}/shot_{i:05}.mov", i % 50),
+                    1024,
+                )
+            })
+            .chain([(
+                "footage/interview_worried_closeup_braw.mov".to_string(),
+                5_000_000_000u64,
+            )])
+            .collect();
+
+        let start = std::time::Instant::now();
+        let hits = search_project(dir.path(), &files, "worried closeup", 50);
+        let elapsed = start.elapsed();
+
+        assert!(!hits.is_empty(), "the needle is found");
+        let top = &hits[0];
+        assert_eq!(top.kind, "clip");
+        assert_eq!(top.clip_name.as_deref(), Some("interview_worried_closeup"));
+        assert_eq!(top.path, "interviews.otio");
+        // the FILE surface finds the media row too
+        assert!(hits
+            .iter()
+            .any(|h| h.kind == "file" && h.path.contains("interview_worried_closeup_braw.mov")));
+        // determinism: identical query → identical result
+        let again = search_project(dir.path(), &files, "worried closeup", 50);
+        assert_eq!(hits.len(), again.len());
+        for (a, b) in hits.iter().zip(again.iter()) {
+            assert_eq!((a.path.clone(), a.score), (b.path.clone(), b.score));
+        }
+        // a no-hit query is empty, not slow-noise
+        assert!(search_project(dir.path(), &files, "zzzznotfound", 50).is_empty());
+        println!("search 10k rows + 26 timelines: {elapsed:?}");
+    }
+
+    #[test]
+    fn tokens_and_scoring_basics() {
+        assert!(tokens("Interview_Worried 2 Closeup!").contains(&"worried".to_string()));
+        assert!(tokens("a i 2").is_empty(), "single letters/digits dropped");
+        let files = vec![("media/closeup_worried.mov".to_string(), 1u64)];
+        let hits = search_project(Path::new("/nonexistent"), &files, "worried closeup", 10);
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].score >= 10, "full token match scores >= 10");
+    }
+}
