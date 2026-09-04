@@ -100,5 +100,24 @@ td.status-c.REJECTED { color: var(--bad); }
   <div class="note-line" id="note"></div>
 
 <script src="panel.js"></script>
+<div class="live-box" id="live-box" hidden>
+  <div class="live-head">
+    <span class="live-title">LIVE PRESENCE</span>
+    <span class="live-me" id="live-me">—</span>
+  </div>
+  <ul class="live-list" id="live-list"></ul>
+</div>
+<style>
+.live-box { border: 1px solid var(--line); border-radius: 8px; background: var(--panel); padding: 8px 10px; }
+.live-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.live-title { font-size: 9.5px; letter-spacing: 0.1em; color: var(--ink-3); text-transform: uppercase; font-weight: 700; }
+.live-me { font-family: var(--mono); font-size: 10px; color: var(--accent); margin-left: auto; }
+.live-list { list-style: none; }
+.live-list li { display: flex; gap: 8px; align-items: baseline; font-size: 11px; padding: 3px 0; font-family: var(--mono); }
+.live-list .who { font-family: var(--sans); color: var(--ink); min-width: 90px; }
+.live-list .tc { color: var(--accent); }
+.live-list .act { color: var(--ink-3); font-size: 9.5px; }
+.live-note { font-size: 10px; color: var(--ink-3); font-family: var(--sans); }
+</style>
 </body>
 </html>

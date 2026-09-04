@@ -5,7 +5,7 @@
 //! always Clip.2 (canon.rs). Unknown schemas are captured verbatim as
 //! `Kind::Unknown` / raw extras — never dropped.
 //!
-//! Identity stamping happens HERE on load when absent (the capture substrate,
+//! Identity stamping happens at CAPTURE (tl-capture / stamp_all), not here: the loader preserves what is there and matches on it (round-20 doc fix — the module doc claimed the opposite of the tested behavior) (the capture substrate,
 //! ADR §1.2): every parsed element and marker gets `metadata.cairn.uuid`, so
 //! side A and side B see stable identity even for hand-authored files that
 //! never went through `tl-capture`.

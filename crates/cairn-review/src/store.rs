@@ -1,8 +1,10 @@
 //! Persistence for the review portal: `.cairn/review.json` (session) and
 //! `.cairn/review-notes/v{N}.json` (per-version comment sets).
 //!
-//! Both are plain deterministic JSON inside the project root, so the sync
-//! engine carries them to every peer exactly like media files — the portal
+//! Both are plain deterministic JSON inside the project root. HONEST
+//! (ADR-0022): they live under `.cairn/`, which the sync scan ignore-lists —
+//! per-machine today, the synced-review-state follow-up is named in the ADR.
+//! The portal
 //! state converges with the same journal/merge machinery as the rest of
 //! the project (zero new transport code).
 //!
@@ -91,6 +93,12 @@ impl Store {
     /// (blake3 of anchor|body|author), so an identical re-submit from a
     /// flaky browser is a no-op, and the same comment made on two
     /// offline machines converges to one entry after sync.
+    ///
+    /// Round 20: the load-modify-save runs under the version's advisory
+    /// file lock — two guests commenting the same version concurrently used
+    /// to silently drop the slower comment (last writer wins). The lock is
+    /// a lockfile + bounded spin (5 s): portal scale, not database scale,
+    /// and a dead holder self-clears via O_EXCL retry + steal.
     pub fn add_comment(
         root: &Path,
         version: u32,
@@ -100,6 +108,7 @@ impl Store {
         rate: i128,
         created_ms: i64,
     ) -> Result<Note, String> {
+        let _guard = VersionLock::acquire(root, version)?;
         let mut set = Self::load_comments(root, version)?;
         let note = Note::new(
             author,
@@ -124,6 +133,7 @@ impl Store {
         id: &str,
         status: cairn_tl::notes::NoteStatus,
     ) -> Result<(), String> {
+        let _guard = VersionLock::acquire(root, version)?;
         let mut set = Self::load_comments(root, version)?;
         let note = set
             .notes
@@ -131,6 +141,61 @@ impl Store {
             .ok_or_else(|| format!("no comment {id} in v{version}"))?;
         note.status = status;
         Self::save_comments(root, version, &set)
+    }
+}
+
+/// Advisory lock over a version's note file (`.cairn/review-notes/vN.lock`):
+/// O_EXCL create + bounded spin; a stale lock (holder died) is stolen after
+/// 5 s. Correctness for the portal's 2-writer race, not a database.
+struct VersionLock {
+    path: std::path::PathBuf,
+}
+
+impl VersionLock {
+    fn acquire(root: &Path, version: u32) -> Result<VersionLock, String> {
+        let dir = root.join(".cairn").join("review-notes");
+        std::fs::create_dir_all(&dir).map_err(|e| format!("mkdir: {e}"))?;
+        let path = dir.join(format!("v{version}.lock"));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(_) => return Ok(VersionLock { path }),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    // stale? (older than 5s — a holder that died mid-write)
+                    if let Ok(meta) = std::fs::metadata(&path) {
+                        if let Ok(modified) = meta.modified() {
+                            if modified.elapsed().unwrap_or_default()
+                                > std::time::Duration::from_secs(5)
+                            {
+                                let _ = std::fs::remove_file(&path);
+                                continue;
+                            }
+                        }
+                    }
+                    if std::time::Instant::now() > deadline {
+                        // steal rather than fail the guest's comment
+                        let _ = std::fs::remove_file(&path);
+                        let _ = std::fs::OpenOptions::new()
+                            .write(true)
+                            .create_new(true)
+                            .open(&path);
+                        return Ok(VersionLock { path });
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(25));
+                }
+                Err(e) => return Err(format!("lock: {e}")),
+            }
+        }
+    }
+}
+
+impl Drop for VersionLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
     }
 }
 

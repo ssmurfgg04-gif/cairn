@@ -106,6 +106,23 @@ pub fn notes_to_otio_at(timeline: &Timeline, notes: &NoteSet, rate: Option<Ratio
             .cmp_exact(b.marked_range.start.value)
             .then_with(|| a.name.cmp(&b.name))
     });
+    // Round 20 fix: UNION with any existing stack-level markers (dedup by
+    // marker identity — the same marker imported twice is one marker), never
+    // a wholesale replacement: pre-existing markers used to be silently
+    // dropped when a notes export ran against an already-marked timeline.
+    let mut existing = std::mem::take(&mut out.tracks.markers);
+    existing.retain(|m| {
+        let key = crate::model::marker_uuid(m);
+        !markers.iter().any(|n| crate::model::marker_uuid(n) == key)
+    });
+    markers.extend(existing);
+    markers.sort_by(|a, b| {
+        a.marked_range
+            .start
+            .value
+            .cmp_exact(b.marked_range.start.value)
+            .then_with(|| a.name.cmp(&b.name))
+    });
     out.tracks.markers = markers;
     out
 }

@@ -651,42 +651,38 @@ async fn flags(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value>
 async fn set_flag(
     State(state): State<Arc<DaemonState>>,
     body: Option<Json<serde_json::Value>>,
-) -> Json<serde_json::Value> {
-    if let Some(Json(v)) = body {
-        let name = v["name"].as_str().unwrap_or("").to_string();
-        let value = v["value"].as_str().unwrap_or("").to_string();
-        // RBAC parity: kill switches are machine-global (any attached
-        // project's members.json may deny)
-        let mut pids: Vec<String> = {
-            let map = crate::projects::RUNTIMES.read().await;
-            map.values().map(|rt| rt.project_id.clone()).collect()
-        };
-        pids.sort();
-        pids.dedup();
-        for pid in &pids {
-            if let Err(s) = crate::daemon::rbac_guard(
-                &state,
-                pid,
-                None,
-                cairn_core::rbac::Permission::ManageFlags,
-                "dash/set-flag",
-            )
-            .await
-            {
-                return Json(json!({"ok": false, "error": s.message()}));
-            }
-        }
-        let mut flags = state.flags.write().await;
-        if let Some(slot) = flags.iter_mut().find(|(n, _)| *n == name) {
-            slot.1 = value.clone();
-            // mirror into the store so the ENGINE sees it per pass
-            if let Some(store) = open_store(state.home.as_path()) {
-                let _ = store.meta_set(&format!("flag:{name}"), &value);
-            }
-            tracing::info!(flag = %name, %value, "kill switch flipped from dashboard");
-        }
+) -> axum::response::Response {
+    // Round 20: DELEGATE to the ctl service (same code the gRPC surface
+    // runs) — the local re-implementation drifted: unknown flag / missing
+    // body returned {ok:true} on HTTP while gRPC answered NOT_FOUND, and the
+    // store mirror ran inside the flags write lock.
+    use cairn_proto::pb::ctl_diagnostics_server::CtlDiagnostics as _;
+    let svc = crate::daemon::CtlDiagSvc {
+        state: Arc::clone(&state),
+    };
+    let Some(Json(v)) = body else {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            Json(json!({"ok": false, "error": "body required: {name, value}"})),
+        )
+            .into_response();
+    };
+    let name = v["name"].as_str().unwrap_or("").to_string();
+    let value = v["value"].as_str().unwrap_or("").to_string();
+    match svc
+        .set_flag(tonic::Request::new(cairn_proto::pb::SetFlagRequest {
+            name,
+            value,
+        }))
+        .await
+    {
+        Ok(_) => Json(json!({"ok": true})).into_response(),
+        Err(st) => (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(json!({"ok": false, "error": st.message()})),
+        )
+            .into_response(),
     }
-    Json(json!({"ok": true}))
 }
 
 async fn doctor(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {

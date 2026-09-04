@@ -36,7 +36,7 @@ pub struct Sidecar {
     /// BLAKE3 (hex) of the canonical serialized bytes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_blake3: Option<String>,
-    /// ISO-8601 UTC capture time.
+    /// unix-seconds capture time.
     pub captured_utc: String,
 }
 

@@ -18,6 +18,129 @@ const $ = (id) => document.getElementById(id);
 
 const state = { projects: [], project: "", version: 0, markers: [], daemon: "" };
 
+/* ---- live presence (round 20, ADR-0023): opt-in, off by default ---- */
+
+const live = { on: false, timer: null, snapshotTimer: null, rows: new Map(), editor: "" };
+
+async function liveToggle() {
+  live.on = !live.on;
+  const btn = $("live-toggle");
+  btn.textContent = live.on ? "live: on" : "live: off";
+  btn.classList.toggle("primary", live.on);
+  $("live-box").hidden = !live.on;
+  if (live.on) {
+    live.editor = await askEditorName();
+    note(live.editor ? `live presence ON as ${live.editor}` : "live presence ON");
+    liveLoop();
+    live.snapshotTimer = setInterval(liveSnapshot, 2000);
+    liveSnapshot();
+  } else {
+    clearInterval(live.timer);
+    clearInterval(live.snapshotTimer);
+    live.rows.clear();
+    note("live presence off");
+  }
+}
+
+/* The editor's display name: UXP keychain-free — Premiere's project name
+ * via require("premierepro") when present, else localStorage in the browser. */
+async function askEditorName() {
+  if (typeof require === "function") {
+    try {
+      const ppro = require("premierepro");
+      const proj = await ppro.Project.getActiveProject();
+      if (proj) {
+        const name = await proj.getName();
+        return name ? String(name).replace(/\.[^.]*$/, "") : "";
+      }
+    } catch { /* fall through */ }
+  }
+  try { return localStorage.getItem("cairn-live-name") || ""; } catch { return ""; }
+}
+
+/* One heartbeat: read OUR playhead from Premiere when the API is present,
+ * POST it to the daemon. Best-effort and honest: without the API the panel
+ * posts nothing (the mock-daemon browser tests exercise the path directly). */
+async function liveLoop() {
+  clearInterval(live.timer);
+  live.timer = setInterval(async () => {
+    if (!live.on || !state.project) return;
+    let frame = null, rate = 24;
+    if (typeof require === "function") {
+      try {
+        const ppro = require("premierepro");
+        const proj = await ppro.Project.getActiveProject();
+        const seq = proj ? await proj.getActiveSequence() : null;
+        if (seq) {
+          const t = await seq.getPlayerPosition();
+          const secs = t && typeof t.seconds === "number" ? t.seconds : null;
+          if (secs !== null) {
+            const fps = await seq.getTimebase ? null : null; // rate via version's fps
+            frame = Math.round(secs * 24); // daemon renders TC at the review rate
+          }
+        }
+      } catch { /* no sequence / API shape drift: skip this beat */ }
+    }
+    if (frame === null) return;
+    try {
+      await fetch(`${API}/api/v1/live`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          project: state.project,
+          editor: live.editor || "editor",
+          frame,
+          rate,
+          action: "playhead",
+        }),
+      });
+    } catch { /* daemon hiccup — next beat retries */ }
+  }, 500);
+}
+
+async function liveSnapshot() {
+  let snap;
+  try {
+    snap = await getJSON("/api/v1/live/snapshot");
+  } catch { return; }
+  const list = $("live-list");
+  const me = $("live-me");
+  list.innerHTML = "";
+  if (snap && snap.enabled !== true) {
+    list.innerHTML = "<li class='live-note'>presence is OFF on this device (flag live_presence)</li>";
+    return;
+  }
+  let n = 0;
+  for (const p of (snap && snap.projects) || []) {
+    for (const ev of p.events || []) {
+      let payload = {};
+      try { payload = JSON.parse(ev.payload || "{}"); } catch { /* foreign */ }
+      const li = document.createElement("li");
+      li.innerHTML =
+        `<span class="who">${esc(payload.editor || ev.from || "?")}</span>` +
+        `<span class="tc">${esc(tcOf(payload.frame, payload.rate))}</span>` +
+        `<span class="act">${esc(payload.action || "")}</span>`;
+      list.appendChild(li);
+      n++;
+    }
+  }
+  if (!n) {
+    list.innerHTML = "<li class='live-note'>no other editors online</li>";
+  }
+  me.textContent = live.editor ? `you: ${live.editor}` : "you";
+}
+
+function tcOf(frame, rate) {
+  if (frame === null || frame === undefined) return "—";
+  const r = rate || 24;
+  const f = Math.floor(frame % r);
+  const s = Math.floor(frame / r) % 60;
+  const m = Math.floor(frame / (r * 60)) % 60;
+  const h = Math.floor(frame / (r * 3600));
+  const pad = (x) => String(x).padStart(2, "0");
+  return `${pad(h)}:${pad(m)}:${pad(s)}:${pad(f)}`;
+}
+
 /* ---- tiny CSV parser (RFC 4180, quoted fields, \n rows) ---- */
 
 function parseCsv(text) {
@@ -239,6 +362,7 @@ $("refresh").addEventListener("click", async () => {
   await getStatus();
   await loadReview();
 });
+$("live-toggle").addEventListener("click", liveToggle);
 $("export-fcpxml").addEventListener("click", () => exportAs("fcpxml"));
 $("export-otio").addEventListener("click", () => exportAs("otio"));
 $("export-csv").addEventListener("click", () => exportAs("csv"));

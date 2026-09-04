@@ -11,11 +11,14 @@
 //! * **Guest links, no account** — [`model::GuestLink`] tokens (122 bits of
 //!   OS CSPRNG entropy, uuid-v4) carrying a role (`Commenter` or `Viewer`)
 //!   and an expiry. Nothing to sign up for; the token IS the identity.
-//! * **Frame-accurate comments** — comments are ordinary
-//!   [`cairn_tl::notes::NoteSet`] files (one per version,
-//!   `.cairn/review-notes/v{N}.json`), so they sync peer-to-peer like any
-//!   other file and merge with the round-14 three-way note merge. Anchors
-//!   are exact frames at the version's rate; timecodes render NDF.
+//! * **Frame-accurate comments** — comments are [`cairn_tl::notes::NoteSet`]
+//!   files (one per version, `.cairn/review-notes/v{N}.json`) with
+//!   content-derived ids, so two machines that produce the same comment
+//!   converge to one entry. HONEST (ADR-0022): `.cairn*` is ignore-listed
+//!   by the sync scan, so these files are currently PER-MACHINE — the
+//!   cross-machine note merge is a manual `cairn notes merge` on carried
+//!   files until the synced-review-state follow-up lands. Anchors are
+//!   exact frames at the version's rate; timecodes render NDF.
 //! * **Reviewer presence** — ephemeral heartbeats held by the serving
 //!   daemon (in-memory by design: presence is a live signal, not state).
 //! * **The player** — [`http`] serves a self-contained web page (no build
@@ -23,9 +26,10 @@
 //!   pins, and HTTP-range media serving so browsers can scrub.
 //!
 //! The session file `.cairn/review.json` and the per-version note files
-//! are plain deterministic JSON in the project root — the engine treats
-//! them like any other file, which is the whole trick: review state rides
-//! the same encrypted P2P transport, with zero cloud bytes.
+//! are plain deterministic JSON in the project root. HONEST (ADR-0022
+//! correction): they live under `.cairn/`, which the sync engine
+//! ignore-lists — review state is per-machine today; moving it to a synced
+//! path with NoteSet-style convergence is the named follow-up.
 
 // Pure Rust: axum + tokio, no FFI anywhere.
 #![forbid(unsafe_code)]

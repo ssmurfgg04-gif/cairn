@@ -1140,7 +1140,7 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
         Cmd::Snapshot { cmd } => match cmd {
             snapshot::SnapshotCmd::Create { project, label } => {
                 let mut c = cairn_proto::pb::ctl_snapshots_client::CtlSnapshotsClient::connect(
-                    ctl_label(&label),
+                    ctl_addr(&home),
                 )
                 .await
                 .map_err(daemon_down)?;
@@ -1157,7 +1157,7 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
             }
             snapshot::SnapshotCmd::List { project } => {
                 let mut c = cairn_proto::pb::ctl_snapshots_client::CtlSnapshotsClient::connect(
-                    default_ctl(),
+                    ctl_addr(&home),
                 )
                 .await
                 .map_err(daemon_down)?;
@@ -1187,7 +1187,7 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
                 target,
             } => {
                 let mut c = cairn_proto::pb::ctl_snapshots_client::CtlSnapshotsClient::connect(
-                    default_ctl(),
+                    ctl_addr(&home),
                 )
                 .await
                 .map_err(daemon_down)?;
@@ -1209,7 +1209,7 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
             }
         },
         Cmd::Pin { project, path } => {
-            let mut c = cairn_proto::pb::ctl_pins_client::CtlPinsClient::connect(default_ctl())
+            let mut c = cairn_proto::pb::ctl_pins_client::CtlPinsClient::connect(ctl_addr(&home))
                 .await
                 .map_err(daemon_down)?;
             c.pin(cairn_proto::pb::PinRequest {
@@ -1221,7 +1221,7 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
             Ok(())
         }
         Cmd::Unpin { project, path } => {
-            let mut c = cairn_proto::pb::ctl_pins_client::CtlPinsClient::connect(default_ctl())
+            let mut c = cairn_proto::pb::ctl_pins_client::CtlPinsClient::connect(ctl_addr(&home))
                 .await
                 .map_err(daemon_down)?;
             c.unpin(cairn_proto::pb::UnpinRequest {
@@ -1245,15 +1245,19 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
             if mine.is_empty() {
                 println!("no active local leases");
             }
-            for (path, token, expires_at) in rows {
+            // Round 20 fix: the filter built `mine` but the print loop
+            // iterated ALL rows — a --project filter that matched nothing
+            // still printed everything
+            for (path, token, expires_at) in mine {
                 println!("{path}  token={token}  expires_at={expires_at}");
             }
             Ok(())
         }
         Cmd::Recall { project, path } => {
-            let mut c = cairn_proto::pb::ctl_recall_client::CtlRecallClient::connect(default_ctl())
-                .await
-                .map_err(daemon_down)?;
+            let mut c =
+                cairn_proto::pb::ctl_recall_client::CtlRecallClient::connect(ctl_addr(&home))
+                    .await
+                    .map_err(daemon_down)?;
             let job = c
                 .start_recall(cairn_proto::pb::StartRecallRequest {
                     project_id: project.clone(),
@@ -1291,6 +1295,18 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
 
 fn default_ctl() -> String {
     "http://127.0.0.1:17777".to_string()
+}
+
+/// Resolve the ctl endpoint from the HOME store's durable `ctl/addr`
+/// (written by every daemon start) — multi-daemon machines (several ctl
+/// ports) used to break snapshot/pin/recall/status because those commands
+/// hardcoded 127.0.0.1:17777. Falls back to the default on any error.
+fn ctl_addr(home: &std::path::Path) -> String {
+    cairn_store::Store::open(home, std::sync::Arc::new(cairn_core::clock::WallClock))
+        .ok()
+        .and_then(|s| s.meta_get("ctl/addr"))
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(default_ctl)
 }
 
 fn ctl_label(_label: &str) -> String {
