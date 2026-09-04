@@ -32,7 +32,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
@@ -120,6 +120,16 @@ pub struct SwarmStats {
     pub blocks_fetched: u64,
     pub bytes_fetched: u64,
     pub local_owned: u64,
+    /// NAT observability, pair-level accounting (the WAN leg's success-rate
+    /// numerator/denominator): did STUN hand us a reflexive address, how
+    /// many peer pairs engaged in punching (our first probe, or the peer's
+    /// probe landing on us), and how many of those pairs ended up with a
+    /// DIRECT session — the rest fell back to the relay, and that ratio is
+    /// the NAT success rate. `punch_successes <= punch_attempts` on every
+    /// node by construction.
+    pub stun_resolved: bool,
+    pub punch_attempts: u64,
+    pub punch_successes: u64,
 }
 
 // ---- internal state -----------------------------------------------------------
@@ -207,6 +217,9 @@ struct Stats {
     bytes_served: AtomicU64,
     blocks_fetched: AtomicU64,
     bytes_fetched: AtomicU64,
+    stun_resolved: AtomicBool,
+    punch_attempts: AtomicU64,
+    punch_successes: AtomicU64,
 }
 
 /// Hashes currently being waited on by `fetch_block` callers (the wakeup
@@ -308,7 +321,10 @@ impl Swarm {
             let inner2 = Arc::clone(&inner);
             tokio::spawn(async move {
                 match stun_discover(&inner2, server).await {
-                    Ok(addr) => tracing::info!(reflexive = %addr, "stun: reflexive address"),
+                    Ok(addr) => {
+                        inner2.stats.stun_resolved.store(true, Ordering::Relaxed);
+                        tracing::info!(reflexive = %addr, "stun: reflexive address");
+                    }
                     Err(e) => tracing::warn!("stun discovery failed ({e}); advertising local only"),
                 }
             });
@@ -489,6 +505,9 @@ impl Swarm {
             blocks_fetched: self.inner.stats.blocks_fetched.load(Ordering::Relaxed),
             bytes_fetched: self.inner.stats.bytes_fetched.load(Ordering::Relaxed),
             local_owned: self.inner.serving.owned_count(),
+            stun_resolved: self.inner.stats.stun_resolved.load(Ordering::Relaxed),
+            punch_attempts: self.inner.stats.punch_attempts.load(Ordering::Relaxed),
+            punch_successes: self.inner.stats.punch_successes.load(Ordering::Relaxed),
         }
     }
 
@@ -693,6 +712,17 @@ fn on_hello(
             } else {
                 Link::Direct
             };
+            // NAT metrics (pair-level accounting): a session established
+            // DIRECTLY is a punch that landed. If we never probed this pair
+            // ourselves (probe_idx == 0), the PEER's probe landed on us —
+            // count the pair's attempt too, so punch_successes can never
+            // exceed punch_attempts on any node.
+            if matches!(peer.link, Link::Direct) {
+                if peer.probe_idx == 0 {
+                    inner.stats.punch_attempts.fetch_add(1, Ordering::Relaxed);
+                }
+                inner.stats.punch_successes.fetch_add(1, Ordering::Relaxed);
+            }
             if !via_relay {
                 peer.direct_addr = Some(from);
             }
@@ -1230,6 +1260,12 @@ async fn punch_pass(inner: &Arc<Inner>) {
             }
             if peer.addrs.is_empty() {
                 continue;
+            }
+            // the FIRST probe for a peer pair is one punch attempt (the
+            // success-rate denominator); later passes are retries of the
+            // same attempt, not new ones
+            if peer.probe_idx == 0 {
+                inner.stats.punch_attempts.fetch_add(1, Ordering::Relaxed);
             }
             let idx = peer.probe_idx as usize % peer.addrs.len();
             peer.probe_idx = peer.probe_idx.wrapping_add(1);

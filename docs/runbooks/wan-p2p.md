@@ -23,7 +23,13 @@ server stays the durability tier either way.
 ## 1. The VPS (signal + relay)
 
 ```sh
-# any ~$5/mo box, UDP 17780+17781 open in its firewall
+# a 1-vCPU / 1 GiB box is enough: the signal server is a directory of
+# business cards + bounded relay grants — no media ever rests on it.
+# systemd unit sketch:
+#   [Service]
+#   ExecStart=/usr/local/bin/cairn signal --bind 0.0.0.0:17780 --relay-bind 0.0.0.0:17781
+#   Restart=always
+# Firewall: UDP 17780 + 17781 open; that is the whole surface.
 cairn signal --bind 0.0.0.0:17780 --relay-bind 0.0.0.0:17781
 # prints a fresh join code: PCJR-K7Q2-VN8X-4MT6  (share it out of band)
 ```
@@ -59,17 +65,50 @@ cairn daemon --swarm-no-stun                      # signal-observed only
 Relay engagement is logged (`relay fallback engaged`), and the swarm
 stats surface `direct_links` vs `relay_links` per node.
 
-## 4. Verification
+## 4. NAT success-rate metrics (round 19)
+
+The numbers a VPS-backed rollout actually needs, surfaced three ways:
+
+* **Daemon heartbeat (60 s, greppable on the studio box)**:
+
+  ```text
+  wan heartbeat (NAT success rate = punch_successes / punch_attempts)
+    peers=2 direct=2 relay=0 stun_resolved=true punch_successes=2 punch_attempts=2
+  ```
+
+  `CAIRN_WAN_LOG_SECS` retunes it (0 = off). Success rate reading:
+  2/2 = every pair punched through; 0/2 with relay=2 = both pairs fell
+  back (symmetric NAT territory); attempts=0 = no punching happened at
+  all (check `--swarm-no-stun` and the signal-observed candidates).
+
+* **Dashboard**: `GET /api/v1/status` carries a per-project `swarm`
+  array (peers, direct/relay split, stun_resolved, punch counters).
+  A swarmless daemon reports an empty array — honest absence.
+
+* **Counters** (in-process, what the surfaces read): `stun_resolved`
+  (one STUN reply landed), `punch_attempts` (peer pairs engaged in
+  punching — our first outbound probe, or the peer's probe landing on
+  us; pair-level, either side counts once), and `punch_successes`
+  (punch-landed sessions established DIRECTLY). `successes <= attempts`
+  on every node by construction.
+
+The "hotel WiFi" failure mode these numbers expose: `stun_resolved:
+true` + `punch_attempts: 0` means the reflexive address was learned but
+no peer ever became punchable (candidates never crossed the signal
+directory — usually a blocked register path, not NAT).
+
+## 5. Verification
 
 ```sh
 # on either studio machine — peers, links, blocks served/fetched
 cairn status --json          # swarm section: peers, direct/relay links
 
 # deterministic WAN simulation without a VPS (loopback STUN + relay):
-cargo test -p cairn-p2p      # stun round-trips, punch, relay, e2e
+cargo test -p cairn-p2p      # stun round-trips, punch, relay, e2e,
+                             # + the NAT counter contract (attempts/successes)
 ```
 
-## 5. Failure modes
+## 6. Failure modes
 
 * **No mDNS on WAN**: mDNS discovery is LAN-only (ADR-0019 §4) — WAN
   always takes `--swarm-signal` (or a VPN that flattens the LAN).
