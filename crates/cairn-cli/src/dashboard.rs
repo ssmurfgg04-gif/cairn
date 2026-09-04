@@ -55,6 +55,12 @@ pub async fn serve(addr: String, state: Arc<DaemonState>) -> anyhow::Result<()> 
         .route("/api/v1/recall/:job_id", get(recall_status))
         // round 16: client review summary (per attached root)
         .route("/api/v1/review", get(review_summary))
+        // round 18: per-file sync badges, team/RBAC surface, cross-project
+        // search, honest update state
+        .route("/api/v1/files", get(files))
+        .route("/api/v1/team", get(team))
+        .route("/api/v1/search", get(search))
+        .route("/api/v1/update", get(update_state))
         .with_state(state);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!(%addr, "dashboard listening (loopback only)");
@@ -168,9 +174,18 @@ async fn projects(State(_state): State<Arc<DaemonState>>) -> Json<serde_json::Va
         let map = crate::projects::RUNTIMES.read().await;
         for rt in map.values() {
             let v = rt.view.read().await;
+            let root_path = rt.workspace.to_string_lossy().into_owned();
+            // display name: the folder editors named, not the slug they
+            // did not (audit #4 — "cairn-test2" is a DB id, "Brand Film"
+            // is what a human calls the project)
+            let display_name = std::path::Path::new(&root_path)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| rt.project_id.clone());
             out.push(json!({
                 "project_id": project_id_of(rt),
-                "root_path": rt.workspace.to_string_lossy(),
+                "display_name": display_name,
+                "root_path": root_path,
                 "state": v.state,
                 "files_synced": v.files_synced,
                 "cursor": v.cursor,
@@ -200,6 +215,19 @@ async fn attach(
     if root.is_empty() {
         return Json(json!({"ok": false, "error": "root_path required"}));
     }
+    // RBAC parity with the ctl surface (the members file in the root
+    // being attached is the authority)
+    if let Err(s) = crate::daemon::rbac_guard(
+        &state,
+        &project,
+        Some(std::path::Path::new(&root)),
+        cairn_core::rbac::Permission::AttachRoot,
+        "dash/attach",
+    )
+    .await
+    {
+        return Json(json!({"ok": false, "error": s.message()}));
+    }
     match crate::projects::attach(
         &state.home,
         std::path::Path::new(&root),
@@ -225,6 +253,19 @@ async fn detach(
         return Json(json!({"ok": false, "error": "body required: {project_id}"}));
     };
     let project = v["project_id"].as_str().unwrap_or("").to_string();
+    // RBAC parity with the ctl surface — the detach guard lives in the
+    // daemon, the dashboard is just another client
+    if let Err(s) = crate::daemon::rbac_guard(
+        &state,
+        &project,
+        None,
+        cairn_core::rbac::Permission::DetachRoot,
+        "dash/detach",
+    )
+    .await
+    {
+        return Json(json!({"ok": false, "error": s.message()}));
+    }
     match crate::projects::detach(&state.home, &project).await {
         Ok(()) => Json(json!({"ok": true})),
         Err(e) => Json(json!({"ok": false, "error": e.message})),
@@ -529,6 +570,27 @@ async fn set_flag(
     if let Some(Json(v)) = body {
         let name = v["name"].as_str().unwrap_or("").to_string();
         let value = v["value"].as_str().unwrap_or("").to_string();
+        // RBAC parity: kill switches are machine-global (any attached
+        // project's members.json may deny)
+        let mut pids: Vec<String> = {
+            let map = crate::projects::RUNTIMES.read().await;
+            map.values().map(|rt| rt.project_id.clone()).collect()
+        };
+        pids.sort();
+        pids.dedup();
+        for pid in &pids {
+            if let Err(s) = crate::daemon::rbac_guard(
+                &state,
+                pid,
+                None,
+                cairn_core::rbac::Permission::ManageFlags,
+                "dash/set-flag",
+            )
+            .await
+            {
+                return Json(json!({"ok": false, "error": s.message()}));
+            }
+        }
         let mut flags = state.flags.write().await;
         if let Some(slot) = flags.iter_mut().find(|(n, _)| *n == name) {
             slot.1 = value.clone();
@@ -549,5 +611,285 @@ async fn doctor(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value
         "checks": report.checks.iter().map(|c| json!({
             "name": c.name, "ok": c.ok, "detail": c.detail, "latency_ms": c.latency_ms
         })).collect::<Vec<_>>(),
+    }))
+}
+
+// ---------- round 18: files / team / search / update ----------
+
+fn now_ms_i64() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// The first runtime's (project, root) — Team reads one project's
+/// members/audit; multi-project machines get one card per call site.
+async fn first_runtime() -> Option<(String, std::path::PathBuf, u64, u64)> {
+    let map = crate::projects::RUNTIMES.read().await;
+    let mut best: Option<(String, std::path::PathBuf, u64, u64)> = None;
+    for rt in map.values() {
+        let v = rt.view.read().await;
+        let cand = (
+            rt.project_id.clone(),
+            rt.workspace.clone(),
+            v.files_synced,
+            v.pending_outbox,
+        );
+        best = match best {
+            None => Some(cand),
+            Some((pid, _, _, _)) if cand.0 < pid => Some(cand),
+            other => other,
+        };
+    }
+    best
+}
+
+/// Map a file row's raw local_state to the badge vocabulary editors
+/// already know from cloud drives: local / syncing / synced / conflict.
+fn file_badge(row: &cairn_store::FileRow) -> &'static str {
+    match row.local_state.as_str() {
+        "conflict" => "conflict",
+        "synced" => "synced",
+        "dirty" => "syncing",
+        _ => "syncing",
+    }
+}
+
+/// GET /api/v1/files?project=&q= — per-file rows with sync + pin badges
+/// (audit #7: "clip1.braw 8.3 MB synced / placeholder / pinned" — a file
+/// list, not `ls`). `q` filters client-side cheaply server-side here.
+async fn files(
+    State(state): State<Arc<DaemonState>>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Json<serde_json::Value> {
+    let project = q.get("project").cloned().unwrap_or_default();
+    let needle = q.get("q").map(|s| s.to_lowercase()).unwrap_or_default();
+    let Some(store) = open_store(state.home.as_path()) else {
+        return Json(json!({"ok": false, "error": "store unavailable"}));
+    };
+    let mut rows_out = Vec::new();
+    let mut summary = serde_json::Map::new();
+    let mut total_files = 0u64;
+    let mut synced_n = 0u64;
+    let mut dirty_n = 0u64;
+    let mut conflict_n = 0u64;
+    let pins: std::collections::HashSet<String> = if project.is_empty() {
+        Default::default()
+    } else {
+        store
+            .list_pins(&project)
+            .into_iter()
+            .map(|(p, _)| p)
+            .collect()
+    };
+    for row in store.list_files(&project) {
+        if row.mode != "file" {
+            continue;
+        }
+        if !needle.is_empty() && !row.path.to_lowercase().contains(&needle) {
+            continue;
+        }
+        total_files += 1;
+        match file_badge(&row) {
+            "synced" => synced_n += 1,
+            "conflict" => conflict_n += 1,
+            _ => dirty_n += 1,
+        }
+        rows_out.push(json!({
+            "path": row.path,
+            "size": row.size,
+            "mtime": row.mtime,
+            "state": file_badge(&row),
+            "pinned": pins.contains(&row.path),
+            "placeholder": row.manifest_hash.is_some(),
+        }));
+    }
+    rows_out.sort_by(|a, b| {
+        a["path"]
+            .as_str()
+            .unwrap_or("")
+            .cmp(b["path"].as_str().unwrap_or(""))
+    });
+    summary.insert("files".into(), json!(total_files));
+    summary.insert("synced".into(), json!(synced_n));
+    summary.insert("syncing".into(), json!(dirty_n));
+    summary.insert("conflict".into(), json!(conflict_n));
+    summary.insert("pinned".into(), json!(pins.len()));
+    Json(json!({"ok": true, "project": project, "summary": summary, "files": rows_out}))
+}
+
+/// GET /api/v1/team — members, the acting device's role, the swarm join
+/// code (invite), and the newest audit decisions (audit #5: RBAC was in
+/// the CLI only; now the studio roster is a first-class surface).
+async fn team(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
+    let Some((pid, root, files_synced, pending)) = first_runtime().await else {
+        return Json(json!({"ok": true, "projects": []}));
+    };
+    let store = match open_store(state.home.as_path()) {
+        Some(s) => s,
+        None => return Json(json!({"ok": false, "error": "store unavailable"})),
+    };
+    let device = crate::projects::load_identity(&store)
+        .map(|i| i.device_id)
+        .filter(|d| !d.is_empty())
+        .unwrap_or_else(|| "local".into());
+    let members = crate::members::load(&root)
+        .map(|f| {
+            f.members
+                .values()
+                .map(|m| {
+                    json!({
+                        "device_id": m.device_id,
+                        "name": m.name,
+                        "role": m.role.as_str(),
+                        "added_at_ms": m.added_at_ms,
+                        "is_me": m.device_id == device,
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let my_role = crate::members::load(&root)
+        .map(|f| cairn_core::rbac::Role::as_str(f.role_of(&device)).to_string())
+        .unwrap_or_else(|_| "editor".into());
+    let join_code = store.meta_get("swarm/join-code").unwrap_or_default();
+    let signal = store.meta_get("swarm/signal").unwrap_or_default();
+    let audit = crate::audit::AuditFile::load(&root)
+        .map(|rows| {
+            rows.iter()
+                .rev()
+                .take(12)
+                .map(|(_, e)| {
+                    json!({
+                        "ts_ms": e.ts_ms,
+                        "device": e.device,
+                        "role": e.role,
+                        "action": e.action,
+                        "allowed": e.allowed,
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Json(json!({
+        "ok": true,
+        "projects": [{
+            "project_id": pid,
+            "display_name": root
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| pid.clone()),
+            "root_path": root.to_string_lossy(),
+            "files_synced": files_synced,
+            "pending_outbox": pending,
+            "my_device": device,
+            "my_role": my_role,
+            "members": members,
+            "join_code": if join_code.is_empty() { serde_json::Value::Null } else { json!(join_code) },
+            "signal": if signal.is_empty() { serde_json::Value::Null } else { json!(signal) },
+            "audit": audit,
+            "now_ms": now_ms_i64(),
+        }],
+    }))
+}
+
+/// GET /api/v1/search?q= — substring search across file paths, project
+/// ids/display names, review session titles, and audit actions (audit
+/// #9: search existed only as a CLI; editors live in the dashboard).
+async fn search(
+    State(state): State<Arc<DaemonState>>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Json<serde_json::Value> {
+    let needle = q.get("q").cloned().unwrap_or_default().to_lowercase();
+    if needle.trim().is_empty() {
+        return Json(json!({"ok": true, "results": []}));
+    }
+    let mut out = Vec::new();
+    // attached projects: (project_id, workspace, display name)
+    let attached: Vec<(String, std::path::PathBuf, String)> = {
+        let map = crate::projects::RUNTIMES.read().await;
+        map.values()
+            .map(|rt| {
+                let display = rt
+                    .workspace
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| rt.project_id.clone());
+                (rt.project_id.clone(), rt.workspace.clone(), display)
+            })
+            .collect()
+    };
+    for (pid, _root, display) in &attached {
+        if pid.to_lowercase().contains(&needle) || display.to_lowercase().contains(&needle) {
+            out.push(json!({
+                "kind": "project",
+                "project": pid,
+                "label": display,
+                "sub": pid,
+                "target": "#projects",
+            }));
+        }
+    }
+    if let Some(store) = open_store(state.home.as_path()) {
+        // file paths (first 40 hits across attached projects)
+        let mut file_hits = 0;
+        for (pid, _root, _display) in &attached {
+            for row in store.list_files(pid) {
+                if row.mode != "file" {
+                    continue;
+                }
+                if row.path.to_lowercase().contains(&needle) {
+                    out.push(json!({
+                        "kind": "file",
+                        "project": pid,
+                        "label": row.path,
+                        "sub": file_badge(&row),
+                        "target": "#files",
+                    }));
+                    file_hits += 1;
+                    if file_hits >= 40 {
+                        break;
+                    }
+                }
+            }
+        }
+        // review sessions
+        for (pid, root, _display) in &attached {
+            if let Ok(Some(f)) = cairn_review::store::Store::load(root) {
+                if f.title.to_lowercase().contains(&needle) {
+                    out.push(json!({
+                        "kind": "review",
+                        "project": pid,
+                        "label": f.title,
+                        "sub": format!("{} versions", f.versions.len()),
+                        "target": "#review",
+                    }));
+                }
+            }
+        }
+    }
+    out.truncate(60);
+    Json(json!({"ok": true, "results": out}))
+}
+
+/// GET /api/v1/update — honest update state. The daemon never phones
+/// home; `cairn update check` (CLI) writes its verdict into the store and
+/// this surfaces it: null = never checked, false = checked-current,
+/// true = an update is offered. check_failed marks a failed check.
+async fn update_state(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
+    let offered = open_store(state.home.as_path())
+        .and_then(|s| s.meta_get("update/offered"))
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    let check_failed = open_store(state.home.as_path())
+        .and_then(|s| s.meta_get("update/check-failed"))
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    Json(json!({
+        "ok": true,
+        "current_version": env!("CARGO_PKG_VERSION"),
+        "update_offered": offered,
+        "check_failed": check_failed,
     }))
 }

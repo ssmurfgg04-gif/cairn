@@ -47,6 +47,7 @@
 
     <div class="transport">
       <div class="tc-row">
+        <div class="stream-state" id="stream-state" hidden></div>
         <button class="icon-btn accent" id="play" aria-label="play or pause">
           <svg id="ic-play" width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M4 2.5v11l9-5.5-9-5.5z"/></svg>
           <svg id="ic-pause" width="13" height="13" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" hidden><path d="M4 2.5h3v11H4zM9 2.5h3v11H9z"/></svg>
@@ -80,6 +81,7 @@
         <span><kbd>J</kbd><kbd>K</kbd><kbd>L</kbd> shuttle</span>
         <span><kbd>N</kbd> add note</span>
         <span><kbd>F</kbd> fullscreen</span>
+        <span><kbd>?</kbd> all keys</span>
       </div>
     </div>
   </main>
@@ -103,6 +105,31 @@
     </form>
     <div class="viewer-note" id="viewer-note" hidden>view-only link — notes are off</div>
   </aside>
+</div>
+
+<!-- ? help: the full keyboard map for reviewers who live in players -->
+<div class="overlay" id="help-overlay" hidden>
+  <div class="overlay-card" role="dialog" aria-modal="true" aria-label="keyboard shortcuts">
+    <div class="overlay-head">
+      <div class="overlay-title">Keyboard</div>
+      <button type="button" class="chip" id="help-close">esc</button>
+    </div>
+    <ul class="keys-full">
+      <li><span class="k"><kbd>space</kbd></span> play / pause</li>
+      <li><span class="k"><kbd>J</kbd> <kbd>J</kbd></span> rewind — press again to double speed (up to 64x)</li>
+      <li><span class="k"><kbd>K</kbd></span> stop</li>
+      <li><span class="k"><kbd>L</kbd></span> play — press again to double speed (up to 8x)</li>
+      <li><span class="k"><kbd>&#8592;</kbd> / <kbd>&#8594;</kbd></span> step one frame (<kbd>shift</kbd> ×10)</li>
+      <li><span class="k"><kbd>&#8593;</kbd> / <kbd>&#8595;</kbd></span> jump ~1 second (<kbd>shift</kbd> ~2.5 s)</li>
+      <li><span class="k"><kbd>home</kbd> / <kbd>end</kbd></span> cut start / end</li>
+      <li><span class="k"><kbd>N</kbd></span> focus the note composer</li>
+      <li><span class="k"><kbd>M</kbd></span> mute</li>
+      <li><span class="k"><kbd>F</kbd></span> fullscreen</li>
+      <li><span class="k">click / drag</span> play-pause / pan when zoomed</li>
+      <li><span class="k">double-click</span> zoom to 2x (and back)</li>
+      <li><span class="k"><kbd>?</kbd></span> this panel</li>
+    </ul>
+  </div>
 </div>
 <script src="/assets/review.js"></script>
 </body>

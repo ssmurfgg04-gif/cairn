@@ -177,7 +177,7 @@ async fn project_root(state: &DaemonState, project_id: &str) -> Option<PathBuf> 
 /// CLI-side guards remain the second layer for root-present commands.
 /// A CORRUPT members.json fails closed (parse error → precondition),
 /// never open.
-async fn rbac_guard(
+pub(crate) async fn rbac_guard(
     state: &DaemonState,
     project_id: &str,
     root_hint: Option<&std::path::Path>,

@@ -186,6 +186,15 @@
     state.lastFrame = -1;
     $("framesub").textContent = "frame 0 / " + v.frames;
     $("fps").textContent = fpsOf(v).toFixed(3).replace(/0+$/, "").replace(/\.$/, "") + " fps";
+    // honest stream state: a promised proxy that is not ready means the
+    // guest is watching full-res (say so; never black-screen, never lie)
+    const ss = $("stream-state");
+    if (v.has_proxy && !v.proxy_ready) {
+      ss.hidden = false;
+      ss.textContent = "serving full res — proxy not ready yet";
+    } else {
+      ss.hidden = true;
+    }
     const tp = $("toggle-proxy");
     if (tp) tp.hidden = !v.has_proxy;
     const wasPlaying = !first && !video.paused;
@@ -656,8 +665,32 @@
       }
       case "KeyM": $("mute").click(); break;
       case "KeyF": $("full").click(); break;
+      case "Slash":
+      case "Question": {
+        // '?' opens the key map (shift+/ on US layouts; Question on others)
+        if (ev.shiftKey || ev.code === "Question") {
+          ev.preventDefault();
+          toggleHelp();
+        }
+        break;
+      }
+      case "Escape": {
+        if (!$("help-overlay").hidden) $("help-overlay").hidden = true;
+        break;
+      }
       default: break;
     }
+  });
+
+  // ---------- help overlay (? — the full key map) ----------
+
+  function toggleHelp() {
+    const ov = $("help-overlay");
+    ov.hidden = !ov.hidden;
+  }
+  $("help-close").addEventListener("click", () => { $("help-overlay").hidden = true; });
+  $("help-overlay").addEventListener("click", (ev) => {
+    if (ev.target === $("help-overlay")) $("help-overlay").hidden = true;
   });
 
   // ---------- filters ----------
