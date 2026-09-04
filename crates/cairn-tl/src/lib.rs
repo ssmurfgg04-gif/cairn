@@ -11,7 +11,9 @@
 pub mod canon;
 pub mod classifier;
 pub mod fcpxml;
+pub mod handoff;
 pub mod identity;
+pub mod markers;
 pub mod merge;
 pub mod model;
 pub mod notes;
