@@ -1,6 +1,6 @@
 {
   "schema": "cairn-nle-matrix/real-timeline-corpus/1",
-  "captured_utc": "2026-09-03T20:47:21Z",
+  "captured_utc": "2026-09-04T11:13:32Z",
   "cairn": "cairn 4.0.0",
   "host": {
     "os": "Linux"
@@ -89,14 +89,14 @@
       "bytes": 7658,
       "sha256": "4509d63164e08adc465057e7bf4a9edcc92ae2d48c697621029e8e84091e32d9",
       "origin": "BBC R&D fcpx-xml-composer sample (3 clips, fcpxml 1.8)",
-      "capture_ms": 5.0,
+      "capture_ms": 3.0,
       "capture_exit": 0,
       "status": "capture+merge",
       "editable_clips": 3,
       "edit_plan": "trim",
       "cooperative": {
         "exit": 0,
-        "ms": 4.7,
+        "ms": 3.1,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Clean (applied=2, withheld=0, deduped=0)",
         "report": {
@@ -115,7 +115,7 @@
       },
       "conflict": {
         "exit": 2,
-        "ms": 4.7,
+        "ms": 2.8,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
         "report": {
@@ -134,8 +134,8 @@
             {
               "class": "C3",
               "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
-              "ours": "trim uuid:01a06906-ad8d-73c1-8810-0af47b3549b6 in=-0.04s out=0.04s",
-              "theirs": "trim uuid:01a06906-ad8d-73c1-8810-0af47b3549b6 in=-0.2s out=0.2s",
+              "ours": "trim uuid:01a06c1f-b1c1-73e1-a4ba-38af1dc4309f in=-0.04s out=0.04s",
+              "theirs": "trim uuid:01a06c1f-b1c1-73e1-a4ba-38af1dc4309f in=-0.2s out=0.2s",
               "verdict": "Human"
             }
           ]
@@ -153,14 +153,14 @@
       "bytes": 3561,
       "sha256": "bd22fd76ad5f9ab6a97c6b8cec42483b36e70ae2b9c7b1ed293a17e95ccf8fc9",
       "origin": "BBC R&D fcpx-xml-composer sample (morgan-sequence, fcpxml 1.8)",
-      "capture_ms": 4.1,
+      "capture_ms": 2.7,
       "capture_exit": 0,
       "status": "capture+merge",
       "editable_clips": 1,
       "edit_plan": "trim",
       "cooperative": {
         "exit": 0,
-        "ms": 4.2,
+        "ms": 2.6,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Clean (applied=1, withheld=0, deduped=0)",
         "report": {
@@ -179,7 +179,7 @@
       },
       "conflict": {
         "exit": 2,
-        "ms": 3.9,
+        "ms": 2.5,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
         "report": {
@@ -198,8 +198,8 @@
             {
               "class": "C3",
               "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
-              "ours": "trim uuid:01a06906-adcd-71b2-a4ba-1adde2e7e620 in=-0.0004s out=0.0004s",
-              "theirs": "trim uuid:01a06906-adcd-71b2-a4ba-1adde2e7e620 in=-0.002s out=0.002s",
+              "ours": "trim uuid:01a06c1f-b1f5-7483-a85e-db8b38d5e841 in=-0.0004s out=0.0004s",
+              "theirs": "trim uuid:01a06c1f-b1f5-7483-a85e-db8b38d5e841 in=-0.002s out=0.002s",
               "verdict": "Human"
             }
           ]
@@ -217,7 +217,7 @@
       "bytes": 3572,
       "sha256": "065de8d684cd8598d6d21f8915008ccadf74b7ab978587703bf47597a8c556a7",
       "origin": "OpenTimelineIO sample data (large integer time values)",
-      "capture_ms": 3.4,
+      "capture_ms": 1.7,
       "capture_exit": 1,
       "status": "refused-at-capture",
       "capture_err": "Error: otio parse: invalid JSON: expected value at line 39 column 45"
@@ -227,14 +227,14 @@
       "bytes": 3750,
       "sha256": "b87fbdaf96561c4ba2b361c572b298a91aa2a73613e215402dd5ae400220b326",
       "origin": "OpenTimelineIO sample data (clip example)",
-      "capture_ms": 3.9,
+      "capture_ms": 2.1,
       "capture_exit": 0,
       "status": "capture+merge",
       "editable_clips": 1,
       "edit_plan": "trim",
       "cooperative": {
         "exit": 0,
-        "ms": 4.6,
+        "ms": 2.9,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Clean (applied=1, withheld=0, deduped=0)",
         "report": {
@@ -253,7 +253,7 @@
       },
       "conflict": {
         "exit": 2,
-        "ms": 4.5,
+        "ms": 2.8,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
         "report": {
@@ -272,8 +272,8 @@
             {
               "class": "C3",
               "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
-              "ours": "trim uuid:01a06906-ae0b-7101-b62d-4cdc4629e99c in=-0.041666666666666664s out=0.041666666666666664s",
-              "theirs": "trim uuid:01a06906-ae0b-7101-b62d-4cdc4629e99c in=-0.20833333333333334s out=0.20833333333333334s",
+              "ours": "trim uuid:01a06c1f-b225-7a63-b3fa-998eb5840c5a in=-0.041666666666666664s out=0.041666666666666664s",
+              "theirs": "trim uuid:01a06c1f-b225-7a63-b3fa-998eb5840c5a in=-0.20833333333333334s out=0.20833333333333334s",
               "verdict": "Human"
             }
           ]
@@ -291,14 +291,14 @@
       "bytes": 7584,
       "sha256": "84e82886621316c9cc884d5cac4d52ba9acb3dd181279aee927789a245ff06bb",
       "origin": "cutlass samples (picture-in-picture, fcpxml 1.13)",
-      "capture_ms": 4.5,
+      "capture_ms": 2.7,
       "capture_exit": 0,
       "status": "capture+merge",
       "editable_clips": 2,
       "edit_plan": "trim",
       "cooperative": {
         "exit": 0,
-        "ms": 5.0,
+        "ms": 3.0,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Clean (applied=2, withheld=0, deduped=0)",
         "report": {
@@ -317,7 +317,7 @@
       },
       "conflict": {
         "exit": 2,
-        "ms": 5.2,
+        "ms": 3.3,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
         "report": {
@@ -336,8 +336,8 @@
             {
               "class": "C3",
               "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
-              "ours": "trim uuid:01a06906-ae4b-7951-a7d2-64c4fd93d0a9 in=-0.0003333333333333333s out=0.0003333333333333333s",
-              "theirs": "trim uuid:01a06906-ae4b-7951-a7d2-64c4fd93d0a9 in=-0.0016666666666666668s out=0.0016666666666666668s",
+              "ours": "trim uuid:01a06c1f-b255-7de3-a4ad-aa3ff95f18f9 in=-0.0003333333333333333s out=0.0003333333333333333s",
+              "theirs": "trim uuid:01a06c1f-b255-7de3-a4ad-aa3ff95f18f9 in=-0.0016666666666666668s out=0.0016666666666666668s",
               "verdict": "Human"
             }
           ]
@@ -355,14 +355,14 @@
       "bytes": 6446,
       "sha256": "c1f0b9cc6ce683742f39f6e7d34adcc4f092a9f9e8f12041f917759345c4b39e",
       "origin": "cutlass samples (short vertical edit, fcpxml 1.13)",
-      "capture_ms": 4.3,
+      "capture_ms": 2.3,
       "capture_exit": 0,
       "status": "capture+merge",
       "editable_clips": 2,
       "edit_plan": "trim",
       "cooperative": {
         "exit": 0,
-        "ms": 4.4,
+        "ms": 2.9,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Clean (applied=2, withheld=0, deduped=0)",
         "report": {
@@ -381,7 +381,7 @@
       },
       "conflict": {
         "exit": 2,
-        "ms": 4.4,
+        "ms": 2.7,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
         "report": {
@@ -400,8 +400,8 @@
             {
               "class": "C3",
               "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
-              "ours": "trim uuid:01a06906-ae8b-78e0-b697-45afd9cfe065 in=-1s out=1s",
-              "theirs": "trim uuid:01a06906-ae8b-78e0-b697-45afd9cfe065 in=-5s out=5s",
+              "ours": "trim uuid:01a06c1f-b286-70e1-abd0-9e33847b6a0f in=-1s out=1s",
+              "theirs": "trim uuid:01a06c1f-b286-70e1-abd0-9e33847b6a0f in=-5s out=5s",
               "verdict": "Human"
             }
           ]
@@ -419,14 +419,14 @@
       "bytes": 356446,
       "sha256": "2507d49a7c14b391116da515521bd087dee238fbb27b9a83faec0dc1ffeb151c",
       "origin": "OpenTimelineIO sample data (effect stacks, 356 KB)",
-      "capture_ms": 20.6,
+      "capture_ms": 11.1,
       "capture_exit": 0,
       "status": "capture+merge",
       "editable_clips": 37,
       "edit_plan": "trim",
       "cooperative": {
         "exit": 0,
-        "ms": 45.1,
+        "ms": 26.1,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Clean (applied=2, withheld=0, deduped=0)",
         "report": {
@@ -445,7 +445,7 @@
       },
       "conflict": {
         "exit": 2,
-        "ms": 45.6,
+        "ms": 22.6,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
         "report": {
@@ -464,8 +464,8 @@
             {
               "class": "C3",
               "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
-              "ours": "trim uuid:01a06906-aecf-7ae0-9e54-2c412448e0cc in=-0.041666666666666664s out=0.041666666666666664s",
-              "theirs": "trim uuid:01a06906-aecf-7ae0-9e54-2c412448e0cc in=-0.20833333333333334s out=0.20833333333333334s",
+              "ours": "trim uuid:01a06c1f-b2bb-73d1-ae17-2fe69f657ec8 in=-0.041666666666666664s out=0.041666666666666664s",
+              "theirs": "trim uuid:01a06c1f-b2bb-73d1-ae17-2fe69f657ec8 in=-0.20833333333333334s out=0.20833333333333334s",
               "verdict": "Human"
             }
           ]
@@ -483,14 +483,14 @@
       "bytes": 2557,
       "sha256": "85c0a9eca537134ee75809820e6555e9cbec0ef64be5d1806c23cedf382a8c59",
       "origin": "OpenTimelineIO sample data (generator references)",
-      "capture_ms": 4.2,
+      "capture_ms": 2.5,
       "capture_exit": 0,
       "status": "capture+merge",
       "editable_clips": 1,
       "edit_plan": "trim",
       "cooperative": {
         "exit": 0,
-        "ms": 4.4,
+        "ms": 2.6,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Clean (applied=1, withheld=0, deduped=0)",
         "report": {
@@ -509,7 +509,7 @@
       },
       "conflict": {
         "exit": 2,
-        "ms": 4.4,
+        "ms": 2.7,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
         "report": {
@@ -528,8 +528,8 @@
             {
               "class": "C3",
               "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
-              "ours": "trim uuid:01a06906-afeb-7330-a2a2-4216a31a2d40 in=-0.041666666666666664s out=0.041666666666666664s",
-              "theirs": "trim uuid:01a06906-afeb-7330-a2a2-4216a31a2d40 in=-0.20833333333333334s out=0.20833333333333334s",
+              "ours": "trim uuid:01a06c1f-b364-7863-8025-90e06ccd0ef9 in=-0.041666666666666664s out=0.041666666666666664s",
+              "theirs": "trim uuid:01a06c1f-b364-7863-8025-90e06ccd0ef9 in=-0.20833333333333334s out=0.20833333333333334s",
               "verdict": "Human"
             }
           ]
@@ -547,14 +547,14 @@
       "bytes": 13052,
       "sha256": "8cfcaa5f346a302a3e3c23ed03b35f85046c9d9a6a67e5c894652d814a0b5668",
       "origin": "OpenTimelineIO sample data (multiple tracks)",
-      "capture_ms": 4.7,
+      "capture_ms": 2.4,
       "capture_exit": 0,
       "status": "capture+merge",
       "editable_clips": 5,
       "edit_plan": "trim",
       "cooperative": {
         "exit": 0,
-        "ms": 5.6,
+        "ms": 3.5,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Clean (applied=2, withheld=0, deduped=0)",
         "report": {
@@ -573,7 +573,7 @@
       },
       "conflict": {
         "exit": 2,
-        "ms": 5.2,
+        "ms": 2.9,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
         "report": {
@@ -592,8 +592,8 @@
             {
               "class": "C3",
               "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
-              "ours": "trim uuid:01a06906-b029-72c0-80e2-07278dd4e831 in=-0.041666666666666664s out=0.041666666666666664s",
-              "theirs": "trim uuid:01a06906-b029-72c0-80e2-07278dd4e831 in=-0.20833333333333334s out=0.20833333333333334s",
+              "ours": "trim uuid:01a06c1f-b392-7221-86e5-78619ea5ca06 in=-0.041666666666666664s out=0.041666666666666664s",
+              "theirs": "trim uuid:01a06c1f-b392-7221-86e5-78619ea5ca06 in=-0.20833333333333334s out=0.20833333333333334s",
               "verdict": "Human"
             }
           ]
@@ -611,14 +611,14 @@
       "bytes": 13525,
       "sha256": "8982f905993ca4c7113423e63fdd7d2eff69d56ed4659a080e3281b7e7f038e0",
       "origin": "OpenTimelineIO sample data (multitrack)",
-      "capture_ms": 4.7,
+      "capture_ms": 2.6,
       "capture_exit": 0,
       "status": "capture+merge",
       "editable_clips": 5,
       "edit_plan": "trim",
       "cooperative": {
         "exit": 0,
-        "ms": 5.9,
+        "ms": 3.6,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Clean (applied=2, withheld=0, deduped=0)",
         "report": {
@@ -637,7 +637,7 @@
       },
       "conflict": {
         "exit": 2,
-        "ms": 6.4,
+        "ms": 3.3,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
         "report": {
@@ -656,8 +656,8 @@
             {
               "class": "C3",
               "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
-              "ours": "trim uuid:01a06906-b06e-71a2-8160-fd3281a1206e in=-0.041666666666666664s out=0.041666666666666664s",
-              "theirs": "trim uuid:01a06906-b06e-71a2-8160-fd3281a1206e in=-0.20833333333333334s out=0.20833333333333334s",
+              "ours": "trim uuid:01a06c1f-b3c2-7702-9da5-f6d9af13dca5 in=-0.041666666666666664s out=0.041666666666666664s",
+              "theirs": "trim uuid:01a06c1f-b3c2-7702-9da5-f6d9af13dca5 in=-0.20833333333333334s out=0.20833333333333334s",
               "verdict": "Human"
             }
           ]
@@ -675,14 +675,14 @@
       "bytes": 13242,
       "sha256": "2d11b95eb34522952b8b3d99ddac8935be6700649fd9726f6f2424bacd22ccd0",
       "origin": "OpenTimelineIO sample data (nested stacks)",
-      "capture_ms": 4.2,
+      "capture_ms": 2.7,
       "capture_exit": 0,
       "status": "capture+merge",
       "editable_clips": 7,
       "edit_plan": "trim",
       "cooperative": {
         "exit": 0,
-        "ms": 5.7,
+        "ms": 3.2,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Clean (applied=1, withheld=0, deduped=0)",
         "report": {
@@ -701,7 +701,7 @@
       },
       "conflict": {
         "exit": 2,
-        "ms": 5.8,
+        "ms": 3.0,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
         "report": {
@@ -720,8 +720,8 @@
             {
               "class": "C3",
               "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
-              "ours": "trim uuid:01a06906-b0b4-78f1-88de-5cd0254e21ca in=-0.041666666666666664s out=0.041666666666666664s",
-              "theirs": "trim uuid:01a06906-b0b4-78f1-88de-5cd0254e21ca in=-0.20833333333333334s out=0.20833333333333334s",
+              "ours": "trim uuid:01a06c1f-b3f6-7ac1-9c17-cc8930a83248 in=-0.041666666666666664s out=0.041666666666666664s",
+              "theirs": "trim uuid:01a06c1f-b3f6-7ac1-9c17-cc8930a83248 in=-0.20833333333333334s out=0.20833333333333334s",
               "verdict": "Human"
             }
           ]
@@ -739,14 +739,14 @@
       "bytes": 8355,
       "sha256": "553240152332819a8b0a7bb3ab0469ac9f91e075ffb2a24e3e975f7473770424",
       "origin": "OpenTimelineIO sample data (preflattened)",
-      "capture_ms": 4.5,
+      "capture_ms": 2.6,
       "capture_exit": 0,
       "status": "capture+merge",
       "editable_clips": 5,
       "edit_plan": "trim",
       "cooperative": {
         "exit": 0,
-        "ms": 5.0,
+        "ms": 3.6,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Clean (applied=2, withheld=0, deduped=0)",
         "report": {
@@ -765,7 +765,7 @@
       },
       "conflict": {
         "exit": 2,
-        "ms": 5.1,
+        "ms": 3.2,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
         "report": {
@@ -784,8 +784,8 @@
             {
               "class": "C3",
               "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
-              "ours": "trim uuid:01a06906-b0f9-71e1-81b0-4efc88923162 in=-0.041666666666666664s out=0.041666666666666664s",
-              "theirs": "trim uuid:01a06906-b0f9-71e1-81b0-4efc88923162 in=-0.20833333333333334s out=0.20833333333333334s",
+              "ours": "trim uuid:01a06c1f-b427-7020-a1a9-de2ba52171b8 in=-0.041666666666666664s out=0.041666666666666664s",
+              "theirs": "trim uuid:01a06c1f-b427-7020-a1a9-de2ba52171b8 in=-0.20833333333333334s out=0.20833333333333334s",
               "verdict": "Human"
             }
           ]
@@ -803,14 +803,14 @@
       "bytes": 115650,
       "sha256": "077bdb6e487a906db79cf0555aadfdf20e8ba6a8826ef2ee76a894377c08bc36",
       "origin": "OpenTimelineIO sample data (real Premiere sequence via the premiere adapter)",
-      "capture_ms": 9.2,
+      "capture_ms": 4.8,
       "capture_exit": 0,
       "status": "capture+merge",
       "editable_clips": 13,
       "edit_plan": "trim",
       "cooperative": {
         "exit": 0,
-        "ms": 18.2,
+        "ms": 9.4,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Clean (applied=2, withheld=0, deduped=0)",
         "report": {
@@ -829,7 +829,7 @@
       },
       "conflict": {
         "exit": 2,
-        "ms": 19.0,
+        "ms": 9.8,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
         "report": {
@@ -848,8 +848,8 @@
             {
               "class": "C3",
               "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
-              "ours": "trim uuid:01a06906-b13e-70a2-a3ca-c959a1316ada in=-0.06666666666666667s out=0.06666666666666667s",
-              "theirs": "trim uuid:01a06906-b13e-70a2-a3ca-c959a1316ada in=-0.3333333333333333s out=0.3333333333333333s",
+              "ours": "trim uuid:01a06c1f-b45a-7862-a408-dcf61eaef824 in=-0.06666666666666667s out=0.06666666666666667s",
+              "theirs": "trim uuid:01a06c1f-b45a-7862-a408-dcf61eaef824 in=-0.3333333333333333s out=0.3333333333333333s",
               "verdict": "Human"
             }
           ]
@@ -867,14 +867,14 @@
       "bytes": 1553,
       "sha256": "55439d9ea3779482ad8b53b4f296c62388004ec46d98d1d757d592c5c15c7c07",
       "origin": "PRONOM (UK National Archives) authentic Final Cut Pro X sample, fcpxml 1.8",
-      "capture_ms": 4.0,
+      "capture_ms": 2.4,
       "capture_exit": 0,
       "status": "capture+merge",
       "editable_clips": 0,
       "edit_plan": "track-name",
       "cooperative": {
         "exit": 0,
-        "ms": 3.8,
+        "ms": 2.5,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Clean (applied=1, withheld=0, deduped=0)",
         "report": {
@@ -893,7 +893,7 @@
       },
       "conflict": {
         "exit": 2,
-        "ms": 5.2,
+        "ms": 2.5,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
         "report": {
@@ -931,14 +931,14 @@
       "bytes": 20954,
       "sha256": "d344ee732885c165f68d6f845e04aaf17d61de6cf8c75dd45519f460fca4d610",
       "origin": "OpenTimelineIO sample data (real screening sequence)",
-      "capture_ms": 11.0,
+      "capture_ms": 2.8,
       "capture_exit": 0,
       "status": "capture+merge",
       "editable_clips": 9,
       "edit_plan": "trim",
       "cooperative": {
         "exit": 0,
-        "ms": 6.4,
+        "ms": 3.8,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Clean (applied=2, withheld=0, deduped=0)",
         "report": {
@@ -957,7 +957,7 @@
       },
       "conflict": {
         "exit": 2,
-        "ms": 6.8,
+        "ms": 3.8,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
         "report": {
@@ -976,8 +976,8 @@
             {
               "class": "C3",
               "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
-              "ours": "trim uuid:01a06906-b21f-75a1-83ab-dc411a465945 in=-0.041666666666666664s out=0.041666666666666664s",
-              "theirs": "trim uuid:01a06906-b21f-75a1-83ab-dc411a465945 in=-0.20833333333333334s out=0.20833333333333334s",
+              "ours": "trim uuid:01a06c1f-b4da-7fb0-850f-adad86a9f5f7 in=-0.041666666666666664s out=0.041666666666666664s",
+              "theirs": "trim uuid:01a06c1f-b4da-7fb0-850f-adad86a9f5f7 in=-0.20833333333333334s out=0.20833333333333334s",
               "verdict": "Human"
             }
           ]
@@ -995,14 +995,14 @@
       "bytes": 5299,
       "sha256": "a85440060aa8b421fb7430dcf4c6d9a89a78b256198767afcfff1496ededf7eb",
       "origin": "OpenTimelineIO sample data (simple cut)",
-      "capture_ms": 4.5,
+      "capture_ms": 2.4,
       "capture_exit": 0,
       "status": "capture+merge",
       "editable_clips": 4,
       "edit_plan": "trim",
       "cooperative": {
         "exit": 0,
-        "ms": 5.1,
+        "ms": 3.0,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Clean (applied=2, withheld=0, deduped=0)",
         "report": {
@@ -1021,7 +1021,7 @@
       },
       "conflict": {
         "exit": 2,
-        "ms": 4.7,
+        "ms": 3.0,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
         "report": {
@@ -1040,8 +1040,8 @@
             {
               "class": "C3",
               "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
-              "ours": "trim uuid:01a06906-b279-7223-983f-d874fac8863f in=-0.041666666666666664s out=0.041666666666666664s",
-              "theirs": "trim uuid:01a06906-b279-7223-983f-d874fac8863f in=-0.20833333333333334s out=0.20833333333333334s",
+              "ours": "trim uuid:01a06c1f-b511-74c2-a3cb-1b8cbfd8e056 in=-0.041666666666666664s out=0.041666666666666664s",
+              "theirs": "trim uuid:01a06c1f-b511-74c2-a3cb-1b8cbfd8e056 in=-0.20833333333333334s out=0.20833333333333334s",
               "verdict": "Human"
             }
           ]
@@ -1059,14 +1059,14 @@
       "bytes": 8355,
       "sha256": "976f608b6feb511ce6a1155d3d3c4703d51ea4c81a240a513d2cfc2939c3d246",
       "origin": "OpenTimelineIO sample data (transitions)",
-      "capture_ms": 4.5,
+      "capture_ms": 2.2,
       "capture_exit": 0,
       "status": "capture+merge",
       "editable_clips": 4,
       "edit_plan": "trim",
       "cooperative": {
         "exit": 0,
-        "ms": 11.9,
+        "ms": 2.9,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Clean (applied=2, withheld=0, deduped=0)",
         "report": {
@@ -1085,7 +1085,7 @@
       },
       "conflict": {
         "exit": 2,
-        "ms": 5.1,
+        "ms": 3.0,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
         "report": {
@@ -1104,8 +1104,8 @@
             {
               "class": "C3",
               "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
-              "ours": "trim uuid:01a06906-b2c5-7cc3-baa3-5290367221bc in=-0.041666666666666664s out=0.041666666666666664s",
-              "theirs": "trim uuid:01a06906-b2c5-7cc3-baa3-5290367221bc in=-0.20833333333333334s out=0.20833333333333334s",
+              "ours": "trim uuid:01a06c1f-b541-7440-a72a-92ca7d2315a0 in=-0.041666666666666664s out=0.041666666666666664s",
+              "theirs": "trim uuid:01a06c1f-b541-7440-a72a-92ca7d2315a0 in=-0.20833333333333334s out=0.20833333333333334s",
               "verdict": "Human"
             }
           ]
@@ -1123,14 +1123,14 @@
       "bytes": 5609,
       "sha256": "fe2a88668728386c1083cb964196e8966a5cc2062cfc022c7548fb43f21691da",
       "origin": "OpenTimelineIO sample data (transition edges)",
-      "capture_ms": 9.1,
+      "capture_ms": 2.6,
       "capture_exit": 0,
       "status": "capture+merge",
       "editable_clips": 3,
       "edit_plan": "trim",
       "cooperative": {
         "exit": 0,
-        "ms": 5.2,
+        "ms": 2.9,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Clean (applied=2, withheld=0, deduped=0)",
         "report": {
@@ -1149,7 +1149,7 @@
       },
       "conflict": {
         "exit": 2,
-        "ms": 6.2,
+        "ms": 2.8,
         "merged_recapture_ok": true,
         "outcome_line": "outcome: Conflicts (applied=0, withheld=2, deduped=0)",
         "report": {
@@ -1168,8 +1168,8 @@
             {
               "class": "C3",
               "note": "both sides re-cut the same element \u2014 same creative parameter, different values",
-              "ours": "trim uuid:01a06906-b31b-7640-ac4e-108cdd8c25c1 in=-0.041666666666666664s out=0.041666666666666664s",
-              "theirs": "trim uuid:01a06906-b31b-7640-ac4e-108cdd8c25c1 in=-0.20833333333333334s out=0.20833333333333334s",
+              "ours": "trim uuid:01a06c1f-b570-77e0-a942-2a0594483a04 in=-0.041666666666666664s out=0.041666666666666664s",
+              "theirs": "trim uuid:01a06c1f-b570-77e0-a942-2a0594483a04 in=-0.20833333333333334s out=0.20833333333333334s",
               "verdict": "Human"
             }
           ]

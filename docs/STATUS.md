@@ -19,7 +19,28 @@ Legend: ✅ implemented + tests green · 🟨 implemented, platform-gated / hard
 | M7 | fuzz targets; flags flip w/o restart; audit log; SLO metrics; runbooks; ctl-api frozen | ✅ / fuzz execution on nightly CI (targets build locally) |
 | M8 | onboarding e2e; doctor; THIRD_PARTY complete; beta runbook | ✅ (docs/runbook-beta.md; onboarding e2e) |
 
-## Round 14 (2026-09-04) — the swarm: P2P block transport, join-code gated + review notes + round-trip audit
+## Round 15 (2026-09-04) — the production-usability five (ADR-0019)
+
+The user's five-item round: CfAPI lifecycle resilience, multi-root single-daemon,
+OTIO schema leniency, mDNS LAN discovery, Windows shell visual feedback. Plus
+the round-14 Kani stub follow-up landed properly (part 7).
+
+| Item | Status | Evidence |
+|---|---|---|
+| Kani heavy shards — the REAL stub landing (round 14 part 7) | ✅ | `#[kani::stub(std::fmt::format, ...)]` + `#[kani::stub(Element::content_fingerprint, ...)]` on all 22 harnesses (with `-Z stubbing` in kani.yml); branch-valued payloads (`Value::Bool(bit)`, symbolic AttrKind, ""/"x" names) — payload equalities reduce to 1-bit/1-byte compares AND C1/C2/C3/C8 value-differs sub-arms are covered (strictly more than the original always-equal model); a/b bounded to [0,16) (comparisons equal-by-construction — range-independent). Local forensics on the 2-core/3GB box: kind_03 55s / kind_06 42s / kind_09 pass (were 131+ min hangs, run 33844913132); root cause: CBMC's dead-path walk through `content_fingerprint`'s BTreeMap search + fmt machinery on phi artifact bytes. CI 27-runner matrix re-proofs |
+| Multi-root on a single daemon (§2) | ✅ | root namespaces (`pid#<rid>` local rows/cursor/outbox) + root-qualified authorship (`dev#<rid>`): own-op suppression only skips SAME-root entries — the "cursor stuck / B never converges" class is gone; legacy root byte-compatible (adoption test-pinned). `cairn-sim::one_home_two_roots_converge`: one home + one journal + two roots — bidirectional convergence, quiet passes, bounded journal, W5 conflict contract holds |
+| OTIO pre-ingestion leniency (§3) | ✅ | `normalize_otio_value` (pure JSON→JSON, idempotent): bare Track roots, `Timeline.tracks` as array/single-track, single-object `children`, missing-schema sniffing; unknown schema VERSIONS still refuse (no semantic rewrites). 6 leniency tests + corpus gate unchanged at 17/18 + canonical fixed-point test |
+| mDNS LAN discovery (§4) | ✅ | `cairn-p2p::mdns` (zero new deps): DNS codec (PTR/SRV/TXT + compression-pointer decode), multicast transport with bounded reads, fake-bus tests; beacons carry a 16-hex join-code FINGERPRINT (code never travels); `cairn signal` announces by default (wildcard bind + join code; `--no-mdns` opts out), `cairn daemon --swarm-mdns` browses (1.5s) and fills the signal address; spoofing fails closed exactly like a wrong --swarm-signal (HMAC admission unchanged, ADR-0017 §7) |
+| CfAPI async population + watchdog (§1) | ✅ code-complete, CI-compiled | FETCH_PLACEHOLDERS completes asynchronously: callback captures the three filter-owned keys + owned path/pattern + Arc source, posts to a 4-worker pool, returns immediately (`transfer_placeholders_keys` builds CfExecute from captured keys; dead pool falls back inline). Per-root watchdog (`CAIRN_CFAPI_WATCHDOG_SECS`, 30+ jitter) re-attaches through the idempotent path when the connection drops. Windows matrix compiles; live verification is the studio leg (same as all CfAPI rounds) |
+| Windows shell extension (§5) | ✅ core + COM scaffold, follow-ups ledger | `cairn-shell-ext`: cross-platform `core` (state model w/ Conflict>Fetching>Pinned>Synced priority, fail-quiet state file, bounded writer, root walk-up marker, menu argv) — 5 unit tests; cfg(windows) `com` (manual-vtable COM per the cfapi pattern): DLL exports + HKCU registration (no elevation) + 4 overlay handlers + context menu invoking the CLI via ShellExecuteExW. Daemon writes `<root>/.cairn/overlay.json` per pass; attach writes `root.json`. Follow-ups (ADR-0019 §5 ledger): icon resource pack, CF_HDROP plumbing, per-interface QI, signed installer |
+| Gates | ✅ | fmt + clippy `-D warnings` clean workspace-wide; 46 test suites green (0 failures); corpus 17/18; Kani sweep re-proving on the 27-runner matrix |
+
+Human-gated (unchanged): live Windows Explorer verification of overlays/async
+population (studio leg), real-LAN mDNS behavior across router IGMP configs
+(the fake-bus tests pin the protocol logic; the multicast transport is
+compiled but loopback-sandbox-untestable).
+
+
 
 The user-mandated P2P leg (SPEC §3 exception, ADR-0017/0018). Environment note: this round
 was built twice — the first build was lost pre-push to an environment reset; every lesson from

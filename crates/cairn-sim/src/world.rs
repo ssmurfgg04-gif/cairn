@@ -800,7 +800,6 @@ mod multoroot_tests {
     }
 
     async fn journal_len(engine: &cairn_sync::Engine) -> u64 {
-        use cairn_sync::plane::Plane;
         let mut n = 0u64;
         let mut cursor = 0u64;
         loop {
