@@ -1908,24 +1908,6 @@ fn run_member(cmd: member_cmd::MemberCmd) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
-mod chrono_tests {
-    #[test]
-    fn civil_date_math_matches_known_stamp() {
-        // 2026-09-04 00:00:00 UTC = 1788480000 s
-        assert_eq!(
-            super::chrono_like(1_788_480_000_000),
-            "2026-09-04 00:00:00 UTC"
-        );
-        assert_eq!(super::chrono_like(0), "1970-01-01 00:00:00 UTC");
-        // 2000-02-29 12:30:45 UTC = 951827445
-        assert_eq!(
-            super::chrono_like(951_827_445_000),
-            "2000-02-29 12:30:45 UTC"
-        );
-    }
-}
-
 // ---------- AAF/OMF handoff ledger (ADR-0020 §6) ----------
 
 fn run_handoff(cmd: handoff_cmd::HandoffCmd) -> anyhow::Result<()> {
@@ -1964,4 +1946,22 @@ fn run_handoff(cmd: handoff_cmd::HandoffCmd) -> anyhow::Result<()> {
         HandoffCmd::List { root } => handoff::cmd_list(Path::new(&root))?,
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod chrono_tests {
+    #[test]
+    fn civil_date_math_matches_known_stamp() {
+        // 2026-09-04 00:00:00 UTC = 1788480000 s
+        assert_eq!(
+            super::chrono_like(1_788_480_000_000),
+            "2026-09-04 00:00:00 UTC"
+        );
+        assert_eq!(super::chrono_like(0), "1970-01-01 00:00:00 UTC");
+        // 2000-02-29 12:30:45 UTC = 951827445
+        assert_eq!(
+            super::chrono_like(951_827_445_000),
+            "2000-02-29 12:30:45 UTC"
+        );
+    }
 }
