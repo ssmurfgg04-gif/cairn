@@ -30,6 +30,22 @@ jobs:
         with: { components: rustfmt }
       - run: cargo fmt --all -- --check
 
+  # Windows-only Rust surface (shell-ext COM, tray) type-checked from a linux
+  # runner: `cargo check` needs no MSVC linker, and these crates have no C
+  # build-scripts (blake3/ring can't cross-compile here). This caught the 19
+  # com.rs E0432/E0605/E0512 errors that only the slow windows-matrix saw at
+  # 7836717; the full build still runs on windows-latest below.
+  windows-cross-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: x86_64-pc-windows-msvc }
+      - uses: Swatinem/rust-cache@v2
+        with:
+          prefix-key: win-cross
+      - run: cargo check --target x86_64-pc-windows-msvc -p cairn-shell-ext -p cairn-tray
+
   # WO6-9 security sweep: RustSec advisories + the repo's own gate script
   # (secret-shape scan, unsafe policy, path-traversal gates, TLS fail-closed, I3).
   security:
