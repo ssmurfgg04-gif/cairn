@@ -584,7 +584,9 @@ pub mod review_cmd {
         Link {
             #[arg(long, default_value = ".")]
             root: String,
-            /// guest role: commenter (default) or viewer (view-only)
+            /// guest role: commenter (default), viewer (view-only), or
+            /// studio (team link: comments AND sees internal notes,
+            /// ADR-0028)
             #[arg(long, default_value = "commenter")]
             role: String,
             /// who this link is for (display only)
@@ -626,6 +628,10 @@ pub mod review_cmd {
             /// Base timeline for OTIO export (default: marker-only shell)
             #[arg(long)]
             timeline: Option<String>,
+            /// Note visibility to include (ADR-0028): public (default,
+            /// what the client sees), internal, or all
+            #[arg(long, default_value = "public")]
+            visibility: String,
         },
         /// Export a version's comments as an EDIT CHANGE LIST (the 3-step
         /// no-AI recipe, ADR-0023 §3): mechanical notes (cut/trim/delete/
@@ -2025,7 +2031,7 @@ fn run_review(cmd: review_cmd::ReviewCmd) -> anyhow::Result<()> {
                 cairn_core::rbac::Permission::ManageReview,
             )?;
             let role = cairn_review::model::GuestRole::parse(&role)
-                .unwrap_or_else(|| panic!("--role must be commenter or viewer"));
+                .unwrap_or_else(|| panic!("--role must be commenter, viewer, or studio"));
             let (token, exp) =
                 review::cmd_link(Path::new(&root), role, &note, ttl_hours, latest_only)?;
             println!("token: {token}");
@@ -2049,13 +2055,23 @@ fn run_review(cmd: review_cmd::ReviewCmd) -> anyhow::Result<()> {
             out,
             otio,
             timeline,
+            visibility,
         } => {
+            let vis = if visibility.eq_ignore_ascii_case("all") {
+                None
+            } else {
+                Some(
+                    cairn_tl::notes::NoteVisibility::parse(&visibility)
+                        .unwrap_or_else(|| panic!("--visibility must be public, internal, or all")),
+                )
+            };
             handoff::cmd_export_markers(
                 Path::new(&root),
                 version,
                 &out,
                 otio,
                 timeline.as_deref(),
+                vis,
             )?;
         }
         ReviewCmd::ExportChangelist {

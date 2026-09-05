@@ -37,6 +37,9 @@
     <div class="viewport" id="viewport">
       <div class="zoomer" id="zoomer">
         <video id="video" preload="metadata" playsinline></video>
+        <!-- ADR-0028: annotation overlays + pin dots live over the frame,
+             inside the zoomer so they track the picture when zoomed -->
+        <div id="overlaylayer" class="overlaylayer" aria-hidden="true"></div>
       </div>
       <div class="zoom-hud" id="zoom-hud" hidden>100%</div>
       <div class="notfound" id="notfound" hidden>
@@ -111,8 +114,22 @@
     <ol id="comments" class="comments"></ol>
     <form class="composer" id="composer" hidden>
       <div class="composer-head">note at <span class="composer-tc" id="composer-tc">00:00:00:00</span></div>
+      <!-- ADR-0028 compose tools: a pinned marker (click the frame to
+           place it), a region note, and studio-only internal visibility -->
+      <div class="composer-tools" id="composer-tools">
+        <button type="button" class="chip tool" id="tool-pin" aria-pressed="false"
+                title="marker pinned to a spot on the frame — click the frame to place it">pin</button>
+        <button type="button" class="chip tool" id="tool-range" aria-pressed="false"
+                title="note spans a region — set the end frame">range</button>
+        <span class="range-field" id="range-field" hidden>to
+          <input id="frame-end" type="number" min="1" step="1" class="frame-end"
+                 aria-label="range end frame" inputmode="numeric">
+        </span>
+        <button type="button" class="chip tool tool-internal" id="tool-internal" hidden aria-pressed="false"
+                title="studio only — never shown on client links">internal</button>
+      </div>
       <input id="author" class="author" placeholder="your name" maxlength="40" autocomplete="name" spellcheck="false">
-      <textarea id="body" class="body" placeholder="Be specific — &#8220;tighten after the cut&#8221; beats &#8220;looks off&#8221;" maxlength="2000" rows="2"></textarea>
+      <textarea id="body" class="body" placeholder="Be specific — &#8220;tighten after the cut&#8221; beats &#8220;looks off&#8221; (optional for a pin)" maxlength="2000" rows="2"></textarea>
       <button class="btn primary" id="submit" type="submit">add note</button>
     </form>
     <div class="viewer-note" id="viewer-note" hidden>view-only link — notes are off</div>

@@ -25,6 +25,10 @@
     query: "",          // search: body, #tags, author (ADR-0026)
     tag: "",            // active #tag chip ("")
     sort: "time",       // time (timecode asc) | newest
+    // ADR-0028 compose envelope: pin (marker at a spot on the frame),
+    // range (region note), internal (studio-only visibility)
+    compose: { pin: false, pinPos: null, range: false, internal: false },
+    overlayCache: new Map(),  // attachment hash -> {url} | {failed: true}
   };
 
   const video = $("video");
@@ -109,10 +113,11 @@
     renderComments();
     renderPresence();
 
-    // composer visibility by role
-    const canComment = data.role === "commenter";
+    // composer visibility by role (studio links write too, ADR-0028)
+    const canComment = data.role === "commenter" || data.role === "studio";
     $("composer").hidden = !canComment;
     $("viewer-note").hidden = canComment;
+    $("tool-internal").hidden = data.role !== "studio";
     if (canComment) {
       state.me = localStorage.getItem("cairn-review-name") || "";
       $("author").value = state.me;
@@ -304,6 +309,15 @@
       tc.style.cursor = "default";
     }
     headLine.append(tc);
+    // ADR-0028 badges: a pin glyph, a range end, a studio-only mark
+    if (c.kind === "pin") headLine.append(el("span", "kbadge pin", "pin"));
+    if (c.kind === "annotation") headLine.append(el("span", "kbadge anno", "drawing"));
+    if (c.frame_end != null && c.frame_end !== c.frame) {
+      const rb = el("span", "kbadge range", "\u2192 " + c.frame_end);
+      rb.title = "range to frame " + c.frame_end;
+      headLine.append(rb);
+    }
+    if (c.visibility === "internal") headLine.append(el("span", "kbadge internal", "internal"));
     const stat = el("span", "cstat " + c.status, c.status);
     headLine.append(stat);
     headLine.append(copyLinkBtn(c, isActive));
@@ -315,7 +329,7 @@
     headLine.append(meta);
     right.append(headLine);
 
-    right.append(el("div", "cbody", c.body));
+    right.append(el("div", "cbody", c.body || (c.kind === "pin" ? "(marker)" : "")));
 
     // the no-AI robot's read (round 20): mechanical notes get a chip the
     // editor can act on; creative notes get the honest "your call" mark.
@@ -326,7 +340,7 @@
       right.append(chip);
     }
 
-    if (state.session.role === "commenter") {
+    if (state.session.role === "commenter" || state.session.role === "studio") {
       const canResolve = c.status === "OPEN";
       const btn = el("button", "cresolve", canResolve ? "mark resolved" : "reopen");
       btn.type = "button";
@@ -349,7 +363,25 @@
     if (!state.version) return;
     const dur = state.version.frames || 1;
     active.forEach((c) => {
-      const m = el("button", "cmark" + (c.status === "RESOLVED" ? " resolved" : ""));
+      // ADR-0028 §B: a range note renders as a BRACKET on the scrub bar
+      // (start to end); the seek target is the range start
+      if (c.frame_end != null && c.frame_end !== c.frame) {
+        const br = el("button", "crange" + (c.status === "RESOLVED" ? " resolved" : ""));
+        br.type = "button";
+        br.style.left = (100 * c.frame / dur) + "%";
+        br.style.width = Math.max(0.6, 100 * (c.frame_end - c.frame + 1) / dur) + "%";
+        br.title = c.tc + " \u2013 " + c.frame_end + " — " + c.body;
+        br.setAttribute("aria-label", c.tc + " to frame " + c.frame_end);
+        br.addEventListener("click", (ev) => {
+          ev.stopPropagation();
+          seekFrame(state.version, c.frame);
+          video.pause();
+        });
+        layer.append(br);
+        return;
+      }
+      const m = el("button", "cmark" + (c.kind === "pin" ? " pin" : "") +
+        (c.status === "RESOLVED" ? " resolved" : ""));
       m.type = "button";
       m.style.left = (100 * c.frame / dur) + "%";
       m.title = c.tc + " — " + c.body;
@@ -503,6 +535,7 @@
       head.style.left = pct + "%";
       const chip = $("composer-tc");
       if (chip && !$("composer").hidden) chip.textContent = tcOf(f, state.version.tc_rate);
+      renderOverlays(f);
       drawWaveCached();
     }
   });
@@ -627,7 +660,8 @@
       window.removeEventListener("pointermove", mv);
       window.removeEventListener("pointerup", up);
       vp.style.cursor = zoomLevel > 1 ? "grab" : "pointer";
-      if (!moved) togglePlay();
+      // an armed pin tool swallows the click: it places the pin instead
+      if (!moved && !maybeCapturePin(ev2)) togglePlay();
     };
     window.addEventListener("pointermove", mv);
     window.addEventListener("pointerup", up);
@@ -686,6 +720,146 @@
         loadWave(state.version);
       }
     });
+  }
+
+  // ---------- ADR-0028: compose tools (pin / range / internal) ----------
+
+  function syncComposeUI() {
+    const c = state.compose;
+    $("tool-pin").setAttribute("aria-pressed", c.pin ? "true" : "false");
+    $("tool-pin").classList.toggle("active", c.pin);
+    $("tool-pin").textContent = c.pin && c.pinPos
+      ? "pin @ " + Math.round(c.pinPos.x * 100) + "%," + Math.round(c.pinPos.y * 100) + "%"
+      : "pin";
+    $("tool-range").setAttribute("aria-pressed", c.range ? "true" : "false");
+    $("tool-range").classList.toggle("active", c.range);
+    $("range-field").hidden = !c.range;
+    $("tool-internal").setAttribute("aria-pressed", c.internal ? "true" : "false");
+    $("tool-internal").classList.toggle("active", c.internal);
+    if (!c.pin) c.pinPos = null;
+    renderComposePin();
+  }
+
+  $("tool-pin").addEventListener("click", () => {
+    state.compose.pin = !state.compose.pin;
+    state.compose.pinPos = state.compose.pin ? { x: 0.5, y: 0.5 } : null;
+    syncComposeUI();
+  });
+  $("tool-range").addEventListener("click", () => {
+    state.compose.range = !state.compose.range;
+    if (state.compose.range && state.version) {
+      const end = Math.min(state.version.frames - 1, frameNow(state.version) + 24);
+      $("frame-end").value = String(end);
+      $("frame-end").min = String(frameNow(state.version) + 1);
+      $("frame-end").max = String(state.version.frames - 1);
+    }
+    syncComposeUI();
+  });
+  $("tool-internal").addEventListener("click", () => {
+    state.compose.internal = !state.compose.internal;
+    syncComposeUI();
+  });
+
+  // pin capture: with the pin tool armed, a click on the FRAME sets the
+  // position instead of toggling play (the capture swallows the click)
+  function maybeCapturePin(ev) {
+    if (!state.compose.pin || !state.version) return false;
+    const r = video.getBoundingClientRect();
+    if (!r.width || !r.height) return false;
+    state.compose.pinPos = {
+      x: Math.min(1, Math.max(0, (ev.clientX - r.left) / r.width)),
+      y: Math.min(1, Math.max(0, (ev.clientY - r.top) / r.height)),
+    };
+    syncComposeUI();
+    return true;
+  }
+
+  // the live pin preview on the viewport while composing
+  function renderComposePin() {
+    const layer = $("overlaylayer");
+    if (!layer) return;
+    layer.querySelectorAll(".compose-pin").forEach((n) => n.remove());
+    if (!state.compose.pin || !state.compose.pinPos) return;
+    const dot = el("div", "pin-dot compose-pin");
+    dot.style.left = state.compose.pinPos.x * 100 + "%";
+    dot.style.top = state.compose.pinPos.y * 100 + "%";
+    layer.append(dot);
+  }
+
+  // ---------- ADR-0028: overlays + pins on the frame ----------
+
+  // notes whose [frame, frame_end] covers the given frame
+  function notesAtFrame(frame, pred) {
+    return ((state.session && state.session.comments) || []).filter((c) => {
+      if (!state.version || c.version !== state.version.number) return false;
+      const start = c.frame, end = c.frame_end != null ? c.frame_end : c.frame;
+      if (frame < start || frame > end) return false;
+      return pred ? pred(c) : true;
+    });
+  }
+
+  function overlayUrl(hash) {
+    return "/r/" + encodeURIComponent(token) + "/attachment/" + encodeURIComponent(hash);
+  }
+
+  // one <img> per annotation overlay; a failed/missing overlay renders the
+  // honest affordance (dashed box), never a broken image, never a crash
+  function overlayNode(c) {
+    const wrap = el("div", "note-overlay");
+    const at = c.pin || { x: 0.5, y: 0.5 };
+    wrap.style.left = at.x * 100 + "%";
+    wrap.style.top = at.y * 100 + "%";
+    const hash = c.attachment;
+    const cached = state.overlayCache.get(hash);
+    if (cached && cached.failed) {
+      wrap.append(el("span", "overlay-missing", "drawing unavailable"));
+      return wrap;
+    }
+    const img = document.createElement("img");
+    img.alt = "annotation drawing";
+    img.decoding = "async";
+    if (cached && cached.url) {
+      img.src = cached.url;
+      wrap.append(img);
+      return wrap;
+    }
+    fetch(overlayUrl(hash))
+      .then((r) => {
+        if (!r.ok) throw new Error(String(r.status));
+        return r.blob();
+      })
+      .then((blob) => {
+        const url = URL.createObjectURL(blob);
+        state.overlayCache.set(hash, { url });
+        if (wrap.isConnected) {
+          wrap.replaceChildren(img);
+          img.src = url;
+        }
+      })
+      .catch(() => {
+        state.overlayCache.set(hash, { failed: true });
+        if (wrap.isConnected) wrap.append(el("span", "overlay-missing", "drawing unavailable"));
+      });
+    return wrap;
+  }
+
+  function renderOverlays(frame) {
+    const layer = $("overlaylayer");
+    if (!layer) return;
+    layer.replaceChildren();
+    // pin dots for pinned notes at this frame
+    notesAtFrame(frame, (c) => c.kind === "pin" && c.pin).forEach((c) => {
+      const dot = el("div", "pin-dot" + (c.status === "RESOLVED" ? " resolved" : ""));
+      dot.style.left = c.pin[0] * 100 + "%";
+      dot.style.top = c.pin[1] * 100 + "%";
+      dot.title = (c.author || "") + (c.body ? " — " + c.body : "");
+      layer.append(dot);
+    });
+    // annotation overlays for this frame
+    notesAtFrame(frame, (c) => c.attachment).forEach((c) => {
+      layer.append(overlayNode(c));
+    });
+    renderComposePin();
   }
 
   // ---------- keyboard ----------
@@ -758,19 +932,38 @@
     if (!state.version) return;
     const author = $("author").value.trim() || "guest";
     const body = $("body").value.trim();
-    if (!body) return;
+    const c = state.compose;
+    // ADR-0028: a pure pin may carry an empty body; everything else keeps
+    // the v1 rule
+    if (!body && !c.pin) return;
     localStorage.setItem("cairn-review-name", author);
     state.me = author;
-    const form = $("composer");
-    form.classList.add("sending");
-    const { data } = await api("/api/comment", {
+    const payload = {
       version: state.version.number,
       frame: frameNow(state.version),
       body, author,
-    });
+    };
+    if (c.pin) {
+      payload.kind = "pin";
+      if (c.pinPos) {
+        payload.pin_x = Math.round(c.pinPos.x * 1000) / 1000;
+        payload.pin_y = Math.round(c.pinPos.y * 1000) / 1000;
+      }
+    }
+    if (c.range) {
+      const end = Number($("frame-end").value);
+      if (Number.isFinite(end) && end > payload.frame) payload.frame_end = Math.floor(end);
+    }
+    if (c.internal) payload.visibility = "internal";
+    const form = $("composer");
+    form.classList.add("sending");
+    const { data } = await api("/api/comment", payload);
     form.classList.remove("sending");
     if (data && data.ok) {
       $("body").value = "";
+      // the tools reset after a successful send (a fresh note starts plain)
+      state.compose = { pin: false, pinPos: null, range: false, internal: false };
+      syncComposeUI();
       refresh();
     }
   });
@@ -846,10 +1039,16 @@
         (!q || c.body.toLowerCase().includes(q) || (c.author || "").toLowerCase().includes(q)) &&
         (state.filter === "all" || c.status === state.filter));
       const esc = (s) => '"' + String(s).replace(/"/g, '""') + '"';
+      // ADR-0028: the CSV carries the v2 envelope (kind, range end, pin,
+      // visibility) so the export round-trips through cairn's own importer
       const lines = [esc("timecode") + "," + esc("frame") + "," + esc("author") + "," +
-        esc("status") + "," + esc("note")];
+        esc("status") + "," + esc("note") + "," + esc("kind") + "," + esc("range_end") + "," +
+        esc("pin_x") + "," + esc("pin_y") + "," + esc("visibility")];
       rows.forEach((c) => lines.push([esc(c.tc), c.frame, esc(c.author),
-        esc(c.status), esc(c.body)].join(",")));
+        esc(c.status), esc(c.body), esc(c.kind || "comment"),
+        c.frame_end != null ? c.frame_end : "",
+        c.pin ? c.pin[0].toFixed(3) : "", c.pin ? c.pin[1].toFixed(3) : "",
+        esc(c.visibility || "public")].join(",")));
       const blob = new Blob([lines.join("\r\n") + "\r\n"], { type: "text/csv" });
       const a = document.createElement("a");
       a.href = URL.createObjectURL(blob);

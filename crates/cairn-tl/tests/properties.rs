@@ -396,3 +396,89 @@ proptest! {
         }
     }
 }
+
+// ---- note-shape v2 (ADR-0028): the id partition --------------------------
+
+// Gate 1 of the ADR-0028 testing plan, property-style: for ANY envelope,
+// (a) a v1 id never equals a v2 id built from the same anchor/body/author;
+// (b) v2 ids differ whenever kind / range / visibility differ;
+// (c) pin position and attachment hash never change the id (identity-neutral).
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(200))]
+
+    #[test]
+    fn note_id_partition_v1_vs_v2(
+        body in "note body .{0,40}",
+        author in "editor .{0,20}",
+        clip in proptest::option::of("clip .{0,12}"),
+        frame in -1000i128..4000,
+        rate in 1i128..61,
+        end_off in 1i128..500,          // range width: 1..=500 frames
+        pin in 0f32..=1.0,
+        other_pin in 0f32..=1.0,
+        attachment in "[0-9a-f]{0,32}",
+    ) {
+        use cairn_tl::notes::{Note, NoteAnchor, NoteKind, NoteStatus, NoteVisibility};
+
+        let anchor_v1 = NoteAnchor { clip: clip.clone(), frame, rate, range: None };
+        let v1 = Note::new(author.clone(), body.clone(), anchor_v1.clone(), NoteStatus::Open, 0);
+        let v1_id = v1.id.clone();
+
+        // (a) every v2 flavor of the same content has a different id
+        let envelope_variants = vec![
+            (NoteKind::Comment, None, None, None, NoteVisibility::Public),          // ranged
+            (NoteKind::Pin,     None, Some((pin, pin)), None, NoteVisibility::Public),
+            (NoteKind::Annotation, None, None, Some(attachment.clone()), NoteVisibility::Public),
+            (NoteKind::Comment,  None, None, None, NoteVisibility::Internal),
+        ];
+        for (kind, range, pin_v, att, vis) in envelope_variants {
+            let range = range.or(Some((frame, frame + end_off)));
+            let anchor = NoteAnchor { clip: clip.clone(), frame, rate, range };
+            let n = Note::with_envelope(
+                author.clone(), body.clone(), anchor, NoteStatus::Open, 0,
+                kind, pin_v, att.clone(), vis,
+            );
+            prop_assert!(n.is_v2());
+            prop_assert_ne!(n.id, v1_id.clone(), "v1 and v2 material must never collide");
+        }
+
+        // (b) kind / range / visibility each change the v2 id
+        let mk = |kind: NoteKind, range: Option<(i128, i128)>, vis: NoteVisibility| {
+            let anchor = NoteAnchor { clip: clip.clone(), frame, rate, range };
+            Note::with_envelope(
+                author.clone(), body.clone(), anchor, NoteStatus::Open, 0,
+                kind, None, None, vis,
+            )
+        };
+        let a = mk(NoteKind::Comment, Some((frame, frame + end_off)), NoteVisibility::Public);
+        let a_id = a.id.clone();
+        let b = mk(NoteKind::Pin,     Some((frame, frame + end_off)), NoteVisibility::Public);
+        let c = mk(NoteKind::Comment, Some((frame, frame + end_off + 1)), NoteVisibility::Public);
+        let d = mk(NoteKind::Comment, Some((frame, frame + end_off)), NoteVisibility::Internal);
+        prop_assert_ne!(a_id.clone(), b.id, "kind is id material");
+        prop_assert_ne!(a_id.clone(), c.id, "range is id material");
+        prop_assert_ne!(a_id.clone(), d.id, "visibility is id material");
+
+        // (c) pin position and attachment hash are identity-neutral
+        let with_pin = |x: f32| {
+            let anchor = NoteAnchor { clip: clip.clone(), frame, rate, range: None };
+            Note::with_envelope(
+                author.clone(), body.clone(), anchor, NoteStatus::Open, 0,
+                NoteKind::Pin, Some((x, x)), None, NoteVisibility::Public,
+            )
+        };
+        prop_assert_eq!(with_pin(pin).id, with_pin(other_pin).id, "pin position is not id material");
+        let with_att = |h: String| {
+            let anchor = NoteAnchor { clip: clip.clone(), frame, rate, range: None };
+            Note::with_envelope(
+                author.clone(), body.clone(), anchor, NoteStatus::Open, 0,
+                NoteKind::Annotation, None, Some(h), NoteVisibility::Public,
+            )
+        };
+        prop_assert_eq!(
+            with_att(attachment.clone()).id,
+            with_att("ff".repeat(16)).id,
+            "attachment hash is not id material"
+        );
+    }
+}

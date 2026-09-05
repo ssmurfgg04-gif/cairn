@@ -1,6 +1,6 @@
 # ADR-0028: Note-shape v2 — ranges, pins, annotations, per-note visibility
 
-Date: 2026-09-05 · Status: proposed (the named next protocol round) · Scope: cairn-tl, cairn-review, cairn-proto sidecar contract, CLI exports
+Date: 2026-09-05 · Status: accepted (implemented round 25) · Scope: cairn-tl, cairn-review, cairn-proto sidecar contract, CLI exports
 
 ## Context
 
@@ -179,6 +179,13 @@ where the features exist.
 - The review portal's server-side filter becomes a security-relevant
   boundary (internal notes must never leak to client links) and inherits the
   RBAC test discipline the flags path already carries.
-- Implementation lands as its own round after this ADR is accepted; the
-  note-id freeze documented in ADR-0026 is lifted *only* by this versioned
-  extension, never by an unversioned field addition.
+- Implementation landed in round 25: the versioned id material and lazy v1
+  envelope (`cairn-tl/notes.rs`, proptest-partitioned), the field-wise
+  pin/attachment merge, the portal compose path (pin / range / internal),
+  `GuestRole::Studio` as the internal-visibility audience, the
+  hash-verified attachment endpoint (`GET /r/:token/attachment/:hash`,
+  I2), `export-markers --visibility`, and the v2 CSV columns. All six
+  acceptance gates above are wired as tests (`notes.rs`, `properties.rs`,
+  `http.rs`, `handoff.rs`). The note-id freeze documented in ADR-0026 is
+  lifted *only* by this versioned extension, never by an unversioned
+  field addition.

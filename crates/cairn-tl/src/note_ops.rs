@@ -932,6 +932,7 @@ mod tests {
                 clip: None,
                 frame,
                 rate: 24,
+                range: None,
             },
             NoteStatus::Open,
             1700000000,

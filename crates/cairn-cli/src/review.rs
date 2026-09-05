@@ -13,8 +13,12 @@ use cairn_review::http::RootProvider;
 use cairn_review::model::{GuestRole, ReviewFile, ReviewVersion};
 use cairn_review::store::Store;
 
-/// The daemon's root provider: attached runtimes, live.
-pub struct RuntimesProvider;
+/// The daemon's root provider: attached runtimes, live, plus the local
+/// CAS blob tree for annotation overlays (ADR-0028 §D).
+pub struct RuntimesProvider {
+    /// Daemon home (the store root whose `blobs/` tree the portal serves).
+    pub home: PathBuf,
+}
 
 #[async_trait::async_trait]
 impl RootProvider for RuntimesProvider {
@@ -23,6 +27,10 @@ impl RootProvider for RuntimesProvider {
         map.values()
             .map(|rt| (rt.project_id.clone(), rt.workspace.clone()))
             .collect()
+    }
+
+    fn blobs_root(&self) -> Option<PathBuf> {
+        Some(self.home.join("blobs"))
     }
 }
 

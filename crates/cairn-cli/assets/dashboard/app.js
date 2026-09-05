@@ -58,17 +58,33 @@ const STR = {
   "versions.label": { en: "label (e.g. before color pass)", "de-DE": "Label (z. B. vor dem Farbdurchgang)", "ja-JP": "ラベル（例: カラー前）", "zh-CN": "标签（如：调色前）" },
   "recall.path": { en: "one path (optional, whole project when empty)", "de-DE": "ein Pfad (optional, sonst ganzes Projekt)", "ja-JP": "1パス（任意、空なら全プロジェクト）", "zh-CN": "单个路径（可选，留空则整个项目）" },
 
-  "card.assets": { en: "Pinned assets", "de-DE": "Angeheftete Dateien", "ja-JP": "ピン留めアセット", "zh-CN": "置顶资产" },
-  "card.sessions": { en: "Sessions & activity", "de-DE": "Sitzungen & Aktivität", "ja-JP": "セッションとアクティビティ", "zh-CN": "会话与动态" },
-  "note.assets": { en: "Pinned files stay on this machine and never evict.", "de-DE": "Angeheftete Dateien bleiben auf dieser Maschine und werden nie geräumt.", "ja-JP": "ピン留めファイルはこの端末に保持され、退避されません。", "zh-CN": "置顶文件保留在本机，永不被清理。" },
-  "empty.assets": { en: "Nothing pinned yet - pin files you always need locally.", "de-DE": "Noch nichts angeheftet - pinne Dateien, die du immer lokal brauchst.", "ja-JP": "まだピン留めなし - 常にローカルで必要なファイルをピン留めしてください。", "zh-CN": "还没有置顶 - 把总要在本地用的文件置顶吧。" },
-  "label.sessions": { en: "sessions", "de-DE": "Sitzungen", "ja-JP": "セッション", "zh-CN": "会话" },
-  "label.journal": { en: "journal", "de-DE": "Journal", "ja-JP": "ジャーナル", "zh-CN": "日志" },
+  "dash.title": { en: "Creative Workflow Overview", "de-DE": "Kreativ-Workflow-Übersicht", "ja-JP": "クリエイティブワークフロー概要", "zh-CN": "创意工作流总览" },
+  "dash.sub": { en: "{n} projects · {files} files · BRAW, EDL and audio assets", "de-DE": "{n} Projekte · {files} Dateien · BRAW-, EDL- und Audio-Assets", "ja-JP": "{n}プロジェクト · {files}ファイル · BRAW・EDL・オーディオ", "zh-CN": "{n} 个项目 · {files} 个文件 · BRAW、EDL 与音频资产" },
+  "dash.subEmpty": { en: "attach a project folder to begin", "de-DE": "verbinde einen Projektordner, um zu beginnen", "ja-JP": "プロジェクトフォルダーを接続して開始", "zh-CN": "连接一个项目文件夹即可开始" },
+  "btn.addWs": { en: "Add to Workspace", "de-DE": "Zum Workspace hinzufügen", "ja-JP": "ワークスペースに追加", "zh-CN": "添加到工作区" },
+  "ws.placeholder": { en: "Workspace path or ID (optional)", "de-DE": "Workspace-Pfad oder ID (optional)", "ja-JP": "ワークスペースのパスまたはID（任意）", "zh-CN": "工作区路径或 ID（可选）" },
+  "toast.opened": { en: "opened {p}", "de-DE": "{p} geöffnet", "ja-JP": "{p} を開きました", "zh-CN": "已打开 {p}" },
+
+  "card.assets": { en: "Recent assets", "de-DE": "Neueste Dateien", "ja-JP": "最近のアセット", "zh-CN": "最近资产" },
+  "card.sessions": { en: "Recent sessions", "de-DE": "Letzte Sitzungen", "ja-JP": "最近のセッション", "zh-CN": "最近会话" },
+  "note.assetsRecent": { en: "The newest files in this workspace. A pin keeps a file on this machine.", "de-DE": "Die neuesten Dateien im Workspace. Ein Pin hält eine Datei auf dieser Maschine.", "ja-JP": "このワークスペースの最新ファイル。ピン留めでファイルをこの端末に保持。", "zh-CN": "工作区中最新的文件。置顶可让文件保留在本机。" },
+  "label.recentSession": { en: "Recent session", "de-DE": "Letzte Sitzung", "ja-JP": "最近のセッション", "zh-CN": "最近会话" },
+  "label.activeProjects": { en: "Recent active projects", "de-DE": "Zuletzt aktive Projekte", "ja-JP": "最近のアクティブなプロジェクト", "zh-CN": "最近活跃项目" },
+  "label.actions": { en: "Latest actions", "de-DE": "Letzte Aktionen", "ja-JP": "最新の操作", "zh-CN": "最新操作" },
+  "label.activity": { en: "User activity", "de-DE": "Aktivität", "ja-JP": "ユーザーアクティビティ", "zh-CN": "用户活动" },
+  "rs.summary": { en: "{synced} of {files} synced", "de-DE": "{synced} von {files} synchron", "ja-JP": "{files}件中{synced}件同期済み", "zh-CN": "已同步 {synced}/{files}" },
+
   "act.saved": { en: "saved", "de-DE": "gespeichert", "ja-JP": "保存", "zh-CN": "保存" },
+  "act.synced": { en: "synced", "de-DE": "synchron", "ja-JP": "同期済み", "zh-CN": "已同步" },
   "act.renamed": { en: "renamed", "de-DE": "umbenannt", "ja-JP": "改名", "zh-CN": "重命名" },
   "act.deleted": { en: "deleted", "de-DE": "gelöscht", "ja-JP": "削除", "zh-CN": "删除" },
+  "act.pinned": { en: "pinned", "de-DE": "angepinnt", "ja-JP": "ピン留め", "zh-CN": "已置顶" },
+  "act.unpinned": { en: "unpinned", "de-DE": "Pin gelöst", "ja-JP": "ピン解除", "zh-CN": "取消置顶" },
+  "act.opened": { en: "opened", "de-DE": "geöffnet", "ja-JP": "オープン", "zh-CN": "已打开" },
 
-  "spark.note": { en: "journal volume · last {n} saves", "de-DE": "Journal-Volumen · letzte {n} Speicherungen", "ja-JP": "ジャーナル量 · 直近{n}保存", "zh-CN": "日志量 · 最近 {n} 次保存" },
+  "chart.note": { en: "bytes touched per day · last 7 days", "de-DE": "Bytes pro Tag · letzte 7 Tage", "ja-JP": "日別バイト数 · 直近7日", "zh-CN": "每日变更字节 · 最近 7 天" },
+  "chart.empty": { en: "nothing in the last 7 days yet - the line draws itself as files sync", "de-DE": "in den letzten 7 Tagen noch nichts - die Linie zeichnet sich, sobald Dateien synchronisieren", "ja-JP": "直近7日のデータはまだありません - ファイルの同期とともに描かれます", "zh-CN": "最近 7 天还没有数据 - 文件同步后曲线会自动出现" },
+  "chart.a11y": { en: "daily chart of the last 7 days, peak {peak}", "de-DE": "Tageschart der letzten 7 Tage, Höchstwert {peak}", "ja-JP": "直近7日の日別チャート、最大 {peak}", "zh-CN": "最近 7 天的每日图表，峰值 {peak}" },
   "presence.live": { en: "live · {n} editing", "de-DE": "live · {n} am Schneiden", "ja-JP": "ライブ · {n}人が編集中", "zh-CN": "实时 · {n} 人在剪" },
   "review.label": { en: "Client review", "de-DE": "Kunden-Review", "ja-JP": "クライアントレビュー", "zh-CN": "客户审阅" },
   "review.notes": { en: "{n} open notes", "de-DE": "{n} offene Notizen", "ja-JP": "未解決ノート{n}件", "zh-CN": "{n} 条待处理批注" },
@@ -209,18 +225,44 @@ function applyI18n() {
     }
   });
   document.documentElement.lang = LANG;
-  document.querySelectorAll(".lang").forEach((b) => {
-    b.classList.toggle("is-active", b.dataset.lang === LANG);
+  const cur = $("lang-cur");
+  if (cur) cur.textContent = LANG_NAMES[LANG] || LANG;
+  document.querySelectorAll(".lang-opt").forEach((b) => {
+    const on = b.dataset.lang === LANG;
+    b.classList.toggle("is-active", on);
+    b.setAttribute("aria-selected", on ? "true" : "false");
   });
 }
 
-document.querySelectorAll(".lang").forEach((b) => {
+const LANG_NAMES = { en: "English", "de-DE": "Deutsch", "ja-JP": "日本語", "zh-CN": "中文" };
+
+/* the topbar language menu (the mockup's globe + "English"): one
+   dropdown, closes on outside click and Escape like every other popup */
+function setLangOpen(on) {
+  const wrap = $("lang-wrap");
+  const menu = $("lang-menu");
+  if (!wrap || !menu) return;
+  wrap.classList.toggle("is-open", on);
+  menu.hidden = !on;
+  $("lang-btn").setAttribute("aria-expanded", on ? "true" : "false");
+}
+
+$("lang-btn").addEventListener("click", (ev) => {
+  ev.stopPropagation();
+  setLangOpen($("lang-menu").hidden);
+});
+document.querySelectorAll(".lang-opt").forEach((b) => {
   b.addEventListener("click", () => {
+    setLangOpen(false);
+    if (LANG === b.dataset.lang) return;
     LANG = b.dataset.lang;
     localStorage.setItem("cairn-lang", LANG);
     applyI18n();
     rerenderAllDynamic();
   });
+});
+document.addEventListener("click", (ev) => {
+  if (!ev.target.closest("#lang-wrap")) setLangOpen(false);
 });
 
 /* ============================== safety + format ============================== */
@@ -408,7 +450,10 @@ let FILES_KEY = null;
 let LAST_REVIEW = [];
 let LAST_LOCKS = [];
 let LAST_ACTIVITY = [];
-const PIN_ROWS = [];      // {project, project_name, path, size, state}
+let LAST_FEED = [];         // feed events (files, pins, leases) with ts
+let RECENT_PROJECT = "";    // project id of the newest event (the "recent session")
+let LAST_ASSETS = null;     // files payload for the recent-assets panel
+let LAST_CHART = null;      // /api/v1/activity payload
 const RECALL_JOBS = new Map();
 
 /* ONE derivation feeds the topbar chip, the rail and the footer dot
@@ -430,11 +475,20 @@ function stateLabel(st) {
   return st === "ok" ? t("chip.ok") : st === "warn" ? t("chip.warn") : t("chip.bad");
 }
 
+/* the chip's icon: a check when everything landed (the mockup's green
+   ✓ next to "Synced"), a breathing pip while in flight, an alert when bad */
+const CHIP_ICONS = {
+  ok: '<svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.2 8.6l3 3 6.6-7.2"/></svg>',
+  warn: '<svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.7-3.75"/><path d="M13 2.6v2.4h-2.4"/></svg>',
+  bad: '<svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.9l6.3 11H1.7z" stroke-linejoin="round"/><path d="M8 6.2v3.2"/><circle cx="8" cy="11.6" r="0.4" fill="currentColor" stroke="none"/></svg>',
+};
+
 function paintState() {
   const st = deriveState();
   const chip = $("state-chip");
   chip.className = `state-chip is-${st}`;
   $("state-label").textContent = stateLabel(st);
+  $("state-ic").innerHTML = CHIP_ICONS[st] || "";
 
   // the rail carries identity only (version) - the state lives in the
   // topbar chip and the footer dot; three zones showing the same word
@@ -448,7 +502,52 @@ function paintState() {
     $("foot-state-label").textContent = stateLabel(st);
   }
   renderFooter();
+  renderHero();
 }
+
+/* ============================== hero ============================== */
+
+function renderHero() {
+  const sub = $("hero-sub");
+  if (!sub) return;
+  if (!PROJECTS.length) {
+    sub.textContent = t("dash.subEmpty");
+    return;
+  }
+  sub.textContent = t("dash.sub", { n: PROJECTS.length, files: FOOT.files ?? 0 });
+}
+
+/* the hero input: a path attaches it; a bare token matches a known
+   project id (or name) and opens it; anything else goes to the daemon,
+   which answers honestly. Empty -> the full add panel. */
+function looksLikePath(v) {
+  return /[\\/]/.test(v) || /^[A-Za-z]:/.test(v);
+}
+
+async function doWorkspaceAdd() {
+  const input = $("ws-path");
+  const val = (input && input.value.trim()) || "";
+  if (!val) { openPanel("panel-add"); return; }
+  if (looksLikePath(val)) { await attachFlow(val, ""); return; }
+  const p = PROJECTS.find(
+    (x) => x.project_id === val || (x.display_name || "").toLowerCase() === val.toLowerCase(),
+  );
+  if (p) {
+    const sel = $("files-project");
+    if (sel && PROJECTS.some((x) => x.project_id === p.project_id)) sel.value = p.project_id;
+    showView("files", "files-filter");
+    refreshFiles();
+    toast(t("toast.opened", { p: p.display_name || val }));
+    input.value = "";
+    return;
+  }
+  await attachFlow("", val);
+}
+
+$("btn-add-ws").addEventListener("click", doWorkspaceAdd);
+$("ws-path").addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter") { ev.preventDefault(); doWorkspaceAdd(); }
+});
 
 /* ============================== footer ============================== */
 
@@ -614,48 +713,131 @@ function fillProjectSelects() {
   if (prev && PROJECTS.some((p) => p.project_id === prev)) el.value = prev;
 }
 
-function renderSessions() {
-  const list = $("session-list");
-  list.textContent = "";
-  $("sessions-count").textContent = PROJECTS.length ? String(PROJECTS.length) : "";
+/* ============================== recent sessions panel ==============================
+   Four sections, one card: the newest session (click jumps to its
+   files), the other active projects as quiet chips, the latest actions
+   as an icon timeline, and the activity chart. All store-derived. */
 
-  if (!PROJECTS.length) {
+function recentProject() {
+  return (
+    PROJECTS.find((p) => p.project_id === RECENT_PROJECT) || PROJECTS[0] || null
+  );
+}
+
+function jumpToProject(pid) {
+  const sel = $("files-project");
+  if (sel && PROJECTS.some((x) => x.project_id === pid)) sel.value = pid;
+  showView("files", "files-filter");
+  refreshFiles();
+}
+
+function renderRecentSession() {
+  const box = $("rs-session-body");
+  box.textContent = "";
+  const p = recentProject();
+  if (!p) {
     const empty = document.createElement("p");
     empty.className = "empty-note";
     empty.textContent = t("empty.projects");
-    list.appendChild(empty);
+    box.appendChild(empty);
     return;
   }
+  const total = Number(p.files_synced ?? 0) + Number(p.pending_outbox ?? 0) || Number(p.files_synced ?? 0);
+  const row = document.createElement("button");
+  row.type = "button";
+  row.className = "rs-session";
+  row.innerHTML =
+    `<span class="rs-name" title="${esc(p.root_path ?? "")}">${esc(p.display_name || p.project_id)}</span>` +
+    `<span class="rs-sub">${esc(t("rs.summary", { synced: p.files_synced ?? 0, files: total }))}</span>`;
+  row.addEventListener("click", () => jumpToProject(p.project_id));
+  box.appendChild(row);
+}
 
-  const label = document.createElement("p");
-  label.className = "list-label";
-  label.textContent = t("label.sessions");
-  list.appendChild(label);
-
-  for (const p of PROJECTS) {
-    const row = document.createElement("button");
-    row.type = "button";
-    row.className = "session";
-    const stateTag =
-      p.state === "error" ? "bad" : p.state === "syncing" ? "warn" : "ok";
-    const total = Number(p.files_synced ?? 0) + Number(p.pending_outbox ?? 0);
-    const pct = total > 0 ? Math.round((p.files_synced / total) * 100) : 100;
-    row.innerHTML =
-      `<span class="session-top">` +
-      `<span class="session-name">${esc(p.display_name || p.project_id)}</span>` +
-      `<span class="tag ${stateTag}">${esc(p.state ?? "?")}</span>` +
-      `<span class="session-files">${esc(p.files_synced ?? 0)}/${esc(total || (p.files_synced ?? 0))}</span>` +
-      `</span>` +
-      `<span class="meter session-bar"><span class="meter-fill ${stateTag === "ok" ? "" : stateTag === "warn" ? "is-warn" : "is-bad"}" style="width:${Math.max(2, pct)}%"></span></span>`;
-    row.addEventListener("click", () => {
-      const sel = $("files-project");
-      if (sel && PROJECTS.some((x) => x.project_id === p.project_id)) sel.value = p.project_id;
-      showView("files", "files-filter");
-      refreshFiles();
-    });
-    list.appendChild(row);
+function renderActiveProjects() {
+  const sec = $("rs-projects");
+  const box = $("rs-projects-body");
+  box.textContent = "";
+  const current = recentProject();
+  const others = PROJECTS.filter((p) => !current || p.project_id !== current.project_id).slice(0, 4);
+  // no other projects -> the whole section folds away (no stub row)
+  sec.hidden = others.length === 0;
+  for (const p of others) {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "proj-chip";
+    const st = p.state === "error" ? "bad" : p.state === "syncing" ? "warn" : "ok";
+    chip.innerHTML =
+      `<span class="dot dot-${st === "ok" ? "ok" : st === "warn" ? "warn" : "bad"}"></span>` +
+      `<span>${esc(p.display_name || p.project_id)}</span>`;
+    chip.title = esc(p.root_path ?? "");
+    chip.addEventListener("click", () => jumpToProject(p.project_id));
+    box.appendChild(chip);
   }
-  stagger(list, ".session");
+  stagger(box, ".proj-chip");
+}
+
+/* ============================== latest actions ==============================
+   The feed's real events, humanized: a pin icon for pins, a refresh
+   icon for synced/saved files, a folder icon for a held lock ("the
+   project is open in the NLE right now"). Icons live in quiet circles. */
+
+const ACT_ICONS = {
+  pin: '<svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.6 2.3l4.1 4.1-1.1 1.1-1-.3-2.9 2.9.3 2.2-1 1-3-3-3.4 3.4 3.4-3.4-3-3 1-1 2.2.3 2.9-2.9-.3-1z"/></svg>',
+  sync: '<svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.7-3.75"/><path d="M13 2.6v2.4h-2.4"/></svg>',
+  folder: '<svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M1.8 4.2c0-.6.5-1.1 1.1-1.1h3l1.5 1.7h5.7c.6 0 1.1.5 1.1 1.1v6c0 .6-.5 1.1-1.1 1.1H2.9c-.6 0-1.1-.5-1.1-1.1z"/></svg>',
+  rename: '<svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 8h11M10 4.5L13.5 8 10 11.5"/></svg>',
+  trash: '<svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.8 4.5h10.4M6.2 4.5V3.2c0-.4.3-.7.7-.7h2.2c.4 0 .7.3.7.7v1.3M4 4.5l.6 8.4c0 .4.3.7.7.7h5.4c.4 0 .7-.3.7-.7l.6-8.4"/></svg>',
+  alert: '<svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.9l6.3 11H1.7z"/><path d="M8 6.2v3.2"/><circle cx="8" cy="11.6" r="0.4" fill="currentColor" stroke="none"/></svg>',
+};
+
+function actMeta(e) {
+  const kind = e.kind || "upsert";
+  if (kind === "pinned") return [ACT_ICONS.pin, "ok", "act.pinned"];
+  if (kind === "unpinned") return [ACT_ICONS.pin, "warn", "act.unpinned"];
+  if (kind === "lease") return [ACT_ICONS.folder, "info", "act.opened"];
+  if (kind === "rename") return [ACT_ICONS.rename, "info", "act.renamed"];
+  if (kind === "delete") return [ACT_ICONS.trash, "bad", "act.deleted"];
+  if (kind === "conflict") return [ACT_ICONS.alert, "bad", "files.conflict"];
+  const synced = (e.state || "") === "synced";
+  return [ACT_ICONS.sync, synced ? "ok" : "warn", synced ? "act.synced" : "act.saved"];
+}
+
+function renderActions() {
+  const box = $("rs-actions-body");
+  box.textContent = "";
+  const rows = LAST_ACTIVITY.slice(0, 6);
+  if (!rows.length) {
+    const empty = document.createElement("p");
+    empty.className = "empty-note";
+    empty.textContent = t("empty.activity");
+    box.appendChild(empty);
+    return;
+  }
+  rows.forEach((e, i) => {
+    const [icon, cls, verbKey] = actMeta(e);
+    const row = document.createElement("div");
+    row.className = "act-row";
+    row.style.setProperty("--i", String(i));
+    const [, base] = splitPath(e.path || "");
+    row.innerHTML =
+      `<span class="act-ic ${cls}">${icon}</span>` +
+      `<span class="act-text" title="${esc(e.path ?? "")}">` +
+      `<span class="act-path">${esc(base || e.path || "")}</span> ` +
+      `<span class="act-verb">${esc(t(verbKey))}</span>` +
+      `</span>` +
+      `<span class="act-when">${esc(relTime(e.ts))}</span>`;
+    box.appendChild(row);
+  });
+}
+
+function renderFeed(entries) {
+  LAST_ACTIVITY = entries || [];
+  LAST_FEED = LAST_ACTIVITY;
+  const first = LAST_ACTIVITY.find((e) => e.project);
+  RECENT_PROJECT = first ? String(first.project) : "";
+  renderRecentSession();
+  renderActiveProjects();
+  renderActions();
 }
 
 function renderProjectsSettings() {
@@ -705,7 +887,8 @@ async function refreshProjects() {
     const r = await getJSON("/api/v1/projects");
     PROJECTS = r.projects || [];
     fillProjectSelects();
-    renderSessions();
+    renderRecentSession();
+    renderActiveProjects();
     renderProjectsSettings();
     const leaf = $("crumb-leaf");
     leaf.textContent =
@@ -885,123 +1068,306 @@ async function doFilePin(project, path, pinned) {
   if (r && r.ok === false) toast(t("toast.denied", { e: r.error }), true);
   else toast(pinned ? t("toast.unpinned") : t("toast.pinned"));
   refreshFiles();
-  refreshPins();
+  refreshAssetsPanel();
+  refreshFeed();
 }
 
-/* ============================== pinned assets (dashboard) ============================== */
+/* ============================== recent assets (dashboard) ==============================
+   The mockup's three-column table: file (type-aware icon), status
+   (a green check when synced), pinned (a working pushpin). Rows are the
+   newest files of the most recently active project - real rows, not a
+   curated list: what you touched is what you see. */
 
-async function refreshPins() {
-  PIN_ROWS.length = 0;
-  const targets = PROJECTS.slice(0, 4);
-  await Promise.all(targets.map(async (p) => {
-    try {
-      const r = await getJSON(`/api/v1/pins?project=${encodeURIComponent(p.project_id)}`);
-      if (r.ok !== true) return;
-      for (const pin of r.pins || []) {
-        PIN_ROWS.push({
-          project: p.project_id,
-          project_name: p.display_name || p.project_id,
-          path: pin.path,
-          size: pin.size,
-          state: pin.state || "pinned",
-        });
-      }
-    } catch { /* pins stay at their last honest value */ }
-  }));
-  renderAssets();
+const AUDIO_IC = '<svg class="ic f-ic f-audio" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6.2 11.4V3.3l6-1.2v8"/><circle cx="4.2" cy="11.6" r="2"/><circle cx="10.2" cy="10.2" r="2"/></svg>';
+const FILM_IC = '<svg class="ic f-ic f-film" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round" aria-hidden="true"><rect x="1.8" y="3.2" width="12.4" height="9.6" rx="1.4"/><path d="M4.6 3.2v9.6M11.4 3.2v9.6M1.8 8h12.4M1.8 5.6h2.8M1.8 10.4h2.8M11.4 5.6h2.8M11.4 10.4h2.8"/></svg>';
+
+const AUDIO_EXT = ["wav", "mp3", "aif", "aiff", "flac", "ogg", "m4a", "aac"];
+const FILM_EXT = ["braw", "mov", "mp4", "mxf", "r3d", "mkv", "avi", "mpg", "mpeg", "webm"];
+
+function fileIcon(path) {
+  const ext = String(path || "").split(".").pop().toLowerCase();
+  if (AUDIO_EXT.includes(ext)) return AUDIO_IC;
+  if (FILM_EXT.includes(ext)) return FILM_IC;
+  return DOC_IC;
 }
 
-function renderAssets() {
+async function refreshAssetsPanel() {
+  const p = recentProject();
+  const pid = p ? p.project_id : "";
+  if (!pid) { LAST_ASSETS = null; renderRecentAssets(null, ""); return; }
+  try {
+    LAST_ASSETS = await getJSON(`/api/v1/files?project=${encodeURIComponent(pid)}`);
+    renderRecentAssets(LAST_ASSETS, pid);
+  } catch { /* the state chip owns daemon-down */ }
+}
+
+function renderRecentAssets(r, pid) {
   const body = $("assets-body");
+  const count = $("assets-count");
+  if (!body) return;
   body.textContent = "";
-  $("assets-count").textContent = PIN_ROWS.length ? String(PIN_ROWS.length) : "";
-  if (!PIN_ROWS.length) {
-    const empty = document.createElement("p");
-    empty.className = "empty-note";
-    empty.textContent = t("empty.assets");
-    body.appendChild(empty);
+  const files = (r && r.files) || [];
+  const sum = (r && r.summary) || {};
+  count.textContent = files.length ? String(sum.files ?? files.length) : "";
+  if (!files.length) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td colspan="3" class="empty">${esc(t("empty.files"))}</td>`;
+    body.appendChild(tr);
     return;
   }
-  for (const a of PIN_ROWS.slice(0, 12)) {
-    const [, base] = splitPath(a.path);
-    const row = document.createElement("div");
-    row.className = "asset-row";
-    row.innerHTML =
-      `<span class="asset-name" title="${esc(a.path)}">${esc(base)}</span>` +
-      `<span class="asset-side">` +
-      `<span class="pinned" title="${esc(t("files.pinnedA11y"))}">${PIN_IC}</span>` +
-      `<span>${esc(fmtBytes(a.size))}</span>` +
-      `<button type="button" class="btn btn-icon btn-sm" data-unpin="${esc(a.path)}" aria-label="unpin">` +
-      `<svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/></svg>` +
-      `</button></span>` +
-      `<span class="asset-sub">${esc(a.project_name)} · ${esc(a.path)}</span>`;
-    row.querySelector("[data-unpin]").addEventListener("click", () => {
-      doFilePin(a.project, a.path, true);
+  const rows = files
+    .slice()
+    .sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0))
+    .slice(0, 8);
+  rows.forEach((f) => {
+    const [dir, base] = splitPath(f.path);
+    const [cls, key] = stFor(f);
+    const tr = document.createElement("tr");
+    tr.title = esc(f.path);
+    tr.innerHTML =
+      `<td class="td-file">` +
+      `<span class="f-name">${fileIcon(f.path)}<span class="f-base" title="${esc(f.path)}">${esc(base)}</span></span>` +
+      (dir ? `<span class="f-dir">${esc(dir)}</span>` : "") +
+      `</td>` +
+      `<td class="td-status"><span class="f-state s-${cls}" title="${esc(t(key))}">${ST_ICONS[cls]}<span class="sr-only">${esc(t(key))}</span></span></td>` +
+      `<td class="td-pin">` +
+      `<button type="button" class="btn btn-icon${f.pinned ? " is-pinned" : ""}" data-pin="${esc(f.path)}" ` +
+      `data-pinned="${f.pinned ? "1" : ""}" aria-label="${f.pinned ? esc(t("btn.unpin")) : esc(t("btn.pin"))}">${PIN_IC}</button>` +
+      `</td>`;
+    tr.addEventListener("click", (ev) => {
+      if (ev.target.closest("[data-pin]")) return;
+      jumpToProject(pid);
     });
-    body.appendChild(row);
-  }
-  stagger(body, ".asset-row");
+    const pinBtn = tr.querySelector("[data-pin]");
+    pinBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      doFilePin(pid, f.path, f.pinned === true);
+    });
+    body.appendChild(tr);
+  });
 }
 
-/* ============================== journal trail + spark ============================== */
+/* ============================== feed + activity chart ============================== */
 
-function renderActivity(entries) {
-  LAST_ACTIVITY = entries || [];
-  const trail = $("trail-list");
-  trail.textContent = "";
-  if (!LAST_ACTIVITY.length) {
-    const empty = document.createElement("p");
-    empty.className = "empty-note";
-    empty.textContent = t("empty.activity");
-    trail.appendChild(empty);
-  } else {
-    const label = document.createElement("p");
-    label.className = "list-label";
-    label.textContent = t("label.journal");
-    trail.appendChild(label);
-    for (const e of LAST_ACTIVITY.slice(-10).reverse()) {
-      const row = document.createElement("div");
-      row.className = "trail-row";
-      const kind = e.kind || "upsert";
-      // human words on the badge ("saved" beats "UPSERT"); the raw
-      // kind stays available to anyone who reads the journal itself
-      const kindKey = kind === "delete" ? "act.deleted" : kind === "rename" ? "act.renamed" : "act.saved";
-      const tag = kind === "delete" ? "bad" : kind === "rename" ? "info" : "ok";
-      row.innerHTML =
-        `<span class="trail-seq">${esc(e.seq ?? "-")}</span>` +
-        `<span class="trail-path" title="${esc(e.path ?? "")}">${esc(e.path ?? "")}</span>` +
-        `<span class="tag ${tag}">${esc(t(kindKey))}</span>` +
-        `<span class="trail-size">${esc(fmtBytes(e.size))}</span>`;
-      trail.appendChild(row);
+async function refreshFeed() {
+  try {
+    const feed = await getJSON("/api/v1/feed");
+    renderFeed(feed.activity || []);
+    renderLocks(feed.leases || []);
+  } catch { /* covered by the state chip */ }
+}
+
+/* ============================== the activity chart ==============================
+   A REAL chart, not a stub: per-day byte totals from /api/v1/activity
+   (the daemon buckets by the caller's timezone). Seven slots ending
+   today, weekday labels from the locale, a "nice" y axis, a monotone
+   cubic line (smooth but never overshooting below a data point), the
+   gradient area under it, and hover dots with a value tooltip. */
+
+function niceStep(x) {
+  const p = Math.pow(10, Math.floor(Math.log10(Math.max(x, 1e-9))));
+  const f = x / p;
+  const nf = f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10;
+  return nf * p;
+}
+
+/* SI (1000-based) compact units for chart ticks and tooltips: the axis
+   reads 0 / 50 / 100 kB like the mockup's "0k / 40k / 120k" — clean
+   decimal steps, never "48.8 KB" artifacts from mixing nice decimal
+   steps with binary divisions. */
+function fmtCompact(n) {
+  if (!Number.isFinite(n) || n <= 0) return "0";
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1)} GB`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)} MB`;
+  if (n >= 1000) return `${Math.round(n / 1000)} kB`;
+  return `${Math.round(n)} B`;
+}
+
+/* Fritsch-Carlson monotone tangents: the curve stays inside the
+   vertical band of its endpoints, so a rising day never fakes a dip */
+function monotoneTangents(pts) {
+  const n = pts.length;
+  if (n === 1) return [0];
+  const m = [];
+  for (let i = 0; i < n - 1; i++) {
+    const dx = pts[i + 1].x - pts[i].x;
+    m.push((pts[i + 1].y - pts[i].y) / (dx || 1));
+  }
+  const t = new Array(n);
+  t[0] = m[0];
+  t[n - 1] = m[n - 2];
+  for (let i = 1; i < n - 1; i++) {
+    if (m[i - 1] * m[i] <= 0) {
+      t[i] = 0;
+    } else {
+      const d0 = pts[i].x - pts[i - 1].x;
+      const d1 = pts[i + 1].x - pts[i].x;
+      const w1 = 2 * d1 + d0;
+      const w2 = d1 + 2 * d0;
+      t[i] = (w1 + w2) / (w1 / m[i - 1] + w2 / m[i]);
     }
-    stagger(trail, ".trail-row");
   }
-  renderSpark(LAST_ACTIVITY);
+  return t;
 }
 
-/* honest volume viz: journal bytes, bucketed over the last entries.
-   No invented days-of-week (the feed carries no timestamps); the
-   label says exactly what it is. */
-function renderSpark(entries) {
-  const spark = $("spark");
-  const note = $("spark-note");
-  spark.textContent = "";
-  const rows = (entries || []).slice(-14);
-  if (!rows.length) {
+function monotonePath(pts) {
+  if (!pts.length) return "";
+  if (pts.length === 1) return `M${pts[0].x.toFixed(1)},${pts[0].y.toFixed(1)}`;
+  const t = monotoneTangents(pts);
+  let d = `M${pts[0].x.toFixed(1)},${pts[0].y.toFixed(1)}`;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const dx = (pts[i + 1].x - pts[i].x) / 3;
+    const x0 = pts[i].x + dx, y0 = pts[i].y + t[i] * dx;
+    const x1 = pts[i + 1].x - dx, y1 = pts[i + 1].y - t[i + 1] * dx;
+    d += `C${x0.toFixed(1)},${y0.toFixed(1)} ${x1.toFixed(1)},${y1.toFixed(1)} ${pts[i + 1].x.toFixed(1)},${pts[i + 1].y.toFixed(1)}`;
+  }
+  return d;
+}
+
+const NS_SVG = "http://www.w3.org/2000/svg";
+function svgEl(name, attrs) {
+  const el = document.createElementNS(NS_SVG, name);
+  for (const k of Object.keys(attrs || {})) el.setAttribute(k, String(attrs[k]));
+  return el;
+}
+
+function localDayKey(date) {
+  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+}
+
+async function refreshActivityChart() {
+  try {
+    const off = new Date().getTimezoneOffset();
+    LAST_CHART = await getJSON(`/api/v1/activity?days=7&tz_offset=${off}`);
+  } catch { /* keep the last good chart */ }
+  renderActivityChart();
+}
+
+function renderActivityChart() {
+  const box = $("chart-box");
+  const note = $("chart-note");
+  if (!box) return;
+  box.textContent = "";
+
+  const buckets = new Map();
+  for (const d of ((LAST_CHART && LAST_CHART.days) || [])) {
+    buckets.set(localDayKey(new Date(Number(d.start_ms))), {
+      bytes: Number(d.bytes) || 0,
+      files: Number(d.files) || 0,
+      start: Number(d.start_ms),
+    });
+  }
+
+  // the 7 slots: local days ending today
+  const slots = [];
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(today.getTime() - i * 86400e3);
+    const b = buckets.get(localDayKey(d));
+    slots.push({ date: d, bytes: b ? b.bytes : 0, files: b ? b.files : 0 });
+  }
+
+  if (!buckets.size) {
+    box.innerHTML = `<div class="chart-empty">${esc(t("chart.empty"))}</div>`;
     note.textContent = "";
     return;
   }
-  const max = Math.max(...rows.map((e) => Number(e.size) || 0), 1);
-  for (const e of rows) {
-    const bar = document.createElement("span");
-    bar.className = "spark-bar";
-    const h = Math.max(3, Math.round(((Number(e.size) || 0) / max) * 30));
-    bar.style.height = `${h}px`;
-    bar.style.opacity = String(0.35 + (h / 30) * 0.65);
-    spark.appendChild(bar);
+
+  const W = 560, H = 150;
+  const L = 44, R = 10, T = 12, B = 22;
+  const plotW = W - L - R, plotH = H - T - B;
+  const max = Math.max(...slots.map((s) => s.bytes), 1);
+  const step = niceStep(max / 3);
+  const top = Math.max(Math.ceil(max / step) * step, step);
+  const y = (v) => T + plotH - (v / top) * plotH;
+  const x = (i) => L + (i + 0.5) * (plotW / 7);
+  const pts = slots.map((s, i) => ({ x: x(i), y: y(s.bytes), s }));
+
+  const svg = svgEl("svg", {
+    viewBox: `0 0 ${W} ${H}`,
+    preserveAspectRatio: "none",
+    role: "img",
+    "aria-label": t("chart.a11y", { peak: fmtCompact(max) }),
+  });
+
+  const defs = svgEl("defs", {});
+  const grad = svgEl("linearGradient", { id: "chart-grad", x1: 0, y1: 0, x2: 0, y2: 1 });
+  grad.appendChild(svgEl("stop", { class: "gs-a", offset: "0" }));
+  grad.appendChild(svgEl("stop", { class: "gs-b", offset: "1" }));
+  defs.appendChild(grad);
+  svg.appendChild(defs);
+
+  // y grid + tick labels
+  const grid = svgEl("g", { class: "chart-grid" });
+  for (let v = 0; v <= top + 1e-9; v += step) {
+    const gy = y(v).toFixed(1);
+    grid.appendChild(svgEl("line", {
+      x1: L, x2: W - R, y1: gy, y2: gy,
+      "stroke-width": v === 0 ? 1.2 : 1,
+    }));
+    const label = svgEl("text", { class: "chart-tick", x: L - 8, y: (+gy + 3.5).toFixed(1), "text-anchor": "end" });
+    label.textContent = fmtCompact(v);
+    svg.appendChild(label);
   }
-  note.textContent = t("spark.note", { n: rows.length });
+  svg.appendChild(grid);
+
+  // x labels: weekday from the locale (real localization, no table)
+  const wdFmt = new Intl.DateTimeFormat(LANG, { weekday: "short" });
+  slots.forEach((s, i) => {
+    const isToday = i === slots.length - 1;
+    const label = svgEl("text", {
+      class: "chart-x",
+      x: x(i).toFixed(1), y: H - 6, "text-anchor": "middle",
+      "font-weight": isToday ? 600 : 500,
+    });
+    label.textContent = wdFmt.format(s.date);
+    svg.appendChild(label);
+  });
+
+  // area + line
+  const lineD = monotonePath(pts);
+  const base = (T + plotH).toFixed(1);
+  const areaD =
+    `${lineD} L${pts[pts.length - 1].x.toFixed(1)},${base} L${pts[0].x.toFixed(1)},${base} Z`;
+  svg.appendChild(svgEl("path", { class: "chart-area", d: areaD }));
+  svg.appendChild(svgEl("path", { class: "chart-line", d: lineD }));
+
+  // hover layer: per-day columns, one floating dot + HTML tooltip
+  const dot = svgEl("circle", { class: "chart-dot", r: 4, opacity: 0 });
+  svg.appendChild(dot);
+  const tip = document.createElement("div");
+  tip.className = "chart-tip";
+  box.appendChild(svg);
+  box.appendChild(tip);
+
+  const slotW = plotW / 7;
+  const dFmt = new Intl.DateTimeFormat(LANG, { month: "short", day: "numeric" });
+  slots.forEach((s, i) => {
+    const col = svgEl("rect", { class: "chart-col", x: (x(i) - slotW / 2).toFixed(1), y: T, width: slotW.toFixed(1), height: plotH });
+    const hit = svgEl("rect", { class: "chart-hit", x: (x(i) - slotW / 2).toFixed(1), y: T, width: slotW.toFixed(1), height: H });
+    hit.addEventListener("mouseenter", () => {
+      col.classList.add("is-hot");
+      dot.setAttribute("cx", pts[i].x.toFixed(1));
+      dot.setAttribute("cy", pts[i].y.toFixed(1));
+      dot.setAttribute("opacity", "1");
+      tip.innerHTML = `${esc(wdFmt.format(s.date))} ${esc(dFmt.format(s.date))} · <span class="mono">${esc(fmtCompact(s.bytes))}</span>`;
+      tip.style.left = `${(pts[i].x / W) * 100}%`;
+      tip.style.top = `${(pts[i].y / H) * 100}%`;
+      tip.classList.add("is-on");
+    });
+    hit.addEventListener("mouseleave", () => {
+      col.classList.remove("is-hot");
+      dot.setAttribute("opacity", "0");
+      tip.classList.remove("is-on");
+    });
+    svg.appendChild(col);
+    svg.appendChild(hit);
+  });
+
+  note.textContent = t("chart.note");
 }
+
 
 /* ============================== locks ============================== */
 
@@ -1457,7 +1823,6 @@ document.querySelectorAll(".panel [data-close]").forEach((b) => {
 });
 $("scrim").addEventListener("click", closePanels);
 
-$("btn-add").addEventListener("click", () => openPanel("panel-add"));
 $("btn-add-2").addEventListener("click", () => openPanel("panel-add"));
 $("btn-history").addEventListener("click", () => {
   refreshSnapshots();
@@ -1484,6 +1849,7 @@ document.addEventListener("keydown", (ev) => {
     closePanels();
     $("help-overlay").hidden = true;
     $("search-drop").hidden = true;
+    setLangOpen(false);
     return;
   }
   if (typing) return;
@@ -1522,6 +1888,20 @@ function copyBtn(ev) {
 
 /* ============================== actions ============================== */
 
+async function attachFlow(root, project) {
+  if (!root && !project) return;
+  const r = await postJSON("/api/v1/attach", { root_path: root, project_id: project });
+  if (!r.ok) toast(t("toast.failed", { e: r.error }), true);
+  else {
+    toast(t("toast.attached"));
+    const ws = $("ws-path");
+    if (ws) ws.value = "";
+    closePanels();
+  }
+  refreshAll();
+}
+
+/* the slide-over + onboarding inputs keep their element-based flow */
 async function doAttach(rootEl, projectEl) {
   const root = (rootEl && rootEl.value.trim()) || "";
   if (!root) {
@@ -1529,15 +1909,9 @@ async function doAttach(rootEl, projectEl) {
     return;
   }
   const project = projectEl ? projectEl.value.trim() : "";
-  const r = await postJSON("/api/v1/attach", { root_path: root, project_id: project });
-  if (!r.ok) toast(t("toast.failed", { e: r.error }), true);
-  else {
-    toast(t("toast.attached"));
-    rootEl.value = "";
-    if (projectEl) projectEl.value = "";
-    closePanels();
-  }
-  refreshAll();
+  await attachFlow(root, project);
+  if (rootEl) rootEl.value = "";
+  if (projectEl) projectEl.value = "";
 }
 
 $("btn-attach").addEventListener("click", () => doAttach($("attach-root"), $("attach-project")));
@@ -1565,12 +1939,9 @@ async function refreshAll() {
   renderOnboarding();
   await refreshStorage();
   await refreshFiles();
-  try {
-    const feed = await getJSON("/api/v1/feed");
-    renderActivity(feed.activity || []);
-    renderLocks(feed.leases || []);
-  } catch { /* covered by the state chip */ }
-  await refreshPins();
+  await refreshFeed();
+  await refreshAssetsPanel();
+  await refreshActivityChart();
   await refreshSnapshots();
   await pollRecallJobs();
   try {
@@ -1586,14 +1957,17 @@ async function refreshAll() {
 function rerenderAllDynamic() {
   renderOnboarding();
   paintState();
-  renderSessions();
+  renderHero();
+  renderRecentSession();
+  renderActiveProjects();
+  renderActions();
   renderProjectsSettings();
-  renderAssets();
-  renderActivity(LAST_ACTIVITY);
+  renderRecentAssets(LAST_ASSETS, (recentProject() || {}).project_id || "");
   renderLocks(LAST_LOCKS);
   renderReview(LAST_REVIEW);
   renderFiles(LAST_FILES);
   renderRecallJobs();
+  renderActivityChart();
   refreshTeam();
   refreshSnapshots();
   refreshOnce();

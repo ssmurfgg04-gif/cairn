@@ -53,6 +53,12 @@ pub struct PresenceEntry {
 pub trait RootProvider: Send + Sync {
     /// (project_id, workspace root) for every attached project.
     async fn roots(&self) -> Vec<(String, PathBuf)>;
+    /// The content-addressed store's blob tree (`<store>/blobs`) when this
+    /// provider can reach it — the attachment endpoint (ADR-0028 §D)
+    /// serves annotation overlays from here, hash-verified on read.
+    fn blobs_root(&self) -> Option<PathBuf> {
+        None
+    }
     /// Wall clock millis (overridable in tests).
     fn now_ms(&self) -> i64 {
         std::time::SystemTime::now()
@@ -140,6 +146,7 @@ pub fn router(portal: Portal) -> Router {
         .route("/r/:token/api/comment", post(comment))
         .route("/r/:token/api/resolve", post(resolve))
         .route("/r/:token/api/presence", post(presence))
+        .route("/r/:token/attachment/:hash", get(attachment))
         .route("/r/:token/media/:version", get(media))
         .with_state(portal)
 }
@@ -216,10 +223,18 @@ async fn session(State(p): State<Portal>, UrlPath(token): UrlPath<String>) -> Re
     // (ADR-0023 §3): each note gains `parsed` = the mechanical ops the editor
     // can one-click, or null for creative notes (the human's call). Derived
     // at READ time from the note body: deterministic, nothing stored.
+    //
+    // ADR-0028 §E: the visibility boundary is HERE, server-side, before a
+    // single byte of an internal note is serialized. A client-audience
+    // link never receives internal notes; a studio link sees everything.
+    let sees_internal = link.role.sees_internal();
     let mut comments: Vec<serde_json::Value> = Vec::new();
     for v in file.versions_for(&link) {
         if let Ok(set) = Store::load_comments(&root, v.number) {
             for n in set.notes.values() {
+                if n.visibility == cairn_tl::notes::NoteVisibility::Internal && !sees_internal {
+                    continue;
+                }
                 let parsed = match cairn_tl::note_ops::parse_note_at(&n.body, n.anchor.rate) {
                     cairn_tl::note_ops::NoteParse::Mechanical(ops) => {
                         let summaries: Vec<String> = ops.iter().map(|op| op.summary()).collect();
@@ -235,11 +250,16 @@ async fn session(State(p): State<Portal>, UrlPath(token): UrlPath<String>) -> Re
                     "id": n.id,
                     "version": v.number,
                     "frame": n.anchor.frame,
-                    "tc": v.timecode(n.anchor.frame.max(0) as u64),
+                    "frame_end": n.anchor.range.map(|r| r.1),
+                    "tc": v.timecode(n.anchor.range_start().max(0) as u64),
                     "author": n.author,
                     "body": n.body,
                     "status": n.status.as_str(),
                     "created_ms": n.created_ms,
+                    "kind": n.kind.as_str(),
+                    "pin": n.pin,
+                    "attachment": n.attachment,
+                    "visibility": n.visibility.as_str(),
                     "parsed": parsed,
                 }));
             }
@@ -346,8 +366,60 @@ async fn comment(
     if frame >= vn.frames {
         return err(StatusCode::BAD_REQUEST, "frame beyond end of cut");
     }
+    // ---- the v2 envelope (ADR-0028): the portal's own compose path ----
+    let kind = match v["kind"].as_str() {
+        None => cairn_tl::notes::NoteKind::Comment,
+        Some(s) => match cairn_tl::notes::NoteKind::parse(s) {
+            Some(k) => k,
+            None => {
+                return err(
+                    StatusCode::BAD_REQUEST,
+                    "kind must be comment | pin | annotation",
+                )
+            }
+        },
+    };
+    let range_end = v["frame_end"]
+        .as_u64()
+        .filter(|&e| e > frame)
+        .filter(|&e| e < vn.frames);
+    if v["frame_end"].as_u64().is_some() && range_end.is_none() {
+        return err(
+            StatusCode::BAD_REQUEST,
+            "frame_end must be a frame after frame, before the end of the cut",
+        );
+    }
+    let pin = match (v["pin_x"].as_f64(), v["pin_y"].as_f64()) {
+        (Some(x), Some(y)) => {
+            if !(0.0..=1.0).contains(&x) || !(0.0..=1.0).contains(&y) {
+                return err(StatusCode::BAD_REQUEST, "pin must be normalized 0.0..=1.0");
+            }
+            Some((x as f32, y as f32))
+        }
+        _ => None,
+    };
+    let attachment = v["attachment"]
+        .as_str()
+        .filter(|s| !s.trim().is_empty())
+        .map(str::to_string);
+    // §E enforcement: only studio links can mint internal notes — a
+    // client link asking for internal is refused, never silently coerced
+    let visibility = match v["visibility"].as_str() {
+        Some("internal") => {
+            if !link.role.sees_internal() {
+                return err(
+                    StatusCode::FORBIDDEN,
+                    "only studio links can create internal notes",
+                );
+            }
+            cairn_tl::notes::NoteVisibility::Internal
+        }
+        _ => cairn_tl::notes::NoteVisibility::Public,
+    };
     let body_text = v["body"].as_str().unwrap_or("").trim();
-    if body_text.is_empty() || body_text.len() > 2000 {
+    // a pure marker may carry an empty body (ADR-0028 §C); everything
+    // else keeps the v1 rule
+    if (body_text.is_empty() && kind != cairn_tl::notes::NoteKind::Pin) || body_text.len() > 2000 {
         return err(
             StatusCode::BAD_REQUEST,
             "comment body required (1..2000 chars)",
@@ -361,7 +433,14 @@ async fn comment(
         // vector for a hostile commenter; 64 chars is a name, not an essay
         author.chars().take(64).collect()
     };
-    match Store::add_comment(
+    let draft = crate::store::NoteDraft {
+        kind,
+        range_end,
+        pin,
+        attachment,
+        visibility,
+    };
+    match Store::add_note(
         &root,
         version,
         &author,
@@ -369,6 +448,7 @@ async fn comment(
         frame,
         vn.tc_rate(),
         p.provider.now_ms(),
+        draft,
     ) {
         Ok(n) => Json(json!({
             "ok": true,
@@ -421,6 +501,77 @@ async fn resolve(
         Ok(()) => Json(json!({"ok": true})).into_response(),
         Err(e) => err(StatusCode::NOT_FOUND, &e),
     }
+}
+
+/// GET /r/:token/attachment/:hash — an annotation's overlay blob, straight
+/// from the project CAS (ADR-0028 §D).
+///
+/// The contract, in order:
+/// 1. the hash must be REFERENCED by a note this link may see (internal
+///    notes' overlays are filtered exactly like their text — the boundary
+///    is one place, server-side);
+/// 2. the blob is re-verified on read: BLAKE3 of the bytes must equal the
+///    requested hash (I2 — a tampered overlay is a `CHECKSUM_MISMATCH`
+///    response, never a silent render failure and never a crash);
+/// 3. missing blob -> 404: the player shows its missing-overlay
+///    affordance, the note text still renders.
+async fn attachment(
+    State(p): State<Portal>,
+    UrlPath((token, hash)): UrlPath<(String, String)>,
+) -> Response {
+    let Some((root, file, link)) = p.resolve(&token).await else {
+        return err(StatusCode::NOT_FOUND, "link not found or expired");
+    };
+    let hash = hash.trim().to_ascii_lowercase();
+    if hash.len() != 64 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return err(
+            StatusCode::BAD_REQUEST,
+            "attachment hash must be 64 hex chars",
+        );
+    }
+    // 1) referenced by a note this audience may see?
+    let mut referenced = false;
+    for v in file.versions_for(&link) {
+        if let Ok(set) = Store::load_comments(&root, v.number) {
+            for n in set.notes.values() {
+                if n.attachment.as_deref() == Some(hash.as_str())
+                    && (n.visibility != cairn_tl::notes::NoteVisibility::Internal
+                        || link.role.sees_internal())
+                {
+                    referenced = true;
+                    break;
+                }
+            }
+        }
+    }
+    if !referenced {
+        return err(StatusCode::NOT_FOUND, "no such attachment");
+    }
+    // 2) fetch + verify (I2)
+    let Some(blobs) = p.provider.blobs_root() else {
+        return err(StatusCode::NOT_FOUND, "attachment store unavailable");
+    };
+    let path = blobs.join(&hash[..2]).join(&hash);
+    let bytes = match tokio::fs::read(&path).await {
+        Ok(b) => b,
+        Err(_) => return err(StatusCode::NOT_FOUND, "attachment not present locally"),
+    };
+    let actual = blake3::hash(&bytes).to_hex().to_string();
+    if actual != hash {
+        // tampered or corrupted: never serve it, never crash on it
+        return err(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "attachment checksum mismatch",
+        );
+    }
+    (
+        [
+            (header::CONTENT_TYPE, "image/png"),
+            (header::CACHE_CONTROL, "private, max-age=3600"),
+        ],
+        bytes::Bytes::from(bytes),
+    )
+        .into_response()
 }
 
 fn content_type(path: &Path) -> &'static str {
@@ -603,6 +754,7 @@ mod tests {
 
     struct FixedProvider {
         roots: Vec<(String, PathBuf)>,
+        blobs: Option<PathBuf>,
         now: std::sync::atomic::AtomicI64,
     }
 
@@ -610,6 +762,9 @@ mod tests {
     impl RootProvider for FixedProvider {
         async fn roots(&self) -> Vec<(String, PathBuf)> {
             self.roots.clone()
+        }
+        fn blobs_root(&self) -> Option<PathBuf> {
+            self.blobs.clone()
         }
         fn now_ms(&self) -> i64 {
             self.now.load(std::sync::atomic::Ordering::Relaxed)
@@ -641,9 +796,52 @@ mod tests {
         Store::save(&root, &f).unwrap();
         let provider = Arc::new(FixedProvider {
             roots: vec![("p1".into(), root.clone())],
+            blobs: None,
             now: std::sync::atomic::AtomicI64::new(1_000),
         });
         (Portal::new(provider), root, token)
+    }
+
+    fn setup_with_blobs() -> (Portal, PathBuf, String, String) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.keep();
+        let blobs = root.join("blobs");
+        let mut f = crate::model::ReviewFile {
+            title: "Brand Film".into(),
+            ..Default::default()
+        };
+        f.publish(ReviewVersion {
+            number: 0,
+            label: "v1".into(),
+            media_rel: "cuts/v1.mp4".into(),
+            proxy_rel: None,
+            fps_num: 24,
+            fps_den: 1,
+            frames: 100,
+            timeline_fingerprint: None,
+            snapshot: None,
+            published_by: "editor".into(),
+            published_at: 1,
+        });
+        Store::save(&root, &f).unwrap();
+        let token = f.add_link(GuestRole::Commenter, "client".into(), 0, false, 1);
+        let studio = f.add_link(GuestRole::Studio, "team".into(), 0, false, 1);
+        Store::save(&root, &f).unwrap();
+        let provider = Arc::new(FixedProvider {
+            roots: vec![("p1".into(), root.clone())],
+            blobs: Some(blobs.clone()),
+            now: std::sync::atomic::AtomicI64::new(1_000),
+        });
+        (Portal::new(provider), root, token, studio)
+    }
+
+    async fn body_json(r: Response) -> serde_json::Value {
+        serde_json::from_slice(
+            &axum::body::to_bytes(r.into_body(), 1024 * 1024)
+                .await
+                .unwrap(),
+        )
+        .unwrap()
     }
 
     #[tokio::test]
@@ -688,6 +886,266 @@ mod tests {
         let vbody = json!({"version": 1, "frame": 5, "body": "hi", "author": "v"});
         let r4 = comment(State(p), UrlPath(vt), Some(Json(vbody))).await;
         assert_eq!(r4.status(), StatusCode::FORBIDDEN);
+    }
+
+    // ---- note-shape v2 (ADR-0028) acceptance gates -------------------------
+
+    /// Gate 4: the visibility boundary. Internal notes are absent from a
+    /// client-audience session response (never serialized, so a devtools
+    /// snoop finds nothing) and present for a studio link.
+    #[tokio::test]
+    async fn visibility_boundary_filters_internal_notes() {
+        use crate::store::NoteDraft;
+        use cairn_tl::notes::NoteVisibility;
+
+        let (p, root, client_token, studio_token) = setup_with_blobs();
+        // a public note + an internal note on v1
+        Store::add_note(
+            &root,
+            1,
+            "editor",
+            "client sees this",
+            10,
+            24,
+            1,
+            NoteDraft::default(),
+        )
+        .unwrap();
+        Store::add_note(
+            &root,
+            1,
+            "editor",
+            "studio only: swap the ending",
+            20,
+            24,
+            2,
+            NoteDraft {
+                visibility: NoteVisibility::Internal,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        let body = body_json(session(State(p.clone()), UrlPath(client_token)).await).await;
+        let comments = body["comments"].as_array().unwrap();
+        assert_eq!(
+            comments.len(),
+            1,
+            "the client receives exactly the public note"
+        );
+        assert_eq!(comments[0]["body"], "client sees this");
+        assert!(
+            !format!("{body:?}").contains("swap the ending"),
+            "no bytes of the internal note ship"
+        );
+
+        let body2 = body_json(session(State(p), UrlPath(studio_token)).await).await;
+        let comments2 = body2["comments"].as_array().unwrap();
+        assert_eq!(comments2.len(), 2, "the studio link sees both");
+        assert!(comments2.iter().any(|c| c["visibility"] == "internal"));
+    }
+
+    /// The portal's compose path writes v2 notes: a pin (empty body,
+    /// position), a range, and internal visibility for studio links.
+    /// A client link asking for internal is refused — never coerced.
+    #[tokio::test]
+    async fn v2_compose_range_pin_and_internal_enforcement() {
+        use cairn_tl::notes::NoteVisibility;
+
+        let (p, root, client_token, studio_token) = setup_with_blobs();
+
+        // a pure pin: empty body is legal for kind=pin
+        let pin = json!({
+            "version": 1, "frame": 30, "author": "jane", "kind": "pin",
+            "pin_x": 0.25, "pin_y": 0.5,
+        });
+        let r = comment(
+            State(p.clone()),
+            UrlPath(client_token.clone()),
+            Some(Json(pin)),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::OK);
+
+        // a range comment
+        let range = json!({
+            "version": 1, "frame": 10, "frame_end": 50,
+            "author": "jane", "body": "hold this whole beat",
+        });
+        let r2 = comment(
+            State(p.clone()),
+            UrlPath(client_token.clone()),
+            Some(Json(range)),
+        )
+        .await;
+        assert_eq!(r2.status(), StatusCode::OK);
+
+        // client asking for internal: 403
+        let bad = json!({
+            "version": 1, "frame": 12, "author": "jane", "body": "x",
+            "visibility": "internal",
+        });
+        let r3 = comment(
+            State(p.clone()),
+            UrlPath(client_token.clone()),
+            Some(Json(bad)),
+        )
+        .await;
+        assert_eq!(r3.status(), StatusCode::FORBIDDEN);
+
+        // studio link may mint internal
+        let ok = json!({
+            "version": 1, "frame": 14, "author": "team", "body": "recut this",
+            "visibility": "internal",
+        });
+        let r4 = comment(State(p.clone()), UrlPath(studio_token), Some(Json(ok))).await;
+        assert_eq!(r4.status(), StatusCode::OK);
+
+        // the store carries the v2 shapes (the 403'd note never wrote)
+        let set = Store::load_comments(&root, 1).unwrap();
+        assert_eq!(set.len(), 3);
+        let pin = set
+            .notes
+            .values()
+            .find(|n| n.kind == cairn_tl::notes::NoteKind::Pin)
+            .unwrap();
+        assert_eq!(pin.pin, Some((0.25, 0.5)));
+        assert!(pin.is_v2());
+        let ranged = set
+            .notes
+            .values()
+            .find(|n| n.body == "hold this whole beat")
+            .unwrap();
+        assert_eq!(ranged.anchor.range, Some((10, 50)));
+        let internal = set.notes.values().find(|n| n.body == "recut this").unwrap();
+        assert_eq!(internal.visibility, NoteVisibility::Internal);
+
+        // malformed envelope: bad kind, bad pin, reversed range
+        for bad_body in [
+            json!({"version": 1, "frame": 1, "author": "j", "body": "x", "kind": "song"}),
+            json!({"version": 1, "frame": 1, "author": "j", "body": "x", "pin_x": 9.0, "pin_y": 0.5}),
+            json!({"version": 1, "frame": 40, "frame_end": 10, "author": "j", "body": "x"}),
+        ] {
+            let r = comment(
+                State(p.clone()),
+                UrlPath(client_token.clone()),
+                Some(Json(bad_body)),
+            )
+            .await;
+            assert_eq!(
+                r.status(),
+                StatusCode::BAD_REQUEST,
+                "malformed envelope refused"
+            );
+        }
+    }
+
+    /// Gate 6 (I2): the attachment endpoint serves a verified overlay for
+    /// notes the audience may see; a tampered blob fails verification
+    /// (422) and the note keeps its text; missing blobs are 404.
+    #[tokio::test]
+    async fn attachment_endpoint_verifies_and_fails_closed() {
+        use crate::store::NoteDraft;
+
+        let (p, root, client_token, studio_token) = setup_with_blobs();
+        let blobs = p.provider.blobs_root().unwrap();
+
+        // an overlay blob in the CAS tree: blobs/xx/hash
+        let overlay = b"fake-png-bytes-for-the-overlay";
+        let hash = blake3::hash(overlay).to_hex().to_string();
+        std::fs::create_dir_all(blobs.join(&hash[..2])).unwrap();
+        std::fs::write(blobs.join(&hash[..2]).join(&hash), overlay).unwrap();
+
+        // referenced by a PUBLIC annotation
+        Store::add_note(
+            &root,
+            1,
+            "editor",
+            "arrow points at the boom mic",
+            5,
+            24,
+            1,
+            NoteDraft {
+                kind: cairn_tl::notes::NoteKind::Annotation,
+                attachment: Some(hash.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        // referenced by an INTERNAL annotation (client must not fetch it)
+        let overlay2 = b"internal-only-overlay";
+        let hash2 = blake3::hash(overlay2).to_hex().to_string();
+        std::fs::create_dir_all(blobs.join(&hash2[..2])).unwrap();
+        std::fs::write(blobs.join(&hash2[..2]).join(&hash2), overlay2).unwrap();
+        Store::add_note(
+            &root,
+            1,
+            "editor",
+            "budget note on the reshoot",
+            6,
+            24,
+            2,
+            NoteDraft {
+                kind: cairn_tl::notes::NoteKind::Annotation,
+                attachment: Some(hash2.clone()),
+                visibility: cairn_tl::notes::NoteVisibility::Internal,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        // client: public overlay serves, internal overlay 404s
+        let r = attachment(
+            State(p.clone()),
+            UrlPath((client_token.clone(), hash.clone())),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(r.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        assert_eq!(&bytes[..], overlay);
+        let r2 = attachment(
+            State(p.clone()),
+            UrlPath((client_token.clone(), hash2.clone())),
+        )
+        .await;
+        assert_eq!(
+            r2.status(),
+            StatusCode::NOT_FOUND,
+            "internal overlay hidden from client links"
+        );
+
+        // studio: both serve
+        let r3 = attachment(
+            State(p.clone()),
+            UrlPath((studio_token.clone(), hash2.clone())),
+        )
+        .await;
+        assert_eq!(r3.status(), StatusCode::OK);
+
+        // unreferenced hash: 404 (never confirm what exists)
+        let r4 = attachment(
+            State(p.clone()),
+            UrlPath((studio_token.clone(), "ab".repeat(32))),
+        )
+        .await;
+        assert_eq!(r4.status(), StatusCode::NOT_FOUND);
+
+        // tamper: the bytes no longer hash to the requested id -> 422,
+        // never a silent serve, never a crash
+        std::fs::write(blobs.join(&hash[..2]).join(&hash), b"tampered bytes").unwrap();
+        let r5 = attachment(
+            State(p.clone()),
+            UrlPath((studio_token.clone(), hash.clone())),
+        )
+        .await;
+        assert_eq!(r5.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+        // missing blob entirely: 404
+        std::fs::remove_file(blobs.join(&hash2[..2]).join(&hash2)).unwrap();
+        let r6 = attachment(State(p), UrlPath((studio_token, hash2))).await;
+        assert_eq!(r6.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
