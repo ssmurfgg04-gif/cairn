@@ -5,6 +5,7 @@
 //! `pinned` chunks are excluded from local eviction (ctl pin/unpin, SPEC §10/§11).
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use cairn_core::clock::SystemClock;
@@ -12,11 +13,62 @@ use cairn_core::hash::Hash;
 use cairn_core::{CairnError, ErrorKind};
 use rusqlite::Connection;
 
+/// Buffers at least this big verify BLAKE3 on the rayon CPU lane instead of
+/// the calling async worker (ADR-0027). Below it the rayon round-trip costs
+/// more than the hash itself — the PostHog "small work stays inline" rule.
+const CPU_LANE_MIN_BYTES: usize = 256 * 1024;
+
+/// Lock-free atime debounce (ADR-0027): BURST found every cached-open ended
+/// in a serialized `UPDATE blobs SET atime` behind the one writer mutex —
+/// 32 workers × repeated opens of the same 32 files is a write storm that
+/// serves nobody (the value only feeds LRU eviction, which runs on the
+/// 24h job cycle). A fixed table of 2048 slots keyed by hash prefix
+/// collapses re-touches inside the window; collisions between different
+/// hashes at worst skip one atime refresh, which eviction tolerance
+/// already absorbs. Zero locks, zero allocation, fixed memory.
+struct TouchFilter {
+    slots: Vec<AtomicU64>,
+}
+
+const TOUCH_WINDOW_MS: u64 = 60_000;
+const TOUCH_SLOTS: usize = 2048;
+
+impl TouchFilter {
+    fn new() -> Self {
+        TouchFilter {
+            slots: std::iter::repeat_with(|| AtomicU64::new(0))
+                .take(TOUCH_SLOTS)
+                .collect(),
+        }
+    }
+
+    fn slot_of(h: &Hash) -> usize {
+        let key = u64::from_le_bytes([
+            h.0[0], h.0[1], h.0[2], h.0[3], h.0[4], h.0[5], h.0[6], h.0[7],
+        ]);
+        (key as usize) % TOUCH_SLOTS
+    }
+
+    /// Returns true when this touch should hit the writer (first touch, or
+    /// outside the window). `now_ms` is passed in so tests can time-travel.
+    fn mark(&self, h: &Hash, now_ms: i64) -> bool {
+        let now = now_ms.max(0) as u64;
+        let slot = &self.slots[Self::slot_of(h)];
+        let last = slot.load(Ordering::Relaxed);
+        if last != 0 && now.saturating_sub(last) < TOUCH_WINDOW_MS {
+            return false;
+        }
+        slot.store(now, Ordering::Relaxed);
+        true
+    }
+}
+
 /// Local chunk CAS with SQLite index.
 #[derive(Clone)]
 pub struct Cas {
     root: PathBuf,
     db: Arc<std::sync::Mutex<Connection>>,
+    touch_filter: Arc<TouchFilter>,
 }
 
 impl Cas {
@@ -27,6 +79,7 @@ impl Cas {
         Ok(Cas {
             root: root.to_path_buf(),
             db,
+            touch_filter: Arc::new(TouchFilter::new()),
         })
     }
 
@@ -102,21 +155,45 @@ impl Cas {
     /// `tokio::fs::read` rides the runtime's async file machinery: on Linux with
     /// the io_uring driver armed (tokio `io-uring` feature, probed at runtime
     /// with automatic fallback) reads land on the ring; on every other platform
-    /// or driver tokio's blocking pool serves them. Same verification and error
-    /// mapping as [`Cas::get`] — results are byte-identical.
+    /// or driver tokio's blocking pool serves them. Verification is identical
+    /// to [`Cas::get`]; buffers of [`CPU_LANE_MIN_BYTES`] and up hash on the
+    /// rayon CPU lane so BLAKE3 (fast as it is) can no longer park the I/O
+    /// worker that is supposed to be serving the next request (ADR-0027 —
+    /// the BURST lockstep finding).
     pub async fn get_async(&self, h: &Hash) -> Result<Vec<u8>, CairnError> {
         let path = self.path_for(h);
         let bytes = tokio::fs::read(&path).await.map_err(|_| {
             CairnError::new(ErrorKind::NotFound, format!("chunk {h} not in local CAS"))
         })?;
-        // I2: verify on ingest, "free at 10+GB/s" (SPEC §9.2)
-        let actual = Hash::of(&bytes);
-        if actual != *h {
-            return Err(CairnError::new(
-                ErrorKind::LocalCasCorrupt,
-                format!("local CAS corruption: {h}"),
-            ));
-        }
+        let bytes = if bytes.len() >= CPU_LANE_MIN_BYTES {
+            // ownership round-trips through the lane (hash + give the
+            // buffer back) — zero copies, the I/O worker never hashes
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            rayon::spawn(move || {
+                let hash = Hash::of(&bytes);
+                let _ = tx.send((bytes, hash));
+            });
+            let (bytes, actual) = rx.await.map_err(|_| {
+                CairnError::new(ErrorKind::Io, "cpu verify lane panicked".to_string())
+            })?;
+            if actual != *h {
+                return Err(CairnError::new(
+                    ErrorKind::LocalCasCorrupt,
+                    format!("local CAS corruption: {h}"),
+                ));
+            }
+            bytes
+        } else {
+            // I2: verify on ingest, "free at 10+GB/s" (SPEC §9.2)
+            let actual = Hash::of(&bytes);
+            if actual != *h {
+                return Err(CairnError::new(
+                    ErrorKind::LocalCasCorrupt,
+                    format!("local CAS corruption: {h}"),
+                ));
+            }
+            bytes
+        };
         self.touch(h)?;
         Ok(bytes)
     }
@@ -292,6 +369,11 @@ impl Cas {
     }
 
     fn touch(&self, h: &Hash) -> Result<(), CairnError> {
+        // ADR-0027 debounce: re-reads inside the window skip the serialized
+        // writer round-trip entirely (the LRU only needs minute granularity)
+        if !self.touch_filter.mark(h, self.clock_now()) {
+            return Ok(());
+        }
         let db = self.db.lock().expect("cas db poisoned");
         db.execute(
             "UPDATE blobs SET atime=?2 WHERE hash=?1",
@@ -372,5 +454,47 @@ mod tests {
         std::fs::write(&p, b"tampered").unwrap();
         let (_checked, bad) = cas.verify_sample(100).unwrap();
         assert_eq!(bad, vec![h.hex()]);
+    }
+
+    #[test]
+    fn touch_filter_collapses_retouches_inside_the_window() {
+        let f = TouchFilter::new();
+        let h = Hash::of(b"debounce-me");
+        // first touch writes
+        assert!(f.mark(&h, 1_000));
+        // re-reads inside the 60s window: no write, on any thread-clone
+        assert!(!f.mark(&h, 1_500));
+        assert!(!f.mark(&h, 59_999));
+        // past the window it writes again
+        assert!(f.mark(&h, 61_001));
+        // and the window restarts from the new timestamp
+        assert!(!f.mark(&h, 61_500));
+    }
+
+    #[tokio::test]
+    async fn get_async_roundtrips_and_detects_corruption() {
+        let (_d, cas) = open_cas();
+        // small buffer: inline verify path
+        let small = b"small chunk".to_vec();
+        let hs = Hash::of(&small);
+        cas.put(&hs, &small).unwrap();
+        assert_eq!(cas.get_async(&hs).await.unwrap(), small);
+
+        // big buffer: rayon CPU-lane verify path, byte-identical result
+        let big = b"x".repeat(CPU_LANE_MIN_BYTES + 123);
+        let hb = Hash::of(&big);
+        cas.put(&hb, &big).unwrap();
+        let back = cas.get_async(&hb).await.unwrap();
+        assert_eq!(back.len(), big.len());
+        assert_eq!(back, big);
+
+        // corruption is still caught on the lane (I2 holds)
+        let p = cas.root.join("data").join(hb.shard()).join(hb.hex());
+        let mut tampered = big.clone();
+        tampered[0] = b'y';
+        std::fs::write(&p, &tampered).unwrap();
+        let err = cas.get_async(&hb).await.unwrap_err();
+        // LocalCasCorrupt flattens to the CHECKSUM_MISMATCH taxonomy code
+        assert_eq!(err.code(), "CHECKSUM_MISMATCH");
     }
 }

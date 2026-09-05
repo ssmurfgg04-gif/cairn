@@ -10,6 +10,10 @@ cairn-core = { path = "../cairn-core" }
 # async file lane for CAS reads (ADR-0025): tokio::fs routes through the
 # io_uring driver when armed (tokio `io-uring` feature, Linux, probed)
 tokio = { workspace = true }
+# CPU verify lane for big CAS reads (ADR-0027): BLAKE3 runs on the rayon
+# pool (spawn + oneshot, the PostHog shape) so I/O workers never park on
+# hashing during a BURST
+rayon = { workspace = true }
 # r2d2 reader pool for the header cache (ADR-0025): 0.25.x is the line built
 # against our rusqlite 0.32 — keeps a single rusqlite crate in the graph
 r2d2 = { workspace = true }
