@@ -11,6 +11,12 @@
 
 #![deny(unsafe_code)]
 
+// windows: the tray wires it into the poll worker. test: the state machine
+// is the unit-tested part — every platform runs those tests. A plain linux
+// bin build compiles neither (the module would be dead weight).
+#[cfg(any(windows, test))]
+mod supervise;
+
 #[cfg(windows)]
 mod tray;
 

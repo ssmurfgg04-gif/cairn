@@ -384,8 +384,20 @@ pub async fn attach(
 
     let ca_pem = identity.tls_ca.as_ref().map(|c| c.as_bytes().to_vec());
 
-    // ensure the project exists on the server (idempotent)
-    ensure_project(&server_url, &identity, &pid, ca_pem.as_deref()).await?;
+    // ensure the project exists on the server (idempotent). BEST-EFFORT
+    // here on purpose (round 26): a brief server outage at attach/resume
+    // time must not fail the LOCAL binding — the runtime's sync loop is
+    // the re-entry point for server failures (5s backoff, spawn_loop's
+    // own contract) and run_loop re-runs this ensure after every
+    // successful (re)connect. Without this, a daemon restart while the
+    // server is unreachable (VPN blip, laptop wake, tray-supervised
+    // restart) resumed ZERO projects and sync died silently.
+    if let Err(e) = ensure_project(&server_url, &identity, &pid, ca_pem.as_deref()).await {
+        tracing::warn!(
+            project = %pid,
+            "server unreachable at attach (binding kept; the sync loop ensures the project once it is back): {e}"
+        );
+    }
 
     let ca_pem = identity.tls_ca.as_ref().map(|c| c.as_bytes().to_vec());
 
@@ -906,6 +918,12 @@ async fn run_loop(
     let plane: Arc<dyn Plane> = Arc::new(
         GrpcPlane::connect(server_url, &identity.token, &identity.tenant_id, ca_pem).await?,
     );
+    // (round 26) the server is up and the token is valid — make sure the
+    // project row exists before the engine pushes journal ops (a fold for
+    // a missing project is NotFound and the loop would spin). This is the
+    // RETRY point for the best-effort ensure in `attach`: attach may have
+    // run while the server was down, so every (re)connect re-ensures.
+    ensure_project(server_url, identity, &pid, ca_pem).await?;
     let conn = store.conn_handle();
     let cas = Cas::open(&store.root().join("blobs"), conn.clone())?;
     let outbox = Outbox::new(conn.clone());

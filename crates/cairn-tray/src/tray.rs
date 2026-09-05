@@ -35,6 +35,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crate::supervise::{Action, Supervision};
 use windows::core::{w, PCWSTR};
 use windows::Win32::Foundation::{HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
@@ -140,6 +141,10 @@ struct Shared {
     prev_status: Mutex<Option<LiveStatus>>,
     /// set after `connect…` runs so the next poll re-reads eagerly
     poll_now: AtomicBool,
+    /// daemon supervision state (round 26): the poll worker decides
+    /// (pure state machine, unit-tested on every platform),
+    /// `spawn_daemon` executes.
+    supervision: Mutex<Supervision>,
 }
 
 /// Balloon (tray toast) emission rules — the "push" the tray never had:
@@ -154,9 +159,11 @@ fn notify_transition(
 ) -> Option<(&'static str, String, NOTIFY_ICON_INFOTIP_FLAGS)> {
     let prev = prev?;
     if prev.daemon_up && !now.daemon_up {
+        // round 26: the supervisor restarts it — say THAT, not "open a
+        // terminal" (the product's promise is no terminal, ever)
         return Some((
             "Cairn",
-            "daemon unreachable — restart it from your terminal".into(),
+            "daemon stopped — restarting it…".into(),
             NIIF_ERROR,
         ));
     }
@@ -199,6 +206,7 @@ pub fn run() {
         status: Mutex::new(LiveStatus::default()),
         prev_status: Mutex::new(None),
         poll_now: AtomicBool::new(true),
+        supervision: Mutex::new(Supervision::new()),
     });
 
     unsafe {
@@ -360,6 +368,40 @@ fn run_cairn(args: &[&str]) -> (bool, String) {
 
 use std::os::windows::process::CommandExt;
 
+/// Start the daemon hidden and let it outlive us (round 26). The child's
+/// stderr is appended to `<home>/daemon.log` so a dead daemon is
+/// diagnosable from Status Details without a terminal. The handle is
+/// dropped on purpose: Windows keeps the process alive, so quitting the
+/// tray never takes sync down (the ADR-0016 boundary, extended: the tray
+/// may START the engine as a subprocess, it still never LINKS it).
+fn spawn_daemon() -> bool {
+    use std::process::{Command, Stdio};
+    let mut cmd = Command::new(cairn_binary());
+    cmd.arg("daemon");
+    if let Some(log) = crate::supervise::daemon_log_path() {
+        // append-only: tray restarts must not truncate the crash history
+        if let Ok(f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log)
+        {
+            cmd.stderr(Stdio::from(f));
+        }
+    }
+    match cmd.creation_flags(CREATE_NO_WINDOW).spawn() {
+        Ok(child) => {
+            // deliberately dropped: the daemon survives the tray
+            drop(child);
+            true
+        }
+        Err(e) => {
+            // not fatal: the next poll re-decides (backoff ladder holds)
+            eprintln!("cairn-tray: cannot start the daemon: {e}");
+            false
+        }
+    }
+}
+
 /// The status worker: parse `cairn status --json` (daemon shape) and fall
 /// back to `cairn init --json` (enrolled?) when the daemon is down.
 fn poll_status() -> LiveStatus {
@@ -492,6 +534,17 @@ unsafe extern "system" fn wnd_proc(
                 shared.poll_now.swap(false, Ordering::Relaxed);
                 std::thread::spawn(move || {
                     let st = poll_status();
+                    // round 26: the probe IS the supervisor's input. Down +
+                    // backoff elapsed -> spawn the daemon (hidden, logged,
+                    // survives the tray). Up -> reset the crash ladder.
+                    let spawn = shared
+                        .supervision
+                        .lock()
+                        .map(|mut sv| sv.observe(st.daemon_up, std::time::Instant::now()))
+                        .unwrap_or(Action::Wait);
+                    if spawn == Action::Spawn {
+                        spawn_daemon();
+                    }
                     if let Ok(mut guard) = shared.status.lock() {
                         *guard = st;
                     }

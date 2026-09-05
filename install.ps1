@@ -18,7 +18,11 @@
 #      beside the engine + tray -- the tray's "Open Console" finds it there
 #   7. Starts the tray for THIS session (no reboot needed to see it)
 #   8. Runs `cairn init` (creates the store; device id is issued at `cairn login`)
-#   9. Prints the next step
+#   9. Starts the daemon hidden (stderr -> <home>/daemon.log) so the
+#      dashboard at http://127.0.0.1:17778 is live immediately -- no
+#      terminal, no reboot, no tray click. The tray supervises it from
+#      every login onward (round 26; CAIRN_INSTALL_NO_LAUNCH skips this)
+#  10. Prints the next step
 #
 # Explorer badge registration is NOT installer work: the daemon registers the
 # CfAPI sync root + provider state at `cairn attach` time (badge.rs). The
@@ -266,6 +270,25 @@ if ($trayInstalled) {
 & $exePath init
 if ($LASTEXITCODE -ne 0) {
     Fail "cairn init exited $LASTEXITCODE"
+}
+
+# ---- 6b. Start the daemon NOW (round 26: install-and-it-just-works) ---------------
+# The tray supervises it from every login onward (supervise.rs: probe ->
+# spawn hidden -> backoff). Right HERE the install should hand the user a
+# live daemon + dashboard with no terminal, no reboot, no tray click: the
+# same Start-Process shape the tray uses (hidden, stderr to daemon.log so
+# "why did it die" is answerable). CI (CAIRN_INSTALL_NO_LAUNCH=1) skips it.
+if ($env:CAIRN_INSTALL_NO_LAUNCH -ne "1") {
+    try {
+        $cairnHome = if ($env:CAIRN_HOME) { $env:CAIRN_HOME } else { Join-Path $env:USERPROFILE ".cairn" }
+        if (-not (Test-Path $cairnHome)) { New-Item -ItemType Directory -Force -Path $cairnHome | Out-Null }
+        $daemonLog = Join-Path $cairnHome "daemon.log"
+        Start-Process -FilePath $exePath -ArgumentList "daemon" -WindowStyle Hidden -RedirectStandardError $daemonLog | Out-Null
+        Write-Host "Cairn daemon started (hidden)."
+        Write-Host "Dashboard: http://127.0.0.1:17778  (open it in your browser)"
+    } catch {
+        Write-Host "could not start the daemon: $($_.Exception.Message) -- the tray restarts it at next login, or run 'cairn daemon'"
+    }
 }
 
 # ---- 7. Done ----------------------------------------------------------------------
