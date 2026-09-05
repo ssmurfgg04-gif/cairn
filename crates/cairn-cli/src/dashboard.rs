@@ -1282,7 +1282,8 @@ fn native_folder_dialog() -> Picked {
             .collect();
         let mut display = [0u16; 260];
         let bi = BROWSEINFOW {
-            hwndOwner: std::ptr::null_mut(), // the daemon owns no window
+            // HWND is a newtype in windows 0.58 — null wrapped, not raw
+            hwndOwner: windows::Win32::Foundation::HWND(std::ptr::null_mut()), // the daemon owns no window
             pidlRoot: std::ptr::null_mut(),
             pszDisplayName: windows::core::PWSTR(display.as_mut_ptr()),
             lpszTitle: PCWSTR(title.as_ptr()),
