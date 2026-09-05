@@ -519,6 +519,7 @@ dependencies = [
  "proptest",
  "r2d2",
  "r2d2_sqlite",
+ "rayon",
  "rusqlite",
  "tempfile",
  "thiserror 2.0.20",
