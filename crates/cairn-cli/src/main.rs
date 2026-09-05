@@ -805,6 +805,18 @@ fn main() -> anyhow::Result<()> {
                 .json()
                 .flatten_event(true)
                 .with_current_span(true)
+                // round 27 (the nle-matrix W1 regression, since 7fc5d70c):
+                // log lines MUST go to STDERR — stdout belongs to the
+                // MACHINE-READABLE output (`status --json`, `doctor
+                // --json`, `init --json`...). With RUST_LOG=info in the
+                // environment (the NLE stack sets it), the boot's
+                // "cpu lane budget" line landed on STDOUT ahead of the
+                // status JSON; every JSON consumer (the matrix's
+                // ConvertFrom-Json, CI greps, scripts) then parsed
+                // garbage — W1 converged its SYNC but its status polls
+                // read noise for 600s. Pin the writer; never trust the
+                // default.
+                .with_writer(std::io::stderr)
                 .try_init()
                 .ok();
             let cli = Cli::parse();
