@@ -14,6 +14,10 @@ tempfile = { workspace = true }
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_UI_Shell",
+    # dialog.rs: SHBrowseForFolderW/BROWSEINFOW/SHGetPathFromIDListW sit
+    # behind the Common gate (ITEMIDLIST) — the tray declares both, so
+    # did we (the beta windows-fs shard caught the gap)
+    "Win32_UI_Shell_Common",
     "Win32_Storage_CloudFilters",
     "Win32_Storage_FileSystem",
     "Win32_System_Com",

@@ -189,7 +189,7 @@ jobs:
       - name: WO1 AttachRoot acceptance (500 MiB, kill -9, convergence)
         run: SIZE_MB=500 TIMEOUT=240 bash scripts/wo1-acceptance.sh
       - name: dashboard smoke (the round-27 UI surface)
-        run: bash scripts/dashboard-smoke.sh
+        run: BIN="$PWD/target/release/cairn" bash scripts/dashboard-smoke.sh
 
   # ---------------- Windows shards (8) ----------------
   windows-cli:
