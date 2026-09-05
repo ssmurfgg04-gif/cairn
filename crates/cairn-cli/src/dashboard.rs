@@ -813,7 +813,9 @@ async fn set_flag(
 }
 
 async fn doctor(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
-    let report = crate::doctor::collect(&state.home);
+    // cached (round 27): the dashboard polls this at 15s; the status RPC
+    // shares the same 5s-fresh cache, so neither starves the ctl thread
+    let report = state.cached_doctor().await;
     Json(json!({
         "healthy": report.healthy(),
         "checks": report.checks.iter().map(|c| json!({
