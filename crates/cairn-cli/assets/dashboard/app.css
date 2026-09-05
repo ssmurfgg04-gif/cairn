@@ -12,9 +12,9 @@
   --ink-3: #76777e;
   /* paper + surfaces */
   --paper: #f5f6f8;
-  --glass: rgba(255, 255, 255, 0.66);
+  --glass: rgba(255, 255, 255, 0.72);
   --glass-2: rgba(255, 255, 255, 0.42);
-  --hairline: rgba(10, 10, 10, 0.08);
+  --hairline: rgba(10, 10, 10, 0.1);
   --hairline-2: rgba(10, 10, 10, 0.14);
   /* the single accent — strong variant carries small text */
   --accent: #087cff;
@@ -31,10 +31,21 @@
   /* type */
   --sans: "DM Sans", "Segoe UI", -apple-system, "Helvetica Neue", Arial, sans-serif;
   --mono: "JetBrains Mono", "Cascadia Mono", "SF Mono", Consolas, Menlo, monospace;
-  /* motion — the app ease */
+  /* motion — the app ease (Space verbatim) */
   --ease: cubic-bezier(0.22, 0.68, 0.35, 1);
   --r-card: 16px;
   --r-item: 10px;
+
+  /* Space tokens, verbatim — the onboarding shell's own scale. The warm
+     console tokens above stay for Files/Team/Live (cairn's language); the
+     stage, footer and Space buttons below speak these. */
+  --secondary: #737373;
+  --tertiary: #a3a3a3;
+  --blue: #087cff;
+  --bg: rgba(247, 247, 249, 0.82);
+  --secondary-bg: rgba(255, 255, 255, 0.72);
+  --error: #d98d86;
+  --space-sans: "Google Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -44,39 +55,214 @@ html { color-scheme: light; }
 /* the hidden attribute must win over author display rules */
 [hidden] { display: none !important; }
 
+/* the Space shell body: overflow locked (the console's .main owns the
+   scroll), the aurora-tinted glass background, the Space type stack.
+   user-select:none is Space's shell rule — the console re-enables text
+   selection where editors copy paths and codes. */
 body {
-  background: var(--paper);
+  background: var(--bg);
   color: var(--ink);
-  font-family: var(--sans);
+  font-family: var(--space-sans);
   font-size: 14px;
   line-height: 1.6;
+  overflow: hidden;
+  user-select: none;
+  -webkit-user-select: none;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
-/* ---------- aurora — two soft drifting light fields (restrained: ~0.1 alpha) ---------- */
-
-body::before,
-body::after {
-  content: "";
+/* ---------- the Space aurora ----------
+   One fixed layer INSIDE the shell — isolation keeps it stacked under the
+   stage and footer z-layers (on the body it painted flat under everything).
+   Three fields — warm orange, indigo, violet — blurred 18px, drifting 24s. */
+.bg-aurora {
   position: fixed;
-  z-index: -1;
+  inset: -20%;
   pointer-events: none;
+  background:
+    radial-gradient(38% 34% at 17% 20%, rgba(255, 163, 104, 0.15), transparent 70%),
+    radial-gradient(42% 38% at 82% 17%, rgba(111, 128, 255, 0.16), transparent 72%),
+    radial-gradient(48% 40% at 51% 104%, rgba(158, 112, 228, 0.13), transparent 72%);
   filter: blur(18px);
-  will-change: transform;
+  animation: aurora 24s ease-in-out infinite alternate;
 }
-body::before {
-  left: -14vw; top: -22vh; width: 58vw; height: 60vh;
-  background: radial-gradient(closest-side, rgba(8, 124, 255, 0.13), transparent 70%);
-  animation: drift-a 26s ease-in-out infinite alternate;
+@keyframes aurora { to { transform: translate3d(2.5%, 1%, 0) scale(1.05); } }
+
+/* ---------- the Space shell ----------
+   .shell isolates the stacking context; .shell-content is the column the
+   stage (flex:1), the console frame (flex:1) and the 82px footer live in. */
+.shell {
+  isolation: isolate;
+  position: relative;
+  width: 100%;
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
 }
-body::after {
-  right: -16vw; top: -10vh; width: 50vw; height: 52vh;
-  background: radial-gradient(closest-side, rgba(124, 92, 191, 0.11), transparent 70%);
-  animation: drift-b 34s ease-in-out infinite alternate;
+.shell-content {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
-@keyframes drift-a { to { transform: translate3d(6vw, 9vh, 0) scale(1.14); } }
-@keyframes drift-b { to { transform: translate3d(-8vw, 12vh, 0) scale(1.08); } }
+
+/* ---------- the Space onboarding stage ----------
+   Full-viewport light glass — NOT a card: overflow visible (content may
+   breathe past the padding box), padding 30px 42px 20px, the step capped
+   at 860px, the copy at 670px, h1 clamp 34-54 weight 500. */
+.stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+  padding: 30px 42px 20px;
+}
+.stage-motion {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.step {
+  width: min(860px, 100%);
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.step.centered {
+  flex-direction: column;
+  text-align: center;
+}
+.step-copy {
+  text-align: center;
+  max-width: 670px;
+  z-index: 5;
+}
+.step-copy h1 {
+  font-size: clamp(34px, 4.6vw, 54px);
+  font-weight: 500;
+  line-height: 1.06;
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+}
+.step.compact .step-copy h1 { font-size: clamp(29px, 4vw, 42px); }
+.step-copy p {
+  margin-top: 13px;
+  color: var(--secondary);
+  font-size: 16px;
+  line-height: 1.5;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+.scene-step {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  align-items: center;
+  margin-top: 26px;
+}
+.reveal {
+  animation: reveal 0.6s var(--ease) both;
+  will-change: transform, opacity, filter;
+}
+@keyframes reveal {
+  from { opacity: 0; transform: translateY(10px); filter: blur(6px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+
+/* the 76px mark — Space's error-fallback-mark pattern: light gradient
+   tile, 21px radius, soft shadow, the cairn stack in currentColor */
+.ob-mark {
+  width: 76px;
+  height: 76px;
+  display: grid;
+  place-items: center;
+  margin: 0 auto 22px;
+  border: 1px solid rgba(10, 10, 10, 0.08);
+  border-radius: 21px;
+  background: linear-gradient(180deg, #fff, #f4f4f6);
+  box-shadow: 0 14px 34px rgba(10, 10, 10, 0.08);
+  color: var(--ink);
+  font-size: 36px;
+  font-weight: 500;
+  flex: none;
+}
+
+/* the attach affordance in the stage: one honest pill input + the CLI
+   line for terminal-first studios (no fake folder picker) */
+.ob-input-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+.ob-input-row .input {
+  min-width: 280px;
+  height: 42px;
+  border-radius: 999px;
+  padding: 0 18px;
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  border: 1px solid rgba(10, 10, 10, 0.11);
+  box-shadow: 0 10px 30px rgba(45, 47, 66, 0.08);
+  font-size: 13px;
+}
+
+.ob-cli {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: var(--glass);
+}
+.ob-cli code { font-family: var(--mono); font-size: 12px; color: var(--ink-2); }
+.btn-copy { padding: 3px 9px; font-size: 11px; }
+
+/* Space's error-fallback card — the daemon-unreachable moment at zero
+   roots: mark, one plain sentence, no spinner */
+.error-fallback-card {
+  width: min(420px, 100%);
+  margin: 26px auto 0;
+  padding: 42px 36px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 15px;
+  text-align: center;
+  border: 1px solid rgba(10, 10, 10, 0.08);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 24px 70px rgba(45, 47, 66, 0.12), inset 0 1px 0 #fff;
+}
+.error-fallback-mark {
+  width: 76px;
+  height: 76px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 4px;
+  border: 1px solid rgba(10, 10, 10, 0.08);
+  border-radius: 21px;
+  background: linear-gradient(180deg, #fff, #f4f4f6);
+  box-shadow: 0 14px 34px rgba(10, 10, 10, 0.08);
+  font-size: 36px;
+  font-weight: 500;
+  color: var(--ink);
+  flex: none;
+}
+.ef-title { font-weight: 600; font-size: 15px; color: var(--ink); }
+.ef-sub { color: var(--secondary); font-size: 13px; }
 
 ::selection { background: rgba(8, 124, 255, 0.22); }
 
@@ -88,9 +274,18 @@ body::after {
 *::-webkit-scrollbar-thumb { background: rgba(10, 10, 10, 0.16); border-radius: 4px; }
 *::-webkit-scrollbar-track { background: transparent; }
 
-/* ---------- frame ---------- */
-
-.frame { display: flex; min-height: 100vh; }
+/* ---------- frame (the console, attached state) ----------
+   Lives inside shell-content ABOVE the 82px footer: flex:1 + min-height:0
+   so .main can own the scroll (body no longer scrolls). Keeps cairn's
+   DM Sans console voice and re-enables text selection (paths get copied). */
+.frame {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  font-family: var(--sans);
+  user-select: text;
+  -webkit-user-select: text;
+}
 
 /* ---------- sidebar ---------- */
 
@@ -107,8 +302,9 @@ body::after {
   gap: 30px;
   position: sticky;
   top: 0;
-  height: 100vh;
+  height: 100%;
   overflow-y: auto;
+  flex: none;
 }
 
 .brand { display: flex; gap: 11px; align-items: center; }
@@ -182,6 +378,8 @@ body::after {
 .main {
   flex: 1;
   min-width: 0;
+  height: 100%;
+  overflow-y: auto;
   padding: 34px 44px 26px;
   display: flex;
   flex-direction: column;
@@ -290,71 +488,8 @@ body::after {
   transition: width 0.6s var(--ease), background 0.4s var(--ease);
 }
 
-/* ---------- onboarding (1/3 connect, 2/3 sync, 3/3 ready) ---------- */
-
-.onboarding { padding: 26px 28px 24px; }
-
-.ob-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
-.ob-title { font-size: 18px; font-weight: 700; letter-spacing: -0.02em; }
-.ob-sub { color: var(--ink-3); font-size: 12.5px; }
-
-.ob-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; }
-
-.ob-step {
-  position: relative;
-  padding: 0 14px 0 0;
-  display: grid;
-  grid-template-columns: 30px 1fr;
-  column-gap: 12px;
-  align-items: start;
-}
-.ob-step:not(:last-child)::after {
-  content: "";
-  position: absolute;
-  top: 15px;
-  left: 36px; right: 10px;
-  height: 2px;
-  border-radius: 1px;
-  background: var(--hairline-2);
-  transition: background 0.5s var(--ease);
-}
-.ob-step.done:not(:last-child)::after { background: var(--ok); }
-
-.ob-num {
-  width: 30px; height: 30px;
-  border-radius: 50%;
-  display: grid; place-items: center;
-  font-family: var(--mono);
-  font-size: 12.5px;
-  font-variant-numeric: tabular-nums;
-  border: 1px solid var(--hairline-2);
-  background: var(--glass);
-  color: var(--ink-2);
-  position: relative;
-  z-index: 1;
-  transition: all 0.4s var(--ease);
-}
-.ob-step.done .ob-num { background: var(--ok); border-color: var(--ok); color: #fff; }
-.ob-step.now .ob-num {
-  background: var(--accent-strong); border-color: var(--accent-strong); color: #fff;
-  box-shadow: 0 0 0 5px var(--accent-soft);
-  animation: breathe 2s ease-in-out infinite;
-}
-.ob-step.todo .ob-num { color: var(--ink-3); }
-
-.ob-name { font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
-.ob-desc { color: var(--ink-3); font-size: 12px; margin-top: 2px; max-width: 30ch; }
-
-.ob-step.now .ob-name { color: var(--accent-strong); }
-.ob-step.done .ob-name { color: var(--ink-2); }
-
-.ob-cta {
-  margin-top: 18px;
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  flex-wrap: wrap;
-}
+/* onboarding card styles: retired — the Space .stage/.step/.step-copy
+   layer near the top of this file owns the zero-root hero now. */
 
 /* ---------- tables ---------- */
 
@@ -430,18 +565,26 @@ body::after {
 .check-detail { color: var(--ink-2); font-size: 12.5px; flex: 1; }
 .check-ms { color: var(--ink-3); font-family: var(--mono); font-size: 11px; font-variant-numeric: tabular-nums; }
 
-.foot { padding-top: 14px; }
-.foot .meta { font-family: var(--sans); }
+/* the centered footer affordances: the wordmark + the ? pill */
+.foot-brand {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
 .foot-help {
-  font: inherit; font-weight: 700;
-  border: 1px solid var(--hairline-2);
-  border-radius: 5px;
-  background: transparent;
+  font: inherit;
+  font-weight: 700;
+  border: 1px solid var(--hairline);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.54);
   color: var(--ink-2);
-  width: 20px; height: 20px;
-  display: inline-grid; place-items: center;
+  width: 26px;
+  height: 26px;
+  display: inline-grid;
+  place-items: center;
   cursor: pointer;
-  vertical-align: -4px;
+  margin-left: 8px;
   transition: color 0.15s var(--ease), border-color 0.15s var(--ease);
 }
 .foot-help:hover { color: var(--accent-strong); border-color: var(--accent); }
@@ -620,221 +763,189 @@ select.input { appearance: none; cursor: pointer; }
 /* update chip */
 .chip-update { cursor: default; }
 
-/* onboarding hero: the zero-root welcome moment (audit #1) — the dark
-   studio stage. The reference onboarding's aurora + glass + progress
-   footer translated into cairn's warm-dark language: amber fields
-   drifting behind glass over near-black #141312, the cairn stack lit
-   warm at 76px, display-scale DM Sans, and a 72x3 footer track that
-   advances over REAL state — it never fakes a step. */
-.onboarding.hero {
-  position: relative;
-  overflow: hidden;
-  padding: 0;
-  max-width: 860px;            /* the stage */
-  width: 100%;
-  margin-inline: auto;
-  border-radius: 24px;
-  background: #141312;
-  border: 1px solid rgba(255, 215, 106, 0.16);
-  box-shadow: 0 24px 70px rgba(10, 10, 10, 0.28);
-  color: #f2ede3;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+/* ---------- the Space footer (82px, transparent, z20) ----------
+   Left: step-progress (onboarding) or the live status pills (attached).
+   Center: the wordmark. Right: the continue-wrap — the status pill + the
+   ONE primary action of the current state. Transparent, border-top 0: it
+   floats on the aurora (isolation on .shell keeps it above the fields). */
+.footer {
+  flex: 0 0 82px;
+  height: 82px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 28px;
+  border-top: 0;
+  background: transparent;
+  z-index: 20;
 }
-/* cinematic vignette: darkens the stage edges (adds depth, dithers the
-   aurora's large blurred gradients so they don't band) — transparent to
-   55%, warm-dark at the rim; content sits safely inside the 54px padding */
-.onboarding.hero::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  pointer-events: none;
-  background: radial-gradient(120% 90% at 50% 42%, transparent 55%, rgba(20, 19, 18, 0.55) 100%);
+.footer-side {
+  width: 33.333%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.footer-side.center { justify-content: center; }
+.footer-side.right { justify-content: flex-end; }
+.continue-wrap { display: flex; align-items: center; gap: 10px; flex-wrap: nowrap; }
+
+/* Space buttons, scoped to the shell surfaces (stage + footer) — the
+   console's small .btn inside .frame is untouched */
+.stage .btn, .footer .btn {
+  font: inherit;
+  font-family: var(--space-sans);
+  height: 42px;
+  padding: 0 24px;
+  border: 0;
+  border-radius: 999px;
+  font-weight: 500;
+  font-size: 14px;
+  letter-spacing: -0.005em;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.16s var(--ease), background 0.16s var(--ease), box-shadow 0.16s var(--ease);
+}
+.stage .btn:active:not(:disabled), .footer .btn:active:not(:disabled) { transform: scale(0.965); }
+.stage .btn:disabled, .footer .btn:disabled { opacity: 0.45; cursor: default; }
+.stage .btn-primary, .footer .btn-primary {
+  color: #fff;
+  background: linear-gradient(#222226, #111114);
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.25), 0 5px 16px rgba(0, 0, 0, 0.16);
+  min-width: 108px;
+}
+.stage .btn-primary:hover:not(:disabled), .footer .btn-primary:hover:not(:disabled) {
+  background: linear-gradient(#303035, #17171b);
+}
+.stage .btn-secondary, .footer .btn-secondary {
+  padding: 0 17px;
+  color: #55555b;
+  background: rgba(255, 255, 255, 0.54);
+  border: 1px solid rgba(0, 0, 0, 0.09);
+}
+.stage .btn-secondary:hover, .footer .btn-secondary:hover { color: #222226; }
+.stage .btn:focus-visible, .footer .btn:focus-visible {
+  outline: 3px solid rgba(0, 122, 255, 0.42);
+  outline-offset: 3px;
 }
 
-/* the aurora — three warm fields, ~38% alpha tops, blur 18px, 24s+ drift */
-.onboarding.hero .ob-aurora {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  filter: blur(18px);
+/* the status pill (42px) + its 18px check circle */
+.footer-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 42px;
+  padding: 0 16px 0 11px;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.66);
+  border: 1px solid rgba(10, 10, 10, 0.11);
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
 }
-.ob-aurora i {
-  position: absolute;
-  display: block;
+.footer-status-check {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
   border-radius: 50%;
-  will-change: transform;
-}
-.ob-aurora .f1 {
-  left: 5%; top: -16%;
-  width: 222px; height: 222px;              /* 111px radius */
-  background: radial-gradient(circle, rgba(255, 243, 163, 0.38), transparent 70%);
-  animation: ob-field-a 24s ease-in-out infinite alternate;
-}
-.ob-aurora .f2 {
-  right: 3%; top: -6%;
-  width: 300px; height: 300px;
-  background: radial-gradient(circle, rgba(255, 180, 94, 0.24), transparent 70%);
-  animation: ob-field-b 29s ease-in-out infinite alternate;
-}
-.ob-aurora .f3 {
-  left: 36%; bottom: -36%;
-  width: 340px; height: 340px;
-  background: radial-gradient(circle, rgba(255, 157, 122, 0.14), transparent 70%);
-  animation: ob-field-c 34s ease-in-out infinite alternate;
-}
-@keyframes ob-field-a { to { transform: translate3d(46px, 30px, 0) scale(1.16); } }
-@keyframes ob-field-b { to { transform: translate3d(-40px, 36px, 0) scale(1.10); } }
-@keyframes ob-field-c { to { transform: translate3d(28px, -32px, 0) scale(1.08); } }
-
-.onboarding.hero .ob-inner {
-  position: relative;
-  z-index: 1;                  /* above the vignette — text stays crisp */
-  padding: 54px 56px 42px;
-  text-align: center;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-.onboarding.hero .ob-mark {
-  display: block;
-  margin-bottom: 24px;
-  filter: drop-shadow(0 10px 24px rgba(255, 196, 94, 0.16));
-}
-.onboarding.hero .ob-title {
-  font-size: clamp(34px, 5vw, 54px);
-  font-weight: 700;
-  letter-spacing: -0.025em;
-  line-height: 1.06;
-  color: #f7f2e8;
-  text-wrap: balance;
-}
-.onboarding.hero .ob-sub {
-  font-size: 16px;
-  color: #98918a;               /* 5.9:1 on #141312 — AA at 16px */
-  max-width: 56ch;
-  margin-top: 14px;
-  line-height: 1.55;
-  text-wrap: pretty;
-}
-
-/* steps: three dark glass chips */
-.onboarding.hero .ob-steps {
-  margin-top: 36px;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
-  width: 100%;
-  text-align: left;
-}
-.onboarding.hero .ob-step {
-  position: relative;
-  padding: 15px 16px 14px;
-  border: 1px solid rgba(255, 255, 255, 0.07);
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.035);
-  backdrop-filter: blur(18px) saturate(140%);
-  -webkit-backdrop-filter: blur(18px) saturate(140%);
-  display: grid;
-  grid-template-columns: 30px 1fr;
-  column-gap: 12px;
-  align-items: start;
-  transition: border-color 0.4s var(--ease), background 0.4s var(--ease);
-}
-.onboarding.hero .ob-step:not(:last-child)::after { display: none; }
-.onboarding.hero .ob-step.now { border-color: rgba(255, 215, 106, 0.30); background: rgba(255, 215, 106, 0.05); }
-.onboarding.hero .ob-num {
-  background: rgba(255, 255, 255, 0.05);
-  border-color: rgba(255, 255, 255, 0.14);
-  color: #8a8580;
-}
-.onboarding.hero .ob-step.now .ob-num {
-  background: #ffd76a;
-  border-color: #ffd76a;
-  color: #141312;
-  box-shadow: 0 0 0 5px rgba(255, 215, 106, 0.14);
-  animation: ob-num-breathe 2.4s ease-in-out infinite;
-}
-@keyframes ob-num-breathe { 0%, 100% { box-shadow: 0 0 0 5px rgba(255, 215, 106, 0.14); } 50% { box-shadow: 0 0 0 8px rgba(255, 215, 106, 0.05); } }
-.onboarding.hero .ob-step.done .ob-num { background: #35c07f; border-color: #35c07f; color: #0b0c0f; }
-.onboarding.hero .ob-step.done:not(:last-child)::after { background: #35c07f; }
-.onboarding.hero .ob-name { font-size: 15.5px; color: #f2ede3; }
-.onboarding.hero .ob-desc { font-size: 12.5px; color: #948e86; max-width: 34ch; margin-top: 3px; }
-.onboarding.hero .ob-step.now .ob-name { color: #ffd76a; }
-.onboarding.hero .ob-step.done .ob-name { color: #b5aea4; }
-
-.onboarding.hero .ob-cta { margin-top: 32px; justify-content: center; }
-/* the hero's primary is the palette's own amber (design review: the console
-   blue reads default-Bootstrap against the warm stage) */
-.onboarding.hero #ob-cta-attach {
-  background: #ffd76a;
-  border-color: #ffd76a;
-  color: #141312;
-  font-size: 15px; padding: 12px 26px;
-  box-shadow: 0 8px 24px rgba(255, 215, 106, 0.22);
-}
-.onboarding.hero #ob-cta-attach:hover { background: #ffdf8f; border-color: #ffdf8f; color: #141312; }
-.onboarding.hero .note { color: #b5aea4; }
-
-/* the 82px progress footer — 72x3 track, CLI one-liner right */
-.onboarding.hero .ob-foot {
-  position: relative;
-  z-index: 1;                  /* above the vignette — the footer stays crisp */
-  min-height: 82px;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  flex-wrap: wrap;
-  padding: 16px 56px;
-  border-top: 1px solid rgba(255, 255, 255, 0.07);
-  background: rgba(255, 255, 255, 0.025);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-}
-.ob-track {
-  width: 72px;
-  height: 3px;
-  border-radius: 2px;
-  background: #333338;
-  overflow: hidden;
+  background: var(--ink);
+  color: #fff;
   flex: none;
 }
-.ob-track-fill {
-  display: block;
-  height: 100%;
-  width: 33%;
-  background: #ffd76a;
-  border-radius: 2px;
-  transition: width 0.6s var(--ease);
-}
-.ob-stage-label {
-  font-family: var(--mono);
+.footer-status.is-ok .footer-status-check { background: #0e9f5c; }
+.footer-status.is-warn .footer-status-check { background: #b45309; }
+.footer-status.is-bad .footer-status-check { background: #c22929; }
+
+/* step progress: tertiary 11px tabular + the 72x3 track on rgba(0,0,0,.09) */
+.step-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--tertiary);
   font-size: 11px;
-  color: #8a8580;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.onboarding.hero .ob-cli {
-  margin-left: auto;
-  border-color: rgba(255, 255, 255, 0.10);
-  background: rgba(255, 255, 255, 0.03);
+.progress-track {
+  width: 72px;
+  height: 3px;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.09);
+  overflow: hidden;
+  display: block;
+  flex: none;
 }
-.onboarding.hero .ob-cli code { color: #b5aea4; }
-.onboarding.hero .ob-cli .btn-copy { border-color: rgba(255, 255, 255, 0.14); color: #8a8580; }
-.onboarding.hero .ob-cli .btn-copy:hover { color: #f2ede3; border-color: rgba(255, 255, 255, 0.28); }
-
-.ob-cli {
-  display: inline-flex; align-items: center; gap: 8px;
-  border: 1px solid var(--hairline);
-  border-radius: 8px;
-  padding: 6px 10px;
-  background: var(--glass);
+.progress-track > span {
+  display: block;
+  height: 100%;
+  background: #333338;
+  transition: width 0.5s var(--ease);
 }
-.ob-cli code { font-family: var(--mono); font-size: 12px; color: var(--ink-2); }
-.btn-copy { padding: 3px 9px; font-size: 11px; }
 
-/* project display names */
+/* the attached-state status group: pills + the 4px files meter + quota */
+.foot-status-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+.foot-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 12px;
+  color: var(--secondary);
+  background: rgba(255, 255, 255, 0.6);
+  border: 1px solid rgba(10, 10, 10, 0.1);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+.foot-pill b { color: var(--ink); font-weight: 600; margin-left: 1px; }
+.foot-pill .dot { width: 6px; height: 6px; }
+.foot-pill .join-code { font-size: 12px; }
+#foot-quota-pill { padding: 0 13px 0 12px; }
+.foot-meter {
+  width: 72px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.09);
+  overflow: hidden;
+  flex: none;
+}
+.foot-meter > span {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: var(--ok);
+  transition: width 0.6s var(--ease);
+}
+
+/* the footer-dark portal: while an overlay is open the footer escapes the
+   shell flow, goes fixed above the scrim (z70) and turns opaque glass —
+   Space's drive-forge pattern */
+body.overlay-open .footer {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 70;
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  box-shadow: 0 -1px 0 var(--hairline);
+}
+
+/* project display names *//* project display names */
 .proj-name { font-weight: 600; }
 .proj-id { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); margin-top: 1px; }
 
@@ -994,18 +1105,12 @@ kbd {
 /* ---------- responsive ---------- */
 @media (max-width: 1020px) {
   .grid { grid-template-columns: 1fr; }
-  .ob-steps { grid-template-columns: 1fr; gap: 18px; }
-  .ob-step:not(:last-child)::after { left: 15px; right: auto; top: 34px; bottom: -14px; width: 2px; height: auto; }
-  /* the hero's 3-chip row stacks; the stage breathes at mobile padding */
-  .onboarding.hero .ob-steps { grid-template-columns: 1fr; }
-  .onboarding.hero .ob-inner { padding: 38px 26px 30px; }
-  .onboarding.hero .ob-foot { padding: 14px 26px; min-height: 0; }
-  .onboarding.hero .ob-cli { margin-left: 0; }
 }
+
 @media (max-width: 900px) {
   .frame { flex-direction: column; }
   .side {
-    width: 100%; height: auto; position: static;
+    width: 100%; height: auto; position: static; flex: none;
     border-right: none; border-bottom: 1px solid var(--hairline);
     backdrop-filter: none; -webkit-backdrop-filter: none;
     background: var(--paper);
@@ -1014,10 +1119,20 @@ kbd {
   .nav-item.is-active::before { display: none; }
   .main { padding: 24px 20px; }
   .stat-row { gap: 22px; }
+  /* the 82px footer wraps gracefully: the pills row scrolls, the primary
+     CTA keeps its own right-aligned row */
+  .footer { flex: 0 0 auto; height: auto; min-height: 82px; flex-wrap: wrap; padding: 12px 16px; gap: 10px; }
+  .footer-side { width: auto; }
+  .footer-side.right { width: 100%; justify-content: flex-end; }
+  .foot-status-group { overflow-x: auto; }
+  .stage { padding: 20px; }
+  .step-copy p { font-size: 15px; }
+  .ob-input-row .input { min-width: 0; width: 100%; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   * { animation: none !important; transition: none !important; }
-  body::before, body::after { animation: none; }
+  .bg-aurora { animation: none; }
   .card { opacity: 1; transform: none; }
+  .reveal { animation: none; }
 }
