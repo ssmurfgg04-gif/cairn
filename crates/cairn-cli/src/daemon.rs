@@ -53,6 +53,14 @@ pub struct DaemonState {
     pub flags: RwLock<Vec<(String, String)>>,
     /// WO6-3: live recall jobs (ctl RecallStatus surface); shared with background tasks.
     pub recall_jobs: std::sync::Arc<RwLock<HashMap<String, crate::daemon::RecallJob>>>,
+    /// Doctor report cache (round 27, the nle-matrix W1 lesson): a full
+    /// `doctor::collect` opens the store, samples the CAS, walks the
+    /// outbox — running it on EVERY status RPC starved the ctl thread
+    /// under ingest load (the sync converged; the status poll timed out
+    /// for 600s — `cairn dash status error` in the field). 5s freshness:
+    /// a status surface wants cheap-and-recent, the deep check is the
+    /// `doctor` command itself.
+    pub doctor_cache: RwLock<Option<(std::time::Instant, doctor::Report)>>,
 }
 
 impl DaemonState {
@@ -62,7 +70,25 @@ impl DaemonState {
             started: Instant::now(),
             flags: RwLock::new(default_flags()),
             recall_jobs: Arc::new(RwLock::new(HashMap::new())),
+            doctor_cache: RwLock::new(None),
         }
+    }
+
+    /// The doctor report, 5s-fresh. See the field's doc for why status
+    /// must not pay the full collect on every call.
+    pub(crate) async fn cached_doctor(&self) -> doctor::Report {
+        const FRESH_MS: u128 = 5_000;
+        {
+            let cache = self.doctor_cache.read().await;
+            if let Some((at, rep)) = cache.as_ref() {
+                if at.elapsed().as_millis() < FRESH_MS {
+                    return rep.clone();
+                }
+            }
+        }
+        let rep = doctor::collect(&self.home);
+        *self.doctor_cache.write().await = Some((std::time::Instant::now(), rep.clone()));
+        rep
     }
 }
 
@@ -99,7 +125,8 @@ impl CtlStatus for CtlStatusSvc {
         &self,
         _request: Request<StatusRequest>,
     ) -> Result<Response<StatusResponse>, Status> {
-        let rep = doctor::collect(&self.state.home);
+        // round 27: cached — the W1 starvation fix (see DaemonState)
+        let rep = self.state.cached_doctor().await;
         // attached projects: live runtimes first, then any durable binding (crash-resume
         // window where the loop hasn't spawned yet)
         let mut list: Vec<ProjectStatus> = Vec::new();
@@ -509,7 +536,7 @@ impl CtlDiagnostics for CtlDiagSvc {
         &self,
         _request: Request<DoctorRequest>,
     ) -> Result<Response<DoctorReport>, Status> {
-        let rep = doctor::collect(&self.state.home);
+        let rep = self.state.cached_doctor().await;
         Ok(Response::new(DoctorReport {
             checks: rep
                 .checks
