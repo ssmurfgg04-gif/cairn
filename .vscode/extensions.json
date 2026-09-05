@@ -1,0 +1,7 @@
+{
+  // devx top-10 #9: recommended extensions for the Cairn workspace
+  "recommendations": [
+    "rust-lang.rust-analyzer",
+    "tamasfe.even-better-toml"
+  ]
+}

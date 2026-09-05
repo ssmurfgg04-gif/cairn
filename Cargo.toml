@@ -25,11 +25,28 @@ exclude = ["crates/cairn-x/fuzz", "crates/cairn-app"]
 version = "4.0.0"
 edition = "2021"
 license = "Apache-2.0"
-rust-version = "1.80"
+# 1.85 floor (from 1.80): modern toolchains carry the compiler-side wins the
+# devx round documents (cheaper wakers, faster incr-comp); the toolchain pin
+# lives in rust-toolchain.toml (1.98.0) and CI pins per-job.
+rust-version = "1.85"
 
 [workspace.dependencies]
 # async runtime / gRPC / HTTP
-tokio = { version = "1.40", features = ["full"] }
+# `io-uring` (ADR-0025): tokio's io_uring driver — Linux-only, UNSTABLE, gated
+# behind `--cfg tokio_unstable` which .cargo/config.toml sets for every build.
+# Runtime-probed with automatic fallback (epoll/ threadpool) on kernels/runtimes
+# without ring support. Requires tokio >= 1.53 for the feature; Cargo.lock pins 1.53.1.
+tokio = { version = "1.40", features = ["full", "io-uring"] }
+# CPU offload lane (ADR-0025, PostHog pattern): hashing/chunking runs on rayon
+# via spawn+oneshot so tokio I/O workers never park on CPU work.
+rayon = "1.10"
+# Global allocator swap (ADR-0026): per-thread heaps, 8B header, NUMA-aware.
+# johal.in/internals-rust-185-memory-allocator: 42ns vs 68ns at 128B,
+# p99 89ns vs 142ns (38%), and — the quiet killer — 12-week heap
+# fragmentation 20.7% vs jemalloc-style 67%: a long-lived daemon stops
+# bleeding RSS to fragmentation. Bind in cairn-cli's main.rs (the shipped
+# binary: CLI + daemon + server in one).
+mimalloc = "0.1"
 tonic = { version = "0.12", features = ["transport", "codegen", "prost", "tls"] }
 prost = "0.13"
 axum = { version = "0.7", features = ["http1", "json", "query"] }
@@ -40,6 +57,11 @@ bytes = "1"
 
 # storage
 rusqlite = { version = "0.32", features = ["bundled"] }
+# r2d2 reader pool (ADR-0025): 0.25.x is the release line built against OUR
+# rusqlite 0.32 — a version mismatch would duplicate the rusqlite crate and
+# break the PooledConnection<->Connection type identity.
+r2d2 = "0.8"
+r2d2_sqlite = "0.25"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
 memmap2 = "0.9"
 
@@ -90,22 +112,32 @@ prost-build = "0.13"
 protoc-bin-vendored = "3"
 
 [profile.dev]
+# compile-speed-first dev profile (devx round, top-10 #5): opt-level 0 (default),
+# no debug info (fast links), incremental ON for the edit-build loop. CI pins
+# CARGO_INCREMENTAL=0 (ci.yml env) where determinism + cache-ability win.
 debug = false
-incremental = false
+incremental = true
 
 [profile.test]
 debug = false
 
 [profile.release]
-opt-level = 2
-lto = "thin"
+# runtime + size tuned (devx top-10 #5): fat LTO + codegen-units=1 trade release
+# build time for cross-crate optimization; `strip` cuts ~30% of the binary;
+# `panic = "abort"` drops unwind tables (cargo forces unwind for test/bench
+# profiles, so `cargo test` — incl. `--release` — is unaffected; release
+# DOCTESTS are the one unsupported combination; CI never runs them).
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
 strip = true
 
 [workspace.lints.rust]
 unsafe_code = "deny"
 # `cfg(kani)` gates the BMC harnesses (crates/cairn-core/src/proofs.rs) — set by the
 # Kani driver, invisible to normal rustc without this declaration (WO6-invariants).
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)', 'cfg(tokio_unstable)'] }
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }

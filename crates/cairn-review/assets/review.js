@@ -22,6 +22,9 @@
     me: null,           // reviewer name (localStorage)
     lastFrame: -1,
     filter: "all",      // all | OPEN | RESOLVED
+    query: "",          // search: body, #tags, author (ADR-0026)
+    tag: "",            // active #tag chip ("")
+    sort: "time",       // time (timecode asc) | newest
   };
 
   const video = $("video");
@@ -213,9 +216,19 @@
     list.replaceChildren();
     const all = state.session.comments || [];
     // frame order within the active version; other versions muted at the end
-    const active = all
+    // Frame.io-round filters (ADR-0026): text search over body+#tags+author,
+    // an active #tag chip, and a timecode/newest sort — all frontend-carried
+    // (the note contract, blake3 of anchor|body|author, stays frozen).
+    const q = state.query.trim().toLowerCase();
+    let active = all
       .filter((c) => state.version && c.version === state.version.number)
-      .sort((a, b) => a.frame - b.frame || a.created_ms - b.created_ms);
+      .filter((c) => {
+        if (state.tag && !(" " + c.body + " ").toLowerCase().includes(" " + state.tag + " ")) return false;
+        if (q && !(c.body.toLowerCase().includes(q) || (c.author || "").toLowerCase().includes(q))) return false;
+        return true;
+      });
+    if (state.sort === "newest") active.sort((a, b) => b.created_ms - a.created_ms);
+    else active.sort((a, b) => a.frame - b.frame || a.created_ms - b.created_ms);
     const other = all.filter((c) => state.version && c.version !== state.version.number);
 
     const visible = (c) => state.filter === "all" || c.status === state.filter;
@@ -260,6 +273,16 @@
     const row = el("li", "crow" + (c.status === "RESOLVED" ? " resolved" : "") +
       (isActive ? "" : " dim"));
 
+    // Frame.io's core ask (ADR-0026): clicking ANYWHERE on the row jumps the
+    // playhead — the whole row is the seek target, not just the timecode.
+    if (isActive) {
+      row.classList.add("seekable");
+      row.addEventListener("click", () => {
+        seekFrame(state.version, c.frame);
+        video.pause();
+      });
+    }
+
     const left = el("div");
     left.append(el("span", "avatar", initials(c.author)));
 
@@ -283,6 +306,7 @@
     headLine.append(tc);
     const stat = el("span", "cstat " + c.status, c.status);
     headLine.append(stat);
+    headLine.append(copyLinkBtn(c, isActive));
     const when = relTime(c.created_ms);
     const meta = el("span", "cmeta");
     const b = el("b", "", c.author);
@@ -750,6 +774,90 @@
       refresh();
     }
   });
+
+  // ---------- Frame.io round (ADR-0026): search, tag chips, sort, copy link, CSV ----------
+
+  // copy-link button lives on the timecode head line (per row)
+  function copyLinkBtn(c, isActive) {
+    const b = el("button", "clink", "link");
+    b.type = "button";
+    b.title = "copy link to this timestamp";
+    b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      const url = new URL(location.href);
+      url.searchParams.set("t", String(c.frame));
+      url.searchParams.set("v", String(c.version));
+      navigator.clipboard.writeText(url.toString()).then(() => {
+        b.textContent = "copied";
+        setTimeout(() => (b.textContent = "link"), 1200);
+      }).catch(() => {
+        b.textContent = url.toString();
+        setTimeout(() => (b.textContent = "link"), 2500);
+      });
+    });
+    if (!isActive) b.disabled = true;
+    return b;
+  }
+
+  // deep link: ?t=<frame>&v=<version> seeks on load (copy-link target)
+  (function applyDeepLink() {
+    const p = new URLSearchParams(location.search);
+    const t = parseInt(p.get("t") || "", 10);
+    const v = parseInt(p.get("v") || "", 10);
+    if (!Number.isFinite(t) || t < 0) return;
+    const trySeek = () => {
+      if (!state.version) return requestAnimationFrame(trySeek);
+      if (Number.isFinite(v) && state.version.number !== v) {
+        const hit = (state.session.versions || []).find((x) => x.number === v);
+        if (hit) pickVersion(hit, false);
+      }
+      seekFrame(state.version, t);
+      video.pause();
+    };
+    requestAnimationFrame(trySeek);
+  })();
+
+  const search = $("search");
+  if (search) {
+    search.addEventListener("input", () => {
+      state.query = search.value;
+      renderComments();
+    });
+  }
+  const sortBtn = $("sort");
+  if (sortBtn) {
+    sortBtn.addEventListener("click", () => {
+      state.sort = state.sort === "time" ? "newest" : "time";
+      sortBtn.textContent = state.sort === "time" ? "tc" : "new";
+      sortBtn.setAttribute("aria-label", "sort by " +
+        (state.sort === "time" ? "timecode" : "newest first"));
+      renderComments();
+    });
+  }
+  const exportBtn = $("export");
+  if (exportBtn) {
+    exportBtn.addEventListener("click", () => {
+      // CSV of the FILTERED active-version view (Frame.io's filtered export)
+      const all = (state.session.comments || [])
+        .filter((c) => state.version && c.version === state.version.number);
+      const q = state.query.trim().toLowerCase();
+      const rows = all.filter((c) =>
+        (!state.tag || (" " + c.body + " ").toLowerCase().includes(" " + state.tag + " ")) &&
+        (!q || c.body.toLowerCase().includes(q) || (c.author || "").toLowerCase().includes(q)) &&
+        (state.filter === "all" || c.status === state.filter));
+      const esc = (s) => '"' + String(s).replace(/"/g, '""') + '"';
+      const lines = [esc("timecode") + "," + esc("frame") + "," + esc("author") + "," +
+        esc("status") + "," + esc("note")];
+      rows.forEach((c) => lines.push([esc(c.tc), c.frame, esc(c.author),
+        esc(c.status), esc(c.body)].join(",")));
+      const blob = new Blob([lines.join("\r\n") + "\r\n"], { type: "text/csv" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "cairn-review-v" + (state.version ? state.version.number : "?") + ".csv";
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    });
+  }
 
   boot();
 })();

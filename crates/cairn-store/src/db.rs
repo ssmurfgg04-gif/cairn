@@ -58,6 +58,13 @@ impl Store {
             .map_err(|e| CairnError::new(cairn_core::ErrorKind::Io, format!("wal: {e}")))?;
         conn.pragma_update(None, "synchronous", "NORMAL")
             .map_err(|e| CairnError::new(cairn_core::ErrorKind::Io, format!("synchronous: {e}")))?;
+        // Reader-pool round pragmas (ADR-0026, sqlite-kit convention): 32 MiB
+        // page cache (the header/serve path reads multi-MB blobs; the default
+        // ~2 MiB cache thrashes on every serve) + temp tables in memory.
+        conn.pragma_update(None, "cache_size", "-32000")
+            .map_err(|e| CairnError::new(cairn_core::ErrorKind::Io, format!("cache_size: {e}")))?;
+        conn.pragma_update(None, "temp_store", "MEMORY")
+            .map_err(|e| CairnError::new(cairn_core::ErrorKind::Io, format!("temp_store: {e}")))?;
         let store = Store {
             conn: std::sync::Arc::new(Mutex::new(conn)),
             root: root.to_path_buf(),

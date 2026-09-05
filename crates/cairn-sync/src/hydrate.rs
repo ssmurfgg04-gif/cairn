@@ -195,7 +195,7 @@ pub async fn hydrate_one_into<W: std::io::Write>(
     } else {
         let hash = Hash::from_hex(manifest_hash_hex)
             .ok_or_else(|| CairnError::new(ErrorKind::ManifestFormat, "bad manifest hash hex"))?;
-        let bytes = match cas.get(&hash) {
+        let bytes = match cas.get_async(&hash).await {
             Ok(b) => b,
             Err(_) => {
                 let fetched = plane.get_manifest(tenant, manifest_hash_hex).await?;
@@ -326,7 +326,7 @@ async fn collect_entries_recursive(
         if cache.contains_key(&c.hash.hex()) {
             continue;
         }
-        let bytes = match cas.get(&c.hash) {
+        let bytes = match cas.get_async(&c.hash).await {
             Ok(b) => b,
             Err(_) => plane.get_manifest(tenant, &c.hash.hex()).await?,
         };

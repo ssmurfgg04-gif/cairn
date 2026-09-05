@@ -39,11 +39,12 @@ pub fn for_project_device(
     device_id: &str,
 ) -> Result<Arc<CairnFs>, CairnError> {
     // WO6-5 reader-pool fix: FUSE reads fan in concurrently — dedicated readers
-    // keep header serves off the store's single write connection
+    // keep header serves off the store's single write connection. 8 readers
+    // (ADR-0025): the r2d2 pool caps there, matching the burst bench config.
     let headers = cairn_store::HeaderCache::with_read_pool(
         store.conn_handle(),
         &store.root().join("db.sqlite"),
-        4,
+        8,
     );
     Ok(Arc::new(CairnFs::with_device(
         store, cas, headers, project_id, device_id,

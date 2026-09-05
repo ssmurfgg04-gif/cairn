@@ -7,6 +7,13 @@ description = "Cairn local store: chunk CAS + client SQLite (WAL) + outbox + hea
 
 [dependencies]
 cairn-core = { path = "../cairn-core" }
+# async file lane for CAS reads (ADR-0025): tokio::fs routes through the
+# io_uring driver when armed (tokio `io-uring` feature, Linux, probed)
+tokio = { workspace = true }
+# r2d2 reader pool for the header cache (ADR-0025): 0.25.x is the line built
+# against our rusqlite 0.32 — keeps a single rusqlite crate in the graph
+r2d2 = { workspace = true }
+r2d2_sqlite = { workspace = true }
 rusqlite = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }

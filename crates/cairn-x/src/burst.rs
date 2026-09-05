@@ -62,8 +62,9 @@ fn build_store(args: &BurstArgs) -> anyhow::Result<BuiltStore> {
     let conn = store.conn_handle();
     let cas = Cas::open(&dir.path().join("blobs"), conn.clone())?;
     // the gate measures the PRODUCTION configuration: dedicated query-only readers
-    // (WO6-5 reader-pool fix), not the serialized shared-connection mode
-    let headers = HeaderCache::with_read_pool(conn, &store_root.join("db.sqlite"), 4);
+    // (WO6-5 reader-pool fix; 8-wide r2d2 pool, ADR-0025), not the serialized
+    // shared-connection mode
+    let headers = HeaderCache::with_read_pool(conn, &store_root.join("db.sqlite"), 8);
 
     let mut paths = Vec::with_capacity(args.files);
     let mut contents = Vec::with_capacity(args.files);

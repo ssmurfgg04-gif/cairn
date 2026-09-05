@@ -27,6 +27,11 @@ async-trait = { workspace = true }
 tokio-stream = { version = "0.1", features = ["sync"] }
 tokio = { workspace = true }
 clap = { workspace = true }
+# Global allocator (ADR-0026, Johal's 1.85 memory round): mimalloc's
+# per-thread heaps + 8B header beat the system allocator on exactly our
+# shape — many small allocations across worker threads (presence, notes,
+# SQLite rows) with 128B-class payloads.
+mimalloc = { workspace = true }
 uuid = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }

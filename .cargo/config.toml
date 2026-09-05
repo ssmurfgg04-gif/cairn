@@ -1,0 +1,38 @@
+# Cargo build configuration (devx round — see docs/DEVELOPING.md).
+#
+# The `--cfg tokio_unstable` flag is REQUIRED: tokio's `io-uring` driver
+# feature (enabled in the workspace manifest, ADR-0025) hard-errors without
+# it. This is an opt-in to tokio's unstable contract; Cargo.lock pins the
+# exact tokio version (1.53.1) so the surface cannot drift under us.
+#
+# ⚠ RUSTFLAGS precedence: any env RUSTFLAGS *replaces* these flags — if you
+# set RUSTFLAGS yourself, include `--cfg tokio_unstable` or the build breaks
+# loudly (tokio's compile_error! gate is the safety net).
+
+[build]
+# applies to every target that has no target-specific rustflags below
+rustflags = ["--cfg", "tokio_unstable"]
+
+# ---------------------------------------------------------------------------
+# OPTIONAL faster linker (top-10 #3). Uncomment on hosts that have clang+lld
+# (or mold) — big binaries like cairn-cli link in a fraction of the time.
+# Kept commented by default: the default `cc` path must work on every dev
+# box and CI runner (portability beats a shaved link on the default path).
+#
+# NOTE: when uncommented this REPLACES [build].rustflags for this target —
+# the `--cfg tokio_unstable` entry must stay.
+# ---------------------------------------------------------------------------
+# [target.x86_64-unknown-linux-gnu]
+# linker = "clang"
+# rustflags = [
+#     "--cfg", "tokio_unstable",
+#     "-C", "link-arg=-fuse-ld=lld",     # or: -fuse-ld=mold
+# ]
+
+# aarch64 linux hosts: same idea
+# [target.aarch64-unknown-linux-gnu]
+# linker = "clang"
+# rustflags = [
+#     "--cfg", "tokio_unstable",
+#     "-C", "link-arg=-fuse-ld=lld",
+# ]

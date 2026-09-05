@@ -691,3 +691,25 @@ kbd {
 @media (max-width: 720px) {
   .keys-full li { grid-template-columns: 1fr; gap: 2px; }
 }
+
+/* ---- Frame.io round (ADR-0026): search / sort / export / tag chips / row seek ---- */
+.notes-tools { display: flex; gap: 8px; align-items: center; padding: 8px 16px 0 16px; }
+.notes-tools .search {
+  flex: 1; min-width: 0; height: 30px; border-radius: 8px;
+  border: 1px solid rgba(255,255,255,.09); background: rgba(255,255,255,.03);
+  color: #f2ede3; padding: 0 10px; font: 12px/1 var(--ui, system-ui, sans-serif);
+  outline: none;
+}
+.notes-tools .search:focus { border-color: rgba(47,155,255,.55); }
+.notes-tools .search::placeholder { color: rgba(242,237,227,.35); }
+.tagbar { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 16px 0 16px; }
+.tagbar:empty { display: none; }
+.crow.seekable { cursor: pointer; }
+.crow.seekable:hover { background: rgba(47,155,255,.06); }
+.clink {
+  border: none; background: none; color: rgba(47,155,255,.75); font-size: 10px;
+  letter-spacing: .06em; text-transform: uppercase; padding: 1px 4px; cursor: pointer;
+  border-radius: 4px;
+}
+.clink:hover { color: #65b3ff; background: rgba(47,155,255,.12); }
+.clink:disabled { color: rgba(242,237,227,.25); cursor: default; background: none; }

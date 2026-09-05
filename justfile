@@ -80,3 +80,21 @@ soak-5gb SIZE_MB="5000":
 # quick validation variant (CI-parity scale, ~2GB disk)
 soak-quick:
     SIZE_MB=400 bash scripts/soak.sh
+
+# ---- devx round (top-10 setup) — see docs/DEVELOPING.md ----
+# #7: per-crate compile-time HTML report — find which crate ate the build
+timings:
+    cargo build --workspace --timings
+    @echo "report: target/cargo-timings/cargo-timing.html"
+
+# #6: zombie-dependency sweep (unused entries in Cargo.toml)
+machete:
+    cargo machete --workspace
+
+# #2: fast feedback loop — type+borrow check only, no codegen, no link
+check-fast:
+    cargo check --workspace
+
+# optional #3: accelerated link for hosts with clang+lld (or mold).
+# see .cargo/config.toml for the committed commented block + the RUSTFLAGS
+# precedence warning (--cfg tokio_unstable must survive any override).
