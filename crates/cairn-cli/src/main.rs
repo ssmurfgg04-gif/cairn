@@ -28,8 +28,10 @@ use clap::{Parser, Subcommand};
     version
 )]
 pub struct Cli {
-    /// Data directory (default ~/.cairn)
-    #[arg(long, env = "CAIRN_HOME")]
+    /// Data directory (default ~/.cairn). Global: works before OR after
+    /// the subcommand (`cairn --home X status` and `cairn status --home X`
+    /// both parse — the round-27 CLI retro found users typing both).
+    #[arg(long, env = "CAIRN_HOME", global = true)]
     pub home: Option<String>,
 
     #[command(subcommand)]
@@ -99,6 +101,10 @@ pub enum Cmd {
         /// Output JSON
         #[arg(long)]
         json: bool,
+        /// Daemon ctl address (loopback) — overrides the endpoint the
+        /// daemon persisted in the home store
+        #[arg(long, default_value = "http://127.0.0.1:17777")]
+        ctl: String,
     },
     /// Run one sync pass over all attached roots
     Sync {
@@ -168,9 +174,10 @@ pub enum Cmd {
     ChunkCount { path: String },
     /// GC shadow-mode report (beta gate: must run clean)
     GcShadowReport {
-        /// Tenant id
+        /// Tenant id (optional: defaults to THIS device's enrolled tenant —
+        /// the round-27 CLI retro hit `missing --tenant` with no hint)
         #[arg(long)]
-        tenant: String,
+        tenant: Option<String>,
         /// Optional project filter
         #[arg(long)]
         project: Option<String>,
@@ -309,7 +316,8 @@ pub enum Cmd {
         /// token-gated web player for guests. OFF unless set — bind
         /// 0.0.0.0:17778-style addresses for LAN/VPN clients. Every route
         /// fails closed without a valid guest link token.
-        #[arg(long)]
+        /// (`--review` is an alias — the round-27 CLI retro's most-typed form)
+        #[arg(long, alias = "review")]
         review_addr: Option<String>,
         /// Signal server (ADR-0017) — join every project's swarm for
         /// peer-first hydration (LAN-speed blocks, zero cloud egress)
@@ -692,8 +700,12 @@ pub mod notes {
     pub enum NotesCmd {
         /// Import a review-tool CSV (Frame.io export etc.) into a notes file
         Import {
-            /// CSV file to import
-            csv: String,
+            /// CSV file (positional form: `cairn notes import rows.csv`)
+            csv: Option<String>,
+            /// CSV file (flag form: `cairn notes import --csv rows.csv`) —
+            /// the round-27 CLI retro found users typing the flag first
+            #[arg(long = "csv")]
+            csv_flag: Option<String>,
             /// Output .notes.json (default: <csv stem>.notes.json)
             #[arg(long)]
             out: Option<String>,
@@ -994,18 +1006,26 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
         Cmd::Notes { cmd } => run_notes(cmd),
         Cmd::Lock { project, path } => run_lock(&home, &project, &path),
         Cmd::Unlock { project, path } => run_unlock(&home, &project, &path),
-        Cmd::Status { json } => {
+        Cmd::Status { json, ctl } => {
             // live daemon view first (projects + files_synced); doctor fallback offline.
-            // ctl endpoint comes from the home store (daemon persists it at boot), so
-            // multi-daemon machines poll THEIR daemon, not a hardcoded port.
-            let ctl =
-                cairn_store::Store::open(&home, std::sync::Arc::new(cairn_core::clock::WallClock))
-                    .ok()
-                    .and_then(|s| s.meta_get("ctl/addr"))
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or_else(|| "http://127.0.0.1:17777".into());
+            // --ctl wins; else the endpoint the daemon persisted in the home
+            // store at boot (multi-daemon machines poll THEIR daemon, not a
+            // hardcoded port); else the default port.
+            let ctl_addr = match ctl.as_str() {
+                // not passed (clap default): honor the endpoint the daemon
+                // persisted — multi-daemon machines poll THEIR daemon
+                "http://127.0.0.1:17777" => cairn_store::Store::open(
+                    &home,
+                    std::sync::Arc::new(cairn_core::clock::WallClock),
+                )
+                .ok()
+                .and_then(|s| s.meta_get("ctl/addr"))
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "http://127.0.0.1:17777".into()),
+                explicit => explicit.to_string(),
+            };
             if let Ok(mut c) =
-                cairn_proto::pb::ctl_status_client::CtlStatusClient::connect(ctl).await
+                cairn_proto::pb::ctl_status_client::CtlStatusClient::connect(ctl_addr.clone()).await
             {
                 if let Ok(out) = c.status(cairn_proto::pb::StatusRequest {}).await {
                     let s = out.into_inner();
@@ -1326,8 +1346,24 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
             }
             Ok(())
         }
-        Cmd::GcShadowReport { .. } => {
-            anyhow::bail!("gc-shadow report runs against the storage server (server-side RPC; ADR'd in docs/ctl-api.md — not silently missing)")
+        Cmd::GcShadowReport { tenant, project } => {
+            // tenant hint: the enrolled identity carries one; no need to
+            // demand the flag when the store knows it
+            let tid = tenant.clone().or_else(|| {
+                cairn_store::Store::open(&home, std::sync::Arc::new(cairn_core::clock::WallClock))
+                    .ok()
+                    .and_then(|s| crate::projects::load_identity(&s))
+                    .map(|i| i.tenant_id)
+            });
+            anyhow::bail!(
+                "gc-shadow report runs against the storage server (server-side RPC; ADR'd in \
+                 docs/ctl-api.md — not silently missing){}",
+                match (tid, project) {
+                    (Some(t), Some(p)) => format!(" — would query tenant {t}, project {p}"),
+                    (Some(t), None) => format!(" — would query tenant {t}"),
+                    (None, _) => String::new(),
+                }
+            )
         }
     }
 }
@@ -1744,11 +1780,18 @@ fn run_notes(cmd: notes::NotesCmd) -> anyhow::Result<()> {
 
     match cmd {
         notes::NotesCmd::Import {
-            csv: csv_path,
+            csv: csv_pos,
+            csv_flag,
             out,
             author,
             rate,
         } => {
+            // positional OR --csv flag (round 27 CLI retro: both parse)
+            let csv_path = csv_pos.or(csv_flag).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "no csv file given — usage: cairn notes import rows.csv  (or --csv rows.csv)"
+                )
+            })?;
             let text = std::fs::read_to_string(&csv_path)
                 .map_err(|e| anyhow::anyhow!("{csv_path}: {e}"))?;
             let set = csv::import(&text, &author, i128::from(rate)).map_err(|errs| {

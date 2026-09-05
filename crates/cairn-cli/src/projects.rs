@@ -664,7 +664,35 @@ async fn connect_cfapi(
 ) {
 }
 
+/// Volume-liveness for resume self-heal: does the filesystem the path
+/// lives on still exist? A deleted folder on a LIVE volume is dead (self-
+/// heal detach); a folder on an UNMOUNTED drive (external disk unplugged,
+/// D: absent) is not dead — it comes back when the drive returns, so the
+/// binding must survive. Walk ancestors: if ANY ancestor exists the
+/// volume is present; if even the root of the path's drive (or the
+/// nearest existing parent) is gone, the volume is absent.
+fn volume_alive(path: &Path) -> bool {
+    let mut anc = Some(path);
+    while let Some(p) = anc {
+        if p.exists() {
+            return true;
+        }
+        anc = p.parent();
+    }
+    false
+}
+
 /// Re-attach all bound workspaces at daemon boot (crash-resume path).
+///
+/// Round 27 self-heal: a binding whose folder is GONE (deleted project
+/// dir, stale temp-dir root like `AppData\Local\Temp\opencode\...` left
+/// behind by an editor sandbox, or a wedged CfAPI reparse that no longer
+/// answers `is_dir()`) is DETACHED automatically at boot. Before this,
+/// the dead binding survived forever: `status` showed `error`, the
+/// dashboard banner denied (the rbac read of its members.json), and
+/// onboarding never appeared — the console was stuck on a ghost. A
+/// binding on a MISSING VOLUME (external drive unplugged) is kept: the
+/// drive comes back, and keeping the binding is why resume exists.
 pub async fn resume_all(home: &Path) -> usize {
     let Ok(store) = Store::open(home, Arc::new(WallClock)) else {
         return 0;
@@ -692,7 +720,16 @@ pub async fn resume_all(home: &Path) -> usize {
         };
         let path = PathBuf::from(&root);
         if !path.is_dir() {
-            tracing::warn!(project = %pid, root = %root, "bound workspace missing; skipping");
+            if !volume_alive(&path) {
+                // volume gone (external/unmounted drive): keep the
+                // binding — resume is exactly for this shape
+                tracing::warn!(project = %pid, root = %root, "bound workspace's volume is absent (drive unplugged?); keeping the binding");
+                continue;
+            }
+            // folder deleted on a live volume (or a reparse that no
+            // longer resolves): the binding is a ghost — heal it off
+            tracing::warn!(project = %pid, root = %root, "bound workspace no longer exists; self-heal detach (re-attach it with `cairn attach` when the folder is back)");
+            let _ = detach(home, &pid).await;
             continue;
         }
         let _ = set_workspace(&store, &pid, &path);
@@ -1320,5 +1357,43 @@ async fn run_loop(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod resume_tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn volume_alive_classifies_dead_folder_vs_live_ancestors() {
+        // a folder whose parent exists -> the volume is alive (the folder
+        // itself is deleted: self-heal detach territory)
+        let live = std::env::temp_dir();
+        let gone = live.join("cairn-gone-forever-xyz");
+        assert!(volume_alive(&gone), "parent exists -> volume alive");
+
+        // the temp dir itself -> alive
+        assert!(volume_alive(&live));
+
+        // a path with NO existing ancestor at all: the volume is gone
+        // (Windows shape: an unplugged drive's root does not answer
+        // exists()). A RELATIVE path approximates this portably — the
+        // walk bottoms out at "" which never exists; absolute paths
+        // always have "/" alive on unix, which is exactly the
+        // deleted-folder-on-live-volume case that self-heals.
+        let ghost = Path::new("nonexistent-volume-zzz/cairn/proj");
+        assert!(!volume_alive(ghost), "no ancestor exists -> volume gone");
+    }
+
+    #[test]
+    fn volume_alive_unc_and_relative_shapes() {
+        // UNC-ish strings never exist here, and their parent walk bottoms
+        // out without an existing ancestor -> gone (kept binding, the
+        // conservative branch)
+        assert!(!volume_alive(Path::new("\\\\?\\ZZ:\\proj")));
+        // relative single-segment: parent is "" which never exists, and
+        // the segment itself does not exist in cwd -> gone
+        assert!(!volume_alive(Path::new("definitely-not-here-xyz")));
     }
 }

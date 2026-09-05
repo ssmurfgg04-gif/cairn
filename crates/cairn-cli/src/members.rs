@@ -15,11 +15,83 @@ pub fn members_path(root: &Path) -> PathBuf {
     root.join(".cairn").join("members.json")
 }
 
-pub fn load(root: &Path) -> anyhow::Result<MemberFile> {
+/// How a members-file read failed — the guard policy differs per shape
+/// (round 27, the stale-CfAPI-reparse lesson):
+///
+/// * `Missing` — no file (or no root at all): the barnstorm default
+///   (every device an Editor) applies. Fail-OPEN.
+/// * `Unreadable` — the bytes could not even be READ: a broken CfAPI
+///   reparse point, a flaky network drive, a transient filter-manager
+///   HRESULT (`0x801F0005`). This is NOT corruption — the file may be
+///   perfectly fine behind a wedged placeholder. Fail-open for
+///   read-shaped commands; the audit ledger records the bypass.
+/// * `Corrupt` — the bytes read but the JSON does not parse: a genuinely
+///   corrupt members file. Fail-CLOSED (parse error propagates).
+#[derive(Debug)]
+pub enum LoadError {
+    /// File or root absent — default Editor applies.
+    Missing,
+    /// IO read failure (reparse/filter/transient) — not corruption.
+    Unreadable(String),
+    /// Parse failure — corruption. Fail closed.
+    Corrupt(String),
+}
+
+impl std::fmt::Display for LoadError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LoadError::Missing => write!(f, "no members file"),
+            LoadError::Unreadable(e) => write!(f, "members unreadable (transient/reparse): {e}"),
+            LoadError::Corrupt(e) => write!(f, "members corrupt: {e}"),
+        }
+    }
+}
+
+/// Classify a read failure into the three policy shapes. A missing ROOT
+/// (detach after the folder was deleted, a broken reparse whose
+/// `is_dir()` is false) reads as `Missing` — there is no authority to
+/// enforce, so the default Editor applies.
+fn classify_read_err(root: &Path, e: &std::io::Error) -> LoadError {
+    if e.kind() == std::io::ErrorKind::NotFound {
+        return LoadError::Missing;
+    }
+    // The root itself gone/unreadable: no authority exists on disk.
+    if !root.is_dir() {
+        return LoadError::Missing;
+    }
+    // Windows: a wedged CfAPI placeholder surfaces as raw OS errors
+    // (HRESULT -2145452027 / 0x801F0005 "invalid name request",
+    // ERROR_CLOUD_FILE_INVALID_REQUEST, or ERROR_ACCESS_DENIED while the
+    // filter reconnects). Anything we cannot READ is unproven — treat as
+    // transient, never as corruption: only a PARSE failure proves the
+    // bytes are wrong.
+    LoadError::Unreadable(format!("{e}"))
+}
+
+/// Load with policy classification: `Ok(file)` means the file READ and
+/// parsed. `Err(Missing)` (absent file/root — the barnstorm default),
+/// `Err(Unreadable)` (transient/reparse IO — fail-open with warning)
+/// and `Err(Corrupt)` (fail-closed) are the three policy shapes
+/// callers translate per-action.
+pub fn load_classified(root: &Path) -> Result<MemberFile, LoadError> {
     match std::fs::read(members_path(root)) {
-        Ok(b) => MemberFile::from_json(&b).map_err(anyhow::Error::msg),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(MemberFile::default()),
-        Err(e) => Err(anyhow::anyhow!("read members: {e}")),
+        Ok(b) => MemberFile::from_json(&b).map_err(LoadError::Corrupt),
+        Err(e) => Err(classify_read_err(root, &e)),
+    }
+}
+
+/// Strict load (fail-closed on corrupt, fail-open on absent):
+/// the CLI-side guard. An UNREADABLE file is an error here — the CLI
+/// runs on the user's box where a wedged root should be surfaced, not
+/// silently bypassed (the daemon-side guard has the richer policy).
+pub fn load(root: &Path) -> anyhow::Result<MemberFile> {
+    match load_classified(root) {
+        Ok(f) => Ok(f),
+        Err(LoadError::Missing) => Ok(MemberFile::default()),
+        Err(LoadError::Corrupt(e)) => Err(anyhow::anyhow!("{e}")),
+        Err(LoadError::Unreadable(e)) => Err(anyhow::anyhow!(
+            "{e} — the folder may be a broken sync root; try `cairn detach` then re-attach"
+        )),
     }
 }
 
@@ -182,5 +254,40 @@ mod tests {
         // removal
         cmd_remove(&root, "dev-b", Some("dev-a")).unwrap();
         assert!(cmd_remove(&root, "dev-b", Some("dev-a")).is_err());
+    }
+
+    #[test]
+    fn load_classifies_missing_corrupt_and_unreadable() {
+        let root = tmp();
+        // 1) absent file + absent root: Missing (fail-open default) —
+        // an Err VARIANT, not Ok: the caller decides the policy
+        assert!(matches!(load_classified(&root), Err(LoadError::Missing)));
+        std::fs::create_dir_all(root.join(".cairn")).unwrap();
+        assert!(matches!(load_classified(&root), Err(LoadError::Missing)));
+
+        // 2) garbage bytes: Corrupt (fail-closed) — the only hard failure
+        std::fs::write(members_path(&root), b"{not json").unwrap();
+        match load_classified(&root) {
+            Err(LoadError::Corrupt(_)) => {}
+            other => panic!("expected Corrupt, got {other:?}"),
+        }
+
+        // 3) strict load surfaces corrupt as an error, absent as default
+        std::fs::remove_file(members_path(&root)).unwrap();
+        assert!(load(&root).unwrap().members.is_empty());
+
+        // 4) an unreadable file on a live root classifies Unreadable
+        //    (simulate with a directory in the file's place: EISDIR)
+        std::fs::create_dir_all(members_path(&root)).unwrap();
+        match load_classified(&root) {
+            Err(LoadError::Unreadable(_)) => {}
+            other => panic!("expected Unreadable, got {other:?}"),
+        }
+        // ...and the CLI-shaped load turns that into the detach hint
+        let msg = format!("{}", load(&root).unwrap_err());
+        assert!(
+            msg.contains("cairn detach"),
+            "hint should name detach: {msg}"
+        );
     }
 }

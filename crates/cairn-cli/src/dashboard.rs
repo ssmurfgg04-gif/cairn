@@ -71,6 +71,20 @@ pub async fn serve(addr: String, state: Arc<DaemonState>) -> anyhow::Result<()> 
         // never re-implemented — the set_flag drift lesson).
         .route("/api/v1/live", get(live_sse).post(live_send))
         .route("/api/v1/live/snapshot", get(live_snapshot))
+        // round 27 (the "click, don't type" retro): the native folder
+        // picker — Attach's first instinct is a CLICK. The daemon runs in
+        // the user's interactive session, so the OS dialog shows on their
+        // desktop; loopback-only, RBAC-free (picking a folder leaks
+        // nothing — attaching it is still guarded).
+        .route("/api/v1/pick-folder", get(pick_folder))
+        // round 27: file quick-actions (hover row buttons)
+        //   open      — reveal in Explorer/Finder/file manager
+        //   download  — stream the materialized bytes to the browser
+        //   duplicate — local copy beside the original (explicit action,
+        //               never triggered by sync)
+        .route("/api/v1/file/open", post(file_open))
+        .route("/api/v1/file/download", get(file_download))
+        .route("/api/v1/file/duplicate", post(file_duplicate))
         .with_state(state);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!(%addr, "dashboard listening (loopback only)");
@@ -405,6 +419,34 @@ async fn storage(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Valu
         };
     let disk = cairn_store::eviction::disk_space(store.root()).ok();
     let (files, conflicts) = store.all_files_summary();
+
+    // round 27: the meter is REAL per volume — the home store's disk AND
+    // every attached workspace's disk (a video studio's project drive is
+    // rarely the system drive; "260/476 GB" with no volume label read as
+    // a static mock). The UI labels which volume it is showing.
+    let mut volumes = Vec::new();
+    if let Some(d) = &disk {
+        volumes.push(json!({
+            "label": "store",
+            "free_bytes": d.free,
+            "total_bytes": d.total,
+        }));
+    }
+    {
+        let map = crate::projects::RUNTIMES.read().await;
+        let mut seen = std::collections::HashSet::new();
+        for rt in map.values() {
+            if seen.insert(rt.workspace.clone()) {
+                if let Ok(d) = cairn_store::eviction::disk_space(&rt.workspace) {
+                    volumes.push(json!({
+                        "label": rt.project_id,
+                        "free_bytes": d.free,
+                        "total_bytes": d.total,
+                    }));
+                }
+            }
+        }
+    }
     Json(json!({
         "ok": true,
         "store_root": store.root().to_string_lossy(),
@@ -417,6 +459,7 @@ async fn storage(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Valu
             "pinned_bytes": pinned_bytes,
         },
         "disk": disk.map(|d| json!({"free_bytes": d.free, "total_bytes": d.total})),
+        "volumes": volumes,
     }))
 }
 
@@ -1183,4 +1226,319 @@ async fn live_snapshot(State(state): State<Arc<DaemonState>>) -> Json<serde_json
         }
     }
     Json(json!({ "enabled": on, "projects": projects_out }))
+}
+
+// ---------------------------------------------------------------------------
+// round 27 — "click, don't type": the native folder picker + file
+// quick-actions. The install retro's sharpest finding: a user's first
+// instinct on the attach scene is to CLICK a button, not to paste a
+// path. The daemon serves loopback-only; the OS dialog belongs to the
+// user's interactive session (installer/tray both start it there).
+// ---------------------------------------------------------------------------
+
+/// GET /api/v1/pick-folder — open the OS folder dialog, return the chosen
+/// path. `cancelled: true` when the user closes it without choosing (NOT
+/// an error — the UI falls back to the text input). `unsupported: true`
+/// on hosts with no session dialog (the UI keeps the text field front
+/// and center instead of offering a dead button). A dialog cannot run
+/// on the async runtime's thread (STA COM + modal), so it runs on the
+/// blocking pool; the request stays open until the user decides.
+async fn pick_folder() -> Json<serde_json::Value> {
+    let picked = tokio::task::spawn_blocking(native_folder_dialog).await;
+    match picked {
+        Ok(Picked::Folder(path)) => Json(json!({"ok": true, "path": path})),
+        // user closed the dialog — not an error
+        Ok(Picked::Cancelled) => Json(json!({"ok": true, "cancelled": true})),
+        Ok(Picked::Unsupported) => Json(json!({"ok": true, "unsupported": true})),
+        Err(e) => Json(json!({"ok": false, "error": format!("picker failed: {e}")})),
+    }
+}
+
+/// What the native folder dialog decided. (Folder/Cancelled are only
+/// constructed on Windows — the non-Windows stub returns Unsupported;
+/// allow dead_code so the linux clippy gate stays clean.)
+#[allow(dead_code)]
+enum Picked {
+    Folder(String),
+    Cancelled,
+    Unsupported,
+}
+
+#[cfg(windows)]
+fn native_folder_dialog() -> Picked {
+    // SAFETY: the SAME SHBrowseForFolderW sequence the tray has shipped
+    // since round 19 (tray.rs pick_folder) — the legacy folder dialog:
+    // no COM apartment juggling, no IFileDialog generic bounds, works
+    // with a NULL owner HWND (the daemon has no window). The PIDL is
+    // freed with CoTaskMemFree exactly like the tray does.
+    unsafe {
+        use windows::core::PCWSTR;
+        use windows::Win32::System::Com::CoTaskMemFree;
+        use windows::Win32::UI::Shell::{SHBrowseForFolderW, SHGetPathFromIDListW, BROWSEINFOW};
+
+        let title: Vec<u16> = "Choose a project folder"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+        let mut display = [0u16; 260];
+        let bi = BROWSEINFOW {
+            hwndOwner: std::ptr::null_mut(), // the daemon owns no window
+            pidlRoot: std::ptr::null_mut(),
+            pszDisplayName: windows::core::PWSTR(display.as_mut_ptr()),
+            lpszTitle: PCWSTR(title.as_ptr()),
+            ulFlags: 0x0040, // BIF_RETURNONLYFSDIRS
+            lpfn: None,
+            lParam: windows::Win32::Foundation::LPARAM(0),
+            iImage: 0,
+        };
+        let pidl = SHBrowseForFolderW(&bi);
+        if pidl.is_null() {
+            return Picked::Cancelled; // user closed the dialog
+        }
+        let mut path = [0u16; 260];
+        let ok = SHGetPathFromIDListW(pidl, &mut path).as_bool();
+        CoTaskMemFree(Some(pidl.cast()));
+        if !ok {
+            return Picked::Cancelled;
+        }
+        let len = path.iter().position(|&c| c == 0).unwrap_or(0);
+        if len == 0 {
+            return Picked::Cancelled;
+        }
+        Picked::Folder(String::from_utf16_lossy(&path[..len]))
+    }
+}
+
+#[cfg(not(windows))]
+fn native_folder_dialog() -> Picked {
+    // non-Windows: no dialog from the daemon (Linux/macOS attach flows
+    // type a path or use the CLI) — the UI offers the text input
+    Picked::Unsupported
+}
+
+/// Resolve a project-relative path inside the project's attached root,
+/// refusing traversal (`..`, absolute paths, drive letters, UNC). The
+/// quick-actions must never become an arbitrary-file-read primitive.
+fn safe_join(root: &Path, rel: &str) -> Option<std::path::PathBuf> {
+    if rel.is_empty() {
+        return None;
+    }
+    let rel_path = std::path::Path::new(rel);
+    if rel_path.is_absolute() {
+        return None;
+    }
+    // components like "..", reserved device names, drive-letter colons
+    for comp in rel_path.components() {
+        match comp {
+            std::path::Component::Normal(_) => {}
+            std::path::Component::CurDir => {}
+            _ => return None, // ParentDir, Prefix (C:), RootDir, UNC
+        }
+    }
+    let joined = root.join(rel_path);
+    // belt and braces: canonicalize (when it exists) and re-check prefix
+    if let Ok(canon) = joined.canonicalize() {
+        let root_canon = root.canonicalize().ok()?;
+        if !canon.starts_with(&root_canon) {
+            return None;
+        }
+        Some(canon)
+    } else {
+        Some(joined)
+    }
+}
+
+/// The live root of a project id (first runtime with that id).
+async fn project_root_path(_state: &DaemonState, project_id: &str) -> Option<std::path::PathBuf> {
+    let map = crate::projects::RUNTIMES.read().await;
+    map.values()
+        .find(|rt| rt.project_id == project_id)
+        .map(|rt| rt.workspace.clone())
+}
+
+/// POST /api/v1/file/open {project_id, path} — reveal the file in the OS
+/// file manager (Explorer /select on Windows, xdg-open the parent dir
+/// elsewhere). Errors are honest JSON, not silent.
+async fn file_open(
+    State(state): State<Arc<DaemonState>>,
+    body: Option<Json<serde_json::Value>>,
+) -> Json<serde_json::Value> {
+    let Some(Json(v)) = body else {
+        return Json(json!({"ok": false, "error": "body required: {project_id, path}"}));
+    };
+    let project = v["project_id"].as_str().unwrap_or("").to_string();
+    let path = v["path"].as_str().unwrap_or("").to_string();
+    let Some(root) = project_root_path(&state, &project).await else {
+        return Json(json!({"ok": false, "error": "project not attached"}));
+    };
+    let Some(full) = safe_join(&root, &path) else {
+        return Json(json!({"ok": false, "error": "path refused (traversal)"}));
+    };
+    // platform reveal; the bool/str pair keeps one return site so both
+    // cfg targets compile identically
+    let (shown, why) = reveal_in_file_manager(&full, &root);
+    Json(json!({"ok": shown, "error": why}))
+}
+
+/// Reveal a file in the OS file manager. Windows: `explorer /select`
+/// highlights the file in its folder. Others: open the parent directory
+/// (the file may be a placeholder — the folder is still the useful view).
+fn reveal_in_file_manager(full: &Path, root: &Path) -> (bool, &'static str) {
+    #[cfg(windows)]
+    {
+        let _ = root; // reveal-by-select needs only the file itself
+        let ok = std::process::Command::new("explorer.exe")
+            .arg(format!("/select,\"{}\"", full.display()))
+            .spawn()
+            .is_ok();
+        (ok, if ok { "" } else { "explorer failed to start" })
+    }
+    #[cfg(not(windows))]
+    {
+        // xdg-open the parent directory (the file may be a placeholder —
+        // opening the folder is still the useful view)
+        let dir = full.parent().unwrap_or(root).to_path_buf();
+        let ok = std::process::Command::new("xdg-open")
+            .arg(&dir)
+            .spawn()
+            .is_ok();
+        (ok, if ok { "" } else { "xdg-open failed" })
+    }
+}
+
+/// GET /api/v1/file/download?project=..&path=.. — stream the LOCAL
+/// materialized bytes to the browser as an attachment. A placeholder (not
+/// materialized) answers 409 with the recall hint: downloading 50 GB of
+/// BRAW through the browser is the user's explicit choice, but it
+/// requires the bytes to be here first.
+async fn file_download(
+    State(state): State<Arc<DaemonState>>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> axum::response::Response {
+    use axum::body::{Body, Bytes};
+    use axum::http::{header, HeaderValue, StatusCode};
+
+    let project = q.get("project").cloned().unwrap_or_default();
+    let path = q.get("path").cloned().unwrap_or_default();
+    let err = |code: StatusCode, msg: &str| {
+        (code, Json(json!({"ok": false, "error": msg}))).into_response()
+    };
+    let Some(root) = project_root_path(&state, &project).await else {
+        return err(StatusCode::NOT_FOUND, "project not attached");
+    };
+    let Some(full) = safe_join(&root, &path) else {
+        return err(StatusCode::BAD_REQUEST, "path refused (traversal)");
+    };
+    let meta = match tokio::fs::metadata(&full).await {
+        Ok(m) => m,
+        Err(_) => {
+            return err(
+                StatusCode::CONFLICT,
+                "file is not materialized on this machine — recall it first, then download",
+            )
+        }
+    };
+    if !meta.is_file() {
+        return err(StatusCode::BAD_REQUEST, "not a file");
+    }
+    let f = match tokio::fs::File::open(&full).await {
+        Ok(f) => f,
+        Err(_) => return err(StatusCode::INTERNAL_SERVER_ERROR, "open failed"),
+    };
+    // stream in 256 KiB chunks — memory stays flat for 50 GB BRAW
+    let stream = futures::stream::unfold(f, |mut f| async move {
+        let mut buf = vec![0u8; 256 * 1024];
+        match tokio::io::AsyncReadExt::read(&mut f, &mut buf).await {
+            Ok(0) => None,
+            Ok(n) => Some((Ok(Bytes::from(buf[..n].to_vec())), f)),
+            Err(e) => Some((Err(std::io::Error::other(e)), f)),
+        }
+    });
+    let name = std::path::Path::new(&path)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "file".into());
+    let mut resp = axum::response::Response::new(Body::from_stream(stream));
+    *resp.status_mut() = StatusCode::OK;
+    let headers = resp.headers_mut();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/octet-stream"),
+    );
+    if let Ok(cd) = HeaderValue::from_str(&format!(
+        "attachment; filename=\"{}\"",
+        name.replace('"', "")
+    )) {
+        headers.insert(header::CONTENT_DISPOSITION, cd);
+    }
+    if let Ok(cl) = HeaderValue::from_str(&meta.len().to_string()) {
+        headers.insert(header::CONTENT_LENGTH, cl);
+    }
+    resp
+}
+
+/// POST /api/v1/file/duplicate {project_id, path} — local copy beside the
+/// original (`name (copy).ext`), never synced until the watcher picks it
+/// up like any other new file (it IS a new file — the explicit-action
+/// semantics the retro asked for). Placeholders answer the recall hint:
+/// duplicating a 0-byte placeholder would create a 0-byte file.
+async fn file_duplicate(
+    State(state): State<Arc<DaemonState>>,
+    body: Option<Json<serde_json::Value>>,
+) -> Json<serde_json::Value> {
+    let Some(Json(v)) = body else {
+        return Json(json!({"ok": false, "error": "body required: {project_id, path}"}));
+    };
+    let project = v["project_id"].as_str().unwrap_or("").to_string();
+    let path = v["path"].as_str().unwrap_or("").to_string();
+    let Some(root) = project_root_path(&state, &project).await else {
+        return Json(json!({"ok": false, "error": "project not attached"}));
+    };
+    let Some(full) = safe_join(&root, &path) else {
+        return Json(json!({"ok": false, "error": "path refused (traversal)"}));
+    };
+    if !tokio::fs::metadata(&full)
+        .await
+        .map(|m| m.is_file())
+        .unwrap_or(false)
+    {
+        return Json(
+            json!({"ok": false, "error": "file is not materialized on this machine — recall it first"}),
+        );
+    }
+    // `clip.braw` -> `clip (copy).braw`; `README` -> `README (copy)`
+    let stem = full.with_extension("");
+    let ext = full
+        .extension()
+        .map(|e| e.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let dest = stem;
+    let mut n = 1;
+    let mut candidate = {
+        let base = format!("{} (copy)", dest.display());
+        if ext.is_empty() {
+            std::path::PathBuf::from(base)
+        } else {
+            std::path::PathBuf::from(format!("{base}.{ext}"))
+        }
+    };
+    while tokio::fs::metadata(&candidate).await.is_ok() && n < 100 {
+        n += 1;
+        let base = format!("{} (copy {})", dest.display(), n);
+        candidate = if ext.is_empty() {
+            std::path::PathBuf::from(base)
+        } else {
+            std::path::PathBuf::from(format!("{base}.{ext}"))
+        };
+    }
+    match tokio::fs::copy(&full, &candidate).await {
+        Ok(bytes) => {
+            let rel = candidate
+                .strip_prefix(&root)
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| candidate.to_string_lossy().into_owned());
+            Json(json!({"ok": true, "path": rel, "bytes": bytes}))
+        }
+        Err(e) => Json(json!({"ok": false, "error": format!("copy failed: {e}")})),
+    }
 }

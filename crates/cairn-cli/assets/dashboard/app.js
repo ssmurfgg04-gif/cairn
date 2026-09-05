@@ -23,6 +23,60 @@ const STR = {
   "nav.dashboard": { en: "Dashboard", "de-DE": "Übersicht", "ja-JP": "ダッシュボード", "zh-CN": "总览" },
   "nav.files": { en: "Files", "de-DE": "Dateien", "ja-JP": "ファイル", "zh-CN": "文件" },
   "nav.settings": { en: "Settings", "de-DE": "Einstellungen", "ja-JP": "設定", "zh-CN": "设置" },
+  "nav.howto": { en: "How to use", "de-DE": "Anleitung", "ja-JP": "使い方", "zh-CN": "使用指南" },
+
+  /* round 27: the layman guide + click-don't-type attach + file
+     quick-actions + flag explanations + volume labels. English first;
+     translations follow the same no-em-dash rule. */
+  "btn.browse": { en: "Browse for folder...", "de-DE": "Ordner auswählen...", "ja-JP": "フォルダーを選ぶ...", "zh-CN": "选择文件夹..." },
+  "or.type": { en: "or type a path", "de-DE": "oder Pfad eingeben", "ja-JP": "またはパスを入力", "zh-CN": "或输入路径" },
+  "btn.open": { en: "Open", "de-DE": "Öffnen", "ja-JP": "開く", "zh-CN": "打开" },
+  "btn.download": { en: "Download", "de-DE": "Herunterladen", "ja-JP": "ダウンロード", "zh-CN": "下载" },
+  "btn.duplicate": { en: "Duplicate", "de-DE": "Duplizieren", "ja-JP": "複製", "zh-CN": "复制副本" },
+  "btn.share": { en: "Share", "de-DE": "Teilen", "ja-JP": "共有", "zh-CN": "分享" },
+  "toast.openedFolder": { en: "opened in your files", "de-DE": "in Dateien geöffnet", "ja-JP": "ファイルで開きました", "zh-CN": "已在文件管理器中打开" },
+  "toast.duplicated": { en: "copied beside the original", "de-DE": "neben dem Original kopiert", "ja-JP": "元の隣にコピーしました", "zh-CN": "已复制到原文件旁" },
+  "toast.copiedPath": { en: "path copied - paste it in chat or email", "de-DE": "Pfad kopiert - im Chat oder E-Mail einfügen", "ja-JP": "パスをコピーしました", "zh-CN": "路径已复制 - 可粘贴到聊天或邮件" },
+  "toast.pickCancelled": { en: "no folder chosen", "de-DE": "kein Ordner gewählt", "ja-JP": "フォルダー未選択", "zh-CN": "未选择文件夹" },
+  "toast.pickUnavailable": { en: "folder picker unavailable here - type the path instead", "de-DE": "Ordnerauswahl hier nicht verfügbar - Pfad eingeben", "ja-JP": "ここではフォルダー選択不可 - パスを入力", "zh-CN": "此处无法打开文件夹选择器 - 请输入路径" },
+  "toast.downloading": { en: "downloading...", "de-DE": "lade herunter...", "ja-JP": "ダウンロード中...", "zh-CN": "下载中..." },
+  "vol.store": { en: "store volume", "de-DE": "Speicher-Volume", "ja-JP": "ストア領域", "zh-CN": "存储卷" },
+  "vol.project": { en: "{p} drive", "de-DE": "{p} Laufwerk", "ja-JP": "{p} ドライブ", "zh-CN": "{p} 所在盘" },
+  "flags.lead": { en: "Flags apply on the next job run, no restart. Owner and lead only (RBAC enforced). Click a flag to see what it does.", "de-DE": "Flags gelten beim nächsten Lauf, kein Neustart. Nur Owner und Lead (RBAC). Klick zeigt die Erklärung.", "ja-JP": "フラグは次回ジョブから反映（再起動不要）。オーナーとリードのみ（RBAC）。クリックで説明を表示。", "zh-CN": "开关在下一个任务生效，无需重启。仅所有者与主管可用（RBAC）。点击开关查看说明。" },
+
+  /* how-to guide (the five promises, plain words) */
+  "howto.title": { en: "How to use Cairn", "de-DE": "Cairn verwenden", "ja-JP": "Cairn の使い方", "zh-CN": "如何使用 Cairn" },
+  "howto.lede": { en: "Cairn keeps your whole studio's footage in sync between computers - no upload sites, no hard drives in bags. Get started below; everything else happens automatically.", "de-DE": "Cairn hält das Material des ganzen Studios zwischen Rechnern synchron - ohne Upload-Seiten, ohne Festplatten im Beutel. Unten starten; der Rest passiert automatisch.", "ja-JP": "Cairn はスタジオ全体の素材をコンピューター間で同期します。アップロードサイトも、持ち運び HDD も不要。下から始めるだけで、あとは自動です。", "zh-CN": "Cairn 让工作室的所有素材在电脑之间自动同步 - 无需上传网站，无需来回拷硬盘。按下面步骤开始，其余全部自动完成。" },
+  "howto.start.title": { en: "Get started (2 minutes)", "de-DE": "So startest du (2 Minuten)", "ja-JP": "はじめ方（2分）", "zh-CN": "快速上手（2 分钟）" },
+  "howto.start.1": { en: "Click Add to Workspace above and pick your project folder (the one with your footage).", "de-DE": "Klicke oben auf Zum Workspace hinzufügen und wähle den Projektordner (der mit deinem Material).", "ja-JP": "上の「ワークスペースに追加」をクリックし、プロジェクトフォルダー（素材のある場所）を選びます。", "zh-CN": "点击上方「添加到工作区」，选择你的项目文件夹（存放素材的那个）。" },
+  "howto.start.2": { en: "Do the same on the other computers in your studio - they join the same project.", "de-DE": "Mache dasselbe auf den anderen Rechnern im Studio - sie treten demselben Projekt bei.", "ja-JP": "スタジオの他のパソコンでも同じ操作をします。同じプロジェクトに参加します。", "zh-CN": "在工作室的其他电脑上做同样操作 - 它们会加入同一个项目。" },
+  "howto.start.3": { en: "That's it. Files you drop in the folder appear on every machine, automatically.", "de-DE": "Das war's. Dateien im Ordner erscheinen automatisch auf jedem Rechner.", "ja-JP": "これだけです。フォルダーに入れたファイルは自動で各マシンに現れます。", "zh-CN": "就这样。放入文件夹的文件会自动出现在每台机器上。" },
+  "howto.start.note": { en: "The folder works like a normal folder. Edit, save, move files as you always do - Cairn handles the copying.", "de-DE": "Der Ordner ist ein ganz normaler Ordner. Bearbeiten, speichern, verschieben wie immer - Cairn kümmert sich ums Kopieren.", "ja-JP": "フォルダーは普通のフォルダーです。いつも通り編集・保存すれば、コピーは Cairn が処理します。", "zh-CN": "这个文件夹和普通文件夹一样。照常编辑、保存、移动文件 - 复制交给 Cairn。" },
+  "howto.transfer.title": { en: "Sending big files to each other", "de-DE": "Große Dateien austauschen", "ja-JP": "大きなファイルを送る", "zh-CN": "互相发送大文件" },
+  "howto.transfer.body": { en: "Replaces: SwissTransfer / WeTransfer waits (a 50 GB upload can take 5+ hours).", "de-DE": "Ersetzt: SwissTransfer-/WeTransfer-Wartezeiten (50 GB Upload brauchen 5+ Stunden).", "ja-JP": "置き換え：SwissTransfer / WeTransfer の待ち時間（50GB で5時間以上）。", "zh-CN": "取代：SwissTransfer / WeTransfer 的漫长等待（50 GB 上传要 5 小时以上）。" },
+  "howto.transfer.how": { en: "Drop the file in the project folder. It travels straight to the other computer - no cloud upload in the middle. On the same network this is minutes, not hours.", "de-DE": "Lege die Datei in den Projektordner. Sie geht direkt zum anderen Rechner - kein Cloud-Upload dazwischen. Im gleichen Netzwerk: Minuten statt Stunden.", "ja-JP": "ファイルをプロジェクトフォルダーに入れるだけ。クラウドを経由せず相手のパソコンへ直接届きます。同じネットワークなら数時間が数分に。", "zh-CN": "把文件放进项目文件夹即可。它直接传到对方电脑 - 中间没有云端上传。同一网络下只需几分钟而非几小时。" },
+  "howto.transfer.note": { en: "It even works through firewalls - if a direct line can't be found, an encrypted relay carries it.", "de-DE": "Funktioniert auch durch Firewalls - ohne direkte Leitung trägt ein verschlüsseltes Relay.", "ja-JP": "ファイアウォール越えにも対応。直接接続できない場合は暗号化リレーが運びます。", "zh-CN": "甚至能穿透防火墙 - 找不到直连线路时，由加密中继代传。" },
+  "howto.merge.title": { en: "Two people editing the same timeline", "de-DE": "Zwei Personen, dieselbe Timeline", "ja-JP": "2人で同じタイムラインを編集", "zh-CN": "两人编辑同一条时间线" },
+  "howto.merge.body": { en: "Replaces: who has the newest version? and merged-copy chaos.", "de-DE": "Ersetzt: Wer hat die neueste Version? und Merge-Kopien-Chaos.", "ja-JP": "置き換え：「最新版は誰？」と統合コピーの混乱。", "zh-CN": "取代：\"谁手里是最新版？\" 以及满屏的合并副本。" },
+  "howto.merge.how": { en: "Everyone works on their own copy of the timeline. Cairn's Timeline Merge puts the changes together automatically - frame-accurate, nothing lost, no conflict copy 47 files.", "de-DE": "Jeder arbeitet an seiner Timeline-Kopie. Timeline Merge fügt die Änderungen automatisch zusammen - framegenau, nichts geht verloren, keine Konflikt-Kopie 47.", "ja-JP": "各自が自分のタイムラインを編集し、Timeline Merge が変更を自動統合。フレーム精度で何も失われず、「conflict copy 47」も出ません。", "zh-CN": "每人编辑自己的时间线副本。Cairn 的 Timeline Merge 自动合并改动 - 精确到帧，零丢失，不会出现\"冲突副本 47\"。" },
+  "howto.merge.note": { en: "From a terminal: cairn tl-merge --base old.otio --ours mine.otio --theirs theirs.otio", "de-DE": "Im Terminal: cairn tl-merge --base alt.otio --ours meine.otio --theirs ihre.otio", "ja-JP": "ターミナルで：cairn tl-merge --base old.otio --ours mine.otio --theirs theirs.otio", "zh-CN": "终端运行：cairn tl-merge --base old.otio --ours mine.otio --theirs theirs.otio" },
+  "howto.vfs.title": { en: "Seeing footage that isn't on this computer", "de-DE": "Material sehen, das nicht auf diesem Rechner liegt", "ja-JP": "このパソコンに無い素材を見る", "zh-CN": "查看不在这台电脑上的素材" },
+  "howto.vfs.body": { en: "Replaces: carrying hard drives between offices.", "de-DE": "Ersetzt: Festplatten zwischen Büros tragen.", "ja-JP": "置き換え：オフィス間で HDD を運ぶ。", "zh-CN": "取代：在办公室之间搬运硬盘。" },
+  "howto.vfs.how": { en: "Files from other machines show up in the folder as lightweight placeholders - they look real, and the moment you open one, Cairn fetches it in the background. On Windows the folder is a real Explorer folder.", "de-DE": "Dateien anderer Rechner erscheinen als leichte Platzhalter - sie sehen echt aus, und beim Öffnen holt Cairn sie im Hintergrund. Unter Windows ist der Ordner ein echter Explorer-Ordner.", "ja-JP": "他のマシンのファイルは軽いプレースホルダーとして表示されます。開いた瞬間に裏で取得。Windows では通常のエクスプローラーフォルダーです。", "zh-CN": "其他机器的文件以轻量占位符形式出现在文件夹里 - 看起来和真的一样，打开的一瞬间 Cairn 会在后台自动取回。Windows 上这就是一个真正的资源管理器文件夹。" },
+  "howto.vfs.note": { en: "Need a file offline (a shoot, a flight)? Hover it and press the pin - it stays on this machine forever.", "de-DE": "Datei offline nötig (Dreh, Flug)? Hovern und Pin drücken - sie bleibt für immer auf diesem Rechner.", "ja-JP": "オフラインで必要なファイル（撮影・フライト）は、ホバーしてピンを押せばこのマシンに残り続けます。", "zh-CN": "需要离线使用某文件（外拍、航班）？悬停并点图钉 - 它会永久保留在这台机器上。" },
+  "howto.proxy.title": { en: "Editing heavy footage on a weak laptop", "de-DE": "Schweres Material auf schwachem Laptop schneiden", "ja-JP": "非力なノートで重い素材を編集", "zh-CN": "在低配笔记本上剪辑超重素材" },
+  "howto.proxy.body": { en: "Replaces: waiting for renders, or being chained to the powerful machine.", "de-DE": "Ersetzt: Warten auf Renders oder Festkleben an der starken Maschine.", "ja-JP": "置き換え：レンダ待ちや高性能マシンへの縛り。", "zh-CN": "取代：漫长的渲染等待，或被绑死在高配机器前。" },
+  "howto.proxy.how": { en: "Ask Cairn for a proxy - a small, light copy of a huge file that edits exactly the same. Cut on the laptop with proxies; the office machine swaps them back to full quality when it renders.", "de-DE": "Fordere ein Proxy an - eine kleine, leichte Kopie einer riesigen Datei, die sich identisch schneiden lässt. Mit Proxys am Laptop schneiden; die Office-Maschine tauscht beim Rendern zurück auf volle Qualität.", "ja-JP": "プロキシを生成させましょう。巨大ファイルの軽量コピーで、編集は全く同じ。ノートはプロキシで切り、オフィスの強いマシンがレンダ時にフル品質へ差し替えます。", "zh-CN": "让 Cairn 生成代理文件 - 大文件的轻量副本，剪辑手感完全一致。笔记本用代理剪辑；渲染时办公室的强力机器自动换回全画质。" },
+  "howto.proxy.note": { en: "From a terminal: cairn proxy generate --media clip1.braw", "de-DE": "Im Terminal: cairn proxy generate --media clip1.braw", "ja-JP": "ターミナルで：cairn proxy generate --media clip1.braw", "zh-CN": "终端运行：cairn proxy generate --media clip1.braw" },
+  "howto.review.title": { en: "Showing work to a client", "de-DE": "Arbeit einem Kunden zeigen", "ja-JP": "クライアントに成果を見せる", "zh-CN": "向客户展示工作成果" },
+  "howto.review.body": { en: "Replaces: exporting, uploading, and emailing links just for feedback.", "de-DE": "Ersetzt: Exportieren, Hochladen, Links mailen - nur für Feedback.", "ja-JP": "置き換え：フィードバックのためだけの書き出し・アップ・メール。", "zh-CN": "取代：仅为收集反馈而导出、上传、发链接。" },
+  "howto.review.how": { en: "Publish the cut, then send a review link. The client opens it in their browser, plays the video, and leaves notes pinned to exact frames. No account, no software.", "de-DE": "Veröffentliche den Schnitt und sende einen Review-Link. Der Kunde öffnet ihn im Browser, spielt das Video und hinterlässt Notizen an exakten Frames. Ohne Konto, ohne Software.", "ja-JP": "カットを公開してレビューリンクを送るだけ。クライアントはブラウザで再生し、正確なフレームにメモを残せます。アカウントもソフトも不要。", "zh-CN": "发布剪辑后发送审阅链接。客户在浏览器里打开、播放、在精确到帧的位置留言。无需账号，无需安装。" },
+  "howto.review.note": { en: "From a terminal: cairn review link --note \"Client A\" (add --role studio for internal notes the client cannot see)", "de-DE": "Im Terminal: cairn review link --note \"Kunde A\" (mit --role studio für interne Notizen, die der Kunde nicht sieht)", "ja-JP": "ターミナルで：cairn review link --note \"Client A\"（--role studio でクライアント非表示の内部メモに）", "zh-CN": "终端运行：cairn review link --note \"客户A\"（加 --role studio 可添加客户不可见的内部笔记）" },
+  "howto.faq.title": { en: "When something looks wrong", "de-DE": "Wenn etwas falsch aussieht", "ja-JP": "おかしいときは", "zh-CN": "出问题时怎么办" },
+  "howto.faq.1": { en: "Yellow dot / reconnecting - a sync is in flight or one machine is briefly offline. It fixes itself; give it a moment.", "de-DE": "Gelber Punkt / verbinde neu - eine Sync läuft oder eine Maschine ist kurz offline. Behebt sich selbst; gib ihm einen Moment.", "ja-JP": "黄ドット／再接続中 - 同期中か、一台が一時オフライン。自然に回復するので少し待ちます。", "zh-CN": "黄点/正在重连 - 有同步在进行或某台机器短暂离线。它会自行恢复，稍等即可。" },
+  "howto.faq.2": { en: "Red dot - open Settings and read the health panel. If a project folder was deleted or moved, remove it under Projects and add the folder again.", "de-DE": "Roter Punkt - öffne Einstellungen und lies das Health-Panel. Wurde ein Projektordner gelöscht oder verschoben, entferne ihn unter Projekte und füge den Ordner neu hinzu.", "ja-JP": "赤ドット - 設定の健全性パネルを確認。プロジェクトフォルダーの削除・移動が原因なら、プロジェクトから削除して再追加します。", "zh-CN": "红点 - 打开设置查看健康状况面板。若是项目文件夹被删除或移动，在\"项目\"中移除后重新添加。" },
+  "howto.faq.3": { en: "A file I need is a placeholder - hover it and press Recall; it materializes from the other machines.", "de-DE": "Eine benötigte Datei ist ein Platzhalter - hovern und Recall drücken; sie materialisiert sich von den anderen Rechnern.", "ja-JP": "必要なファイルがプレースホルダー - ホバーして Recall を押すと他のマシンから実体化します。", "zh-CN": "需要的文件是占位符 - 悬停后点击\"取回\"，它会从其他机器取回实体。" },
+  "howto.faq.4": { en: "Nothing syncing at all - the green cairn icon in the system tray (near the clock) restarts everything. Right-click it for status.", "de-DE": "Gar keine Sync - das grüne cairn-Symbol im Systray (neben der Uhr) startet alles neu. Rechtsklick für Status.", "ja-JP": "同期が完全に止まった - 時計横の緑の cairn アイコンで再起動。右クリックで状態確認。", "zh-CN": "完全不同步 - 点击系统托盘（时钟旁）的绿色 cairn 图标重启一切。右键可查看状态。" },
 
   "head.noRoots": { en: "no project", "de-DE": "kein Projekt", "ja-JP": "プロジェクトなし", "zh-CN": "无项目" },
   "head.roots": { en: "{n} projects", "de-DE": "{n} Projekte", "ja-JP": "{n}プロジェクト", "zh-CN": "{n} 个项目" },
@@ -59,7 +113,7 @@ const STR = {
   "recall.path": { en: "one path (optional, whole project when empty)", "de-DE": "ein Pfad (optional, sonst ganzes Projekt)", "ja-JP": "1パス（任意、空なら全プロジェクト）", "zh-CN": "单个路径（可选，留空则整个项目）" },
 
   "dash.title": { en: "Creative Workflow Overview", "de-DE": "Kreativ-Workflow-Übersicht", "ja-JP": "クリエイティブワークフロー概要", "zh-CN": "创意工作流总览" },
-  "dash.sub": { en: "{n} projects · {files} files · BRAW, EDL and audio assets", "de-DE": "{n} Projekte · {files} Dateien · BRAW-, EDL- und Audio-Assets", "ja-JP": "{n}プロジェクト · {files}ファイル · BRAW・EDL・オーディオ", "zh-CN": "{n} 个项目 · {files} 个文件 · BRAW、EDL 与音频资产" },
+  "dash.sub": { en: "{n} projects · {files} files · {synced} synced on this machine", "de-DE": "{n} Projekte · {files} Dateien · {synced} auf diesem Rechner synchron", "ja-JP": "{n}プロジェクト · {files}ファイル · {synced} 同期済み", "zh-CN": "{n} 个项目 · {files} 个文件 · {synced} 已同步到本机" },
   "dash.subEmpty": { en: "attach a project folder to begin", "de-DE": "verbinde einen Projektordner, um zu beginnen", "ja-JP": "プロジェクトフォルダーを接続して開始", "zh-CN": "连接一个项目文件夹即可开始" },
   "btn.addWs": { en: "Add to Workspace", "de-DE": "Zum Workspace hinzufügen", "ja-JP": "ワークスペースに追加", "zh-CN": "添加到工作区" },
   "ws.placeholder": { en: "Workspace path or ID (optional)", "de-DE": "Workspace-Pfad oder ID (optional)", "ja-JP": "ワークスペースのパスまたはID（任意）", "zh-CN": "工作区路径或 ID（可选）" },
@@ -178,6 +232,7 @@ const STR = {
   "help.goDash": { en: "go to dashboard", "de-DE": "zur Übersicht", "ja-JP": "ダッシュボードへ", "zh-CN": "前往总览" },
   "help.goFiles": { en: "go to files", "de-DE": "zu den Dateien", "ja-JP": "ファイルへ", "zh-CN": "前往文件" },
   "help.goSettings": { en: "go to settings", "de-DE": "zu den Einstellungen", "ja-JP": "設定へ", "zh-CN": "前往设置" },
+  "help.goHowto": { en: "go to the how-to guide", "de-DE": "zur Anleitung", "ja-JP": "使い方へ", "zh-CN": "打开使用指南" },
   "help.esc": { en: "close panels and overlays", "de-DE": "Panels und Overlays schließen", "ja-JP": "パネルとオーバーレイを閉じる", "zh-CN": "关闭面板与浮层" },
   "help.dotOk": { en: "all files synced, safe to edit", "de-DE": "alle Dateien synchron, sicher zum Schneiden", "ja-JP": "全ファイル同期済み、編集しても安全", "zh-CN": "全部已同步，可安全编辑" },
   "help.dotWarn": { en: "syncing, chunks in flight", "de-DE": "synchronisiert, Chunks unterwegs", "ja-JP": "同期中、チャンク転送中", "zh-CN": "同步中，数据块传输中" },
@@ -406,7 +461,7 @@ document.querySelectorAll(".seg").forEach((s) => {
 
 /* ============================== views ============================== */
 
-const VIEWS = ["dashboard", "files", "settings"];
+const VIEWS = ["dashboard", "files", "settings", "howto"];
 let ACTIVE_VIEW = "dashboard";
 
 function showView(name, focus) {
@@ -435,7 +490,7 @@ const TARGET_MAP = {
   "#overview": "dashboard", "#projects": "settings", "#files": "files",
   "#activity": "dashboard", "#review": "dashboard", "#team": "settings",
   "#live": "dashboard", "#locks": "settings", "#versions": "files",
-  "#pins": "files", "#recall": "files", "#storage": "settings",
+  "#pins": "files", "#recall": "files", "#storage": "settings", "#howto": "howto",
   "#flags": "settings", "#doctor": "settings", "#dashboard": "dashboard",
   "#settings": "settings",
 };
@@ -530,39 +585,69 @@ function renderHero() {
     sub.textContent = t("dash.subEmpty");
     return;
   }
-  sub.textContent = t("dash.sub", { n: PROJECTS.length, files: FOOT.files ?? 0 });
+  sub.textContent = t("dash.sub", { n: PROJECTS.length, files: FOOT.files ?? 0, synced: FOOT.synced ?? 0 });
 }
 
-/* the hero input: a path attaches it; a bare token matches a known
-   project id (or name) and opens it; anything else goes to the daemon,
-   which answers honestly. Empty -> the full add panel. */
+/* round 27: the path field left the hero (it is a power-user affordance
+   squatting on prime real estate - the retro's words). "+ Add to
+   Workspace" opens the Add panel, where Browse (the OS folder picker)
+   leads and the text field follows. A bare token typed into the PANEL
+   still matches a known project id or name and opens it; a path
+   attaches; anything else goes to the daemon, which answers honestly. */
 function looksLikePath(v) {
   return /[\\/]/.test(v) || /^[A-Za-z]:/.test(v);
 }
 
 async function doWorkspaceAdd() {
-  const input = $("ws-path");
-  const val = (input && input.value.trim()) || "";
-  if (!val) { openPanel("panel-add"); return; }
-  if (looksLikePath(val)) { await attachFlow(val, ""); return; }
-  const p = PROJECTS.find(
-    (x) => x.project_id === val || (x.display_name || "").toLowerCase() === val.toLowerCase(),
-  );
-  if (p) {
-    const sel = $("files-project");
-    if (sel && PROJECTS.some((x) => x.project_id === p.project_id)) sel.value = p.project_id;
-    showView("files", "files-filter");
-    refreshFiles();
-    toast(t("toast.opened", { p: p.display_name || val }));
-    input.value = "";
-    return;
+  openPanel("panel-add");
+  // focus Browse's sibling input only when the picker is unavailable
+  // (non-Windows hosts) so typing is one tab away, never a dead end
+  try {
+    const r = await fetch("/api/v1/pick-folder", { method: "GET" });
+    if (r.ok) {
+      const j = await r.json();
+      if (j && j.ok === true && !j.cancelled && j.path) {
+        $("attach-root").value = j.path;
+        $("attach-project").focus();
+        return;
+      }
+    }
+  } catch { /* daemon probe failed - the panel's own fields carry */ }
+  $("attach-root").focus();
+}
+
+/* the OS folder picker (round 27 "click, don't type"): the daemon
+   serves a native dialog from the user's session. Non-Windows or
+   headless hosts return cancelled/unavailable - the caller falls back
+   to the text field with a quiet toast, never an error wall. */
+async function pickFolder(targetInput) {
+  let j = null;
+  try {
+    const r = await fetch("/api/v1/pick-folder", { method: "GET" });
+    j = await r.json();
+  } catch { j = null; }
+  if (j && j.ok === true) {
+    if (j.cancelled) { toast(t("toast.pickCancelled")); return; }
+    if (j.unsupported) { toast(t("toast.pickUnavailable")); targetInput.focus(); return; }
+    if (j.path) {
+      targetInput.value = j.path;
+      targetInput.dispatchEvent(new Event("change"));
+      toast(j.path);
+      return;
+    }
   }
-  await attachFlow("", val);
+  toast(t("toast.pickUnavailable"));
+  targetInput.focus();
 }
 
 $("btn-add-ws").addEventListener("click", doWorkspaceAdd);
-$("ws-path").addEventListener("keydown", (ev) => {
-  if (ev.key === "Enter") { ev.preventDefault(); doWorkspaceAdd(); }
+$("btn-browse").addEventListener("click", (ev) => {
+  ev.preventDefault();
+  pickFolder($("attach-root"));
+});
+$("ob-browse").addEventListener("click", (ev) => {
+  ev.preventDefault();
+  pickFolder($("ob-root"));
 });
 
 /* ============================== footer ============================== */
@@ -674,16 +759,32 @@ async function refreshStorage() {
     $("stat-bytes").textContent = fmtBytes(b.bytes ?? 0);
     $("stat-pinned").textContent = String(b.pinned_count ?? 0);
     const note = $("storage-note");
+    const volLabel = $("storage-volume-label");
 
-    if (r.disk && Number.isFinite(r.disk.free_bytes) && Number.isFinite(r.disk.total_bytes) && r.disk.total_bytes > 0) {
-      const used = Math.max(0, r.disk.total_bytes - r.disk.free_bytes);
-      FOOT.disk = { total: r.disk.total_bytes, free: r.disk.free_bytes };
+    // round 27: the meter reads the WORKSPACE volume when one is
+    // attached (that is where the editor's media lives), else the store
+    // volume - and it SAYS which. Neutral zinc fill: amber reads as a
+    // warning (and matched the reconnecting pill); color only appears
+    // past 90%, red past 95% - usage is only a problem at the edge.
+    const vols = Array.isArray(r.volumes) ? r.volumes : [];
+    const workspace = vols.find((v) => v.label !== "store") || vols[0] || r.disk;
+    const store = r.disk;
+    if (store && Number.isFinite(store.free_bytes) && Number.isFinite(store.total_bytes)) {
+      FOOT.disk = { total: store.total_bytes, free: store.free_bytes };
       renderFooter();
-      const pct = Math.min(100, (used / r.disk.total_bytes) * 100);
+    }
+    if (workspace && Number.isFinite(workspace.free_bytes) && Number.isFinite(workspace.total_bytes) && workspace.total_bytes > 0) {
+      const used = Math.max(0, workspace.total_bytes - workspace.free_bytes);
+      const pct = Math.min(100, (used / workspace.total_bytes) * 100);
       const fill = $("quota-fill");
       fill.style.width = `${Math.max(2, Math.round(pct))}%`;
-      fill.style.background = pct >= 95 ? "#d96b66" : "#46a352";
-      $("set-quota").textContent = `${fmtBytes(used)} / ${fmtBytes(r.disk.total_bytes)}`;
+      fill.style.background = pct >= 95 ? "#d96b66" : pct >= 90 ? "#d9a13c" : "var(--fill-neutral, #9aa0a6)";
+      $("set-quota").textContent = `${fmtBytes(used)} / ${fmtBytes(workspace.total_bytes)}`;
+      if (volLabel) {
+        const isStore = !vols.length || workspace.label === "store" || workspace === r.disk;
+        volLabel.textContent = isStore ? t("vol.store") : t("vol.project", { p: workspace.label });
+        volLabel.title = `${Math.round(pct)}% used · live from the OS`;
+      }
       if (pct >= 95) note.textContent = t("quota.warn");
     }
   } catch { /* stats stay at their last honest value */ }
@@ -747,7 +848,36 @@ function jumpToProject(pid) {
   refreshFiles();
 }
 
+/* ============================== render-on-change ==============================
+   Round 27, the "lettering keeps flashing" retro: the 2s poll re-rendered
+   the sessions/actions/projects/assets panels from scratch every cycle,
+   and every fresh DOM row replayed its rise/stagger animation - the
+   console looked like it was strobing while sync retried. Fix at the
+   root: a panel only re-renders when its CONTENT signature changed.
+   Same data in = same DOM out; the animation plays once, on real
+   change. (relTime strings are part of the signature, so "2 min ago"
+   -> "3 min ago" still updates.) */
+const RENDER_SIGS = new Map();
+function renderIfChanged(key, sig, render) {
+  if (RENDER_SIGS.get(key) === sig) return;
+  RENDER_SIGS.set(key, sig);
+  render();
+}
+function sigOf(list, pick) {
+  if (!list || !list.length) return "0";
+  return list.map(pick).join("|");
+}
+
 function renderRecentSession() {
+  const p0 = recentProject();
+  renderIfChanged(
+    "rs-session",
+    p0 ? `${p0.project_id}:${p0.files_synced ?? 0}:${p0.pending_outbox ?? 0}:${p0.state ?? ""}` : "none",
+    () => renderRecentSessionInner(),
+  );
+}
+
+function renderRecentSessionInner() {
   const box = $("rs-session-body");
   box.textContent = "";
   const p = recentProject();
@@ -770,6 +900,16 @@ function renderRecentSession() {
 }
 
 function renderActiveProjects() {
+  const current = recentProject();
+  const others = PROJECTS.filter((p) => !current || p.project_id !== current.project_id).slice(0, 4);
+  renderIfChanged(
+    "rs-projects",
+    sigOf(others, (p) => `${p.project_id}:${p.state ?? ""}`),
+    () => renderActiveProjectsInner(),
+  );
+}
+
+function renderActiveProjectsInner() {
   const sec = $("rs-projects");
   const box = $("rs-projects-body");
   box.textContent = "";
@@ -819,6 +959,15 @@ function actMeta(e) {
 }
 
 function renderActions() {
+  const rows0 = LAST_ACTIVITY.slice(0, 6);
+  renderIfChanged(
+    "rs-actions",
+    sigOf(rows0, (e) => `${e.path ?? ""}:${e.kind ?? ""}:${e.state ?? ""}:${e.ts ?? 0}`),
+    () => renderActionsInner(),
+  );
+}
+
+function renderActionsInner() {
   const box = $("rs-actions-body");
   box.textContent = "";
   const rows = LAST_ACTIVITY.slice(0, 6);
@@ -857,6 +1006,14 @@ function renderFeed(entries) {
 }
 
 function renderProjectsSettings() {
+  renderIfChanged(
+    "proj-list",
+    sigOf(PROJECTS, (p) => `${p.project_id}:${p.state ?? ""}:${p.display_name ?? ""}`),
+    () => renderProjectsSettingsInner(),
+  );
+}
+
+function renderProjectsSettingsInner() {
   const list = $("proj-list");
   list.textContent = "";
   if (!PROJECTS.length) {
@@ -991,10 +1148,31 @@ function renderFiles(r) {
   const body = $("files-body");
   const sum = $("files-summary");
   if (!body) return;
+  const project = selectedProject();
+  // render-on-change (round 27): the same 300 rows re-creating every
+  // 2s was half the strobing; the signature covers path/size/state/
+  // pinned/placeholder - anything the row can visually say
+  const files = (r && r.files) || [];
+  renderIfChanged(
+    "files-body",
+    `${project}::${sigOf(files, (f) => `${f.path}:${f.size ?? 0}:${f.state ?? ""}:${f.pinned ? 1 : 0}:${f.placeholder ? 1 : 0}`)}`,
+    () => renderFilesInner(r, project),
+  );
+  if (sum) {
+    const s = (r && r.summary) || {};
+    if (!files.length) sum.textContent = "";
+    else sum.textContent = t("files.summary", {
+      files: s.files ?? 0, synced: s.synced ?? 0, syncing: s.syncing ?? 0, conflict: s.conflict ?? 0,
+    });
+  }
+}
+
+function renderFilesInner(r, project) {
+  const body = $("files-body");
+  if (!body) return;
   body.innerHTML = "";
   if (!r || r.ok !== true || !r.files || r.files.length === 0) {
     body.innerHTML = `<tr><td colspan="4" class="empty">${esc(t("empty.files"))}</td></tr>`;
-    sum.textContent = "";
     FOOT.files = 0;
     FOOT.synced = 0;
     renderFooter();
@@ -1005,12 +1183,6 @@ function renderFiles(r) {
   FOOT.synced = Number(s.synced) || 0;
   FOOT.conflicts = Number(s.conflict) || 0;
   paintState();
-
-  sum.textContent = t("files.summary", {
-    files: s.files ?? 0, synced: s.synced ?? 0, syncing: s.syncing ?? 0, conflict: s.conflict ?? 0,
-  });
-
-  const project = selectedProject();
 
   for (const f of r.files.slice(0, 300)) {
     const [dir, base] = splitPath(f.path);
@@ -1035,14 +1207,30 @@ function renderFiles(r) {
     const tdAct = document.createElement("td");
     const rowActions = document.createElement("div");
     rowActions.className = "row-actions";
+    // round 27: the four quick-actions the retro asked for by name -
+    // Open, Download, Duplicate, Share - plus the pin/copy/recall the
+    // row already had. All hover-revealed (row-actions CSS), all honest
+    // about placeholders.
+    const openBtn = qaBtn("open", t("btn.open"), f.path);
+    const dlBtn = qaBtn("download", t("btn.download"), f.path);
+    const dupBtn = qaBtn("duplicate", t("btn.duplicate"), f.path);
+    const shareBtn = qaBtn("share", t("btn.share"), f.path);
     const pinBtn = fileActionBtn("pin", f.pinned ? t("btn.unpin") : t("btn.pin"), f.path);
     pinBtn.dataset.act = f.pinned ? "unpin" : "pin";
     pinBtn.style.color = f.pinned ? "var(--warn-fg)" : "";
+    rowActions.appendChild(openBtn);
+    rowActions.appendChild(dlBtn);
+    rowActions.appendChild(dupBtn);
+    rowActions.appendChild(shareBtn);
     rowActions.appendChild(pinBtn);
     rowActions.appendChild(fileActionBtn("copy", t("btn.copy"), f.path));
     if (f.placeholder) rowActions.appendChild(fileActionBtn("recall", t("btn.recall"), f.path));
     tdAct.appendChild(rowActions);
 
+    openBtn.addEventListener("click", () => doFileOpen(project, f.path));
+    dlBtn.addEventListener("click", () => doFileDownload(project, f.path));
+    dupBtn.addEventListener("click", () => doFileDuplicate(project, f.path));
+    shareBtn.addEventListener("click", () => doFileShare(project, f.path));
     pinBtn.addEventListener("click", () => doFilePin(project, f.path, f.pinned));
     tdAct.querySelector('[data-act="copy"]').addEventListener("click", copyBtn);
     const recallBtnEl = tdAct.querySelector('[data-act="recall"]');
@@ -1051,6 +1239,20 @@ function renderFiles(r) {
     tr.append(tdName, tdSize, tdState, tdAct);
     body.appendChild(tr);
   }
+}
+
+/* a quick-action button (Open/Download/Duplicate/Share): icon + label,
+   dataset carries the action for delegation */
+function qaBtn(act, label, path) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "btn btn-icon btn-qa btn-qa-labeled";
+  btn.setAttribute("aria-label", label);
+  btn.title = label;
+  btn.dataset.path = path;
+  btn.dataset.act = act;
+  btn.innerHTML = act === "open" ? OPEN_IC : act === "download" ? DL_IC : act === "duplicate" ? DUP_IC : SHARE_IC;
+  return btn;
 }
 
 function selectedProject() {
@@ -1066,6 +1268,10 @@ async function refreshFiles() {
   const key = `${project}::${filter}`;
   if (FILES_KEY !== key) {
     FILES_KEY = key;
+    // the skeleton is NOT a signature state: invalidate so the real
+    // rows always land, even when the recovered data matches the old
+    // signature (otherwise the skeleton could freeze on screen)
+    RENDER_SIGS.delete("files-body");
     renderFilesSkeleton();
   }
   const q = filter ? `&q=${encodeURIComponent(filter)}` : "";
@@ -1073,7 +1279,12 @@ async function refreshFiles() {
     LAST_FILES = await getJSON(`/api/v1/files?project=${encodeURIComponent(project)}${q}`);
     renderFiles(LAST_FILES);
   } catch {
-    if (!LAST_FILES || LAST_FILES.ok !== true) renderFilesError();
+    if (!LAST_FILES || LAST_FILES.ok !== true) {
+      // same invalidation for the error rows: recovery with identical
+      // data must still re-render
+      RENDER_SIGS.delete("files-body");
+      renderFilesError();
+    }
   }
 }
 
@@ -1086,6 +1297,58 @@ async function doFilePin(project, path, pinned) {
   refreshFiles();
   refreshAssetsPanel();
   refreshFeed();
+}
+
+/* ============================== file quick-actions ==============================
+   Round 27: rows are no longer static. Open reveals in the OS file
+   manager, Download streams the bytes, Duplicate copies beside the
+   original, Share puts the path on the clipboard. All against the
+   daemon's loopback endpoints; all honest about placeholders (a
+   0-byte placeholder cannot be downloaded or duplicated - the daemon
+   says recall-first, we show it). */
+
+const OPEN_IC = '<svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" aria-hidden="true"><path d="M2.2 7.4c0-2.3 1.9-4.2 4.2-4.2h6.2c.8 0 1.4.6 1.4 1.4v6.2c0 2.3-1.9 4.2-4.2 4.2H3.6c-.8 0-1.4-.6-1.4-1.4z"/><path d="M5.4 8.3l1.9-1.9c.4-.4 1-.4 1.4 0l1.9 1.9"/><path d="M8 6.7v4.2"/></svg>';
+const DL_IC = '<svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5v7.5M4.5 7L8 10.5 11.5 7M3 13h10"/></svg>';
+const DUP_IC = '<svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V4A1.5 1.5 0 0 0 9 2.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5"/></svg>';
+const SHARE_IC = '<svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><circle cx="12.5" cy="3.5" r="1.7"/><circle cx="3.5" cy="8" r="1.7"/><circle cx="12.5" cy="12.5" r="1.7"/><path d="M10.9 4.5l-6.8 2.6M5.1 8.9l6.8 2.6"/></svg>';
+
+async function doFileOpen(project, path) {
+  if (!project || !path) return;
+  const r = await postJSON("/api/v1/file/open", { project_id: project, path });
+  if (r && r.ok === false) toast(t("toast.denied", { e: r.error }), true);
+  else toast(t("toast.openedFolder"));
+}
+
+function doFileDownload(project, path) {
+  if (!project || !path) return;
+  // the browser owns the download UX (progress, cancel, save location);
+  // we just point it at the daemon's streaming endpoint
+  const a = document.createElement("a");
+  a.href = `/api/v1/file/download?project=${encodeURIComponent(project)}&path=${encodeURIComponent(path)}`;
+  a.download = "";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  toast(t("toast.downloading"));
+}
+
+async function doFileDuplicate(project, path) {
+  if (!project || !path) return;
+  const r = await postJSON("/api/v1/file/duplicate", { project_id: project, path });
+  if (r && r.ok === false) toast(t("toast.denied", { e: r.error }), true);
+  else {
+    toast(t("toast.duplicated"));
+    refreshFiles();
+    refreshAssetsPanel();
+  }
+}
+
+async function doFileShare(project, path) {
+  // share = the path, on the clipboard, ready for chat/email; the sync
+  // layer guarantees every peer resolves the same path
+  if (!path) return;
+  const ok = await copyText(path);
+  toast(ok ? t("toast.copiedPath") : t("toast.denied", { e: "clipboard blocked" }), !ok);
 }
 
 /* ============================== recent assets (dashboard) ==============================
@@ -1118,41 +1381,60 @@ async function refreshAssetsPanel() {
 }
 
 function renderRecentAssets(r, pid) {
-  const body = $("assets-body");
-  const count = $("assets-count");
-  if (!body) return;
-  body.textContent = "";
   const files = (r && r.files) || [];
   const sum = (r && r.summary) || {};
-  count.textContent = files.length ? String(sum.files ?? files.length) : "";
-  if (!files.length) {
-    const tr = document.createElement("tr");
-    tr.innerHTML = `<td colspan="3" class="empty">${esc(t("empty.files"))}</td>`;
-    body.appendChild(tr);
-    return;
-  }
   const rows = files
     .slice()
     .sort((a, b) => (b.mtime ?? 0) - (a.mtime ?? 0))
     .slice(0, 8);
+  renderIfChanged(
+    "assets-body",
+    `${pid}:${sigOf(rows, (f) => `${f.path}:${f.size ?? 0}:${f.state ?? ""}:${f.pinned ? 1 : 0}`)}`,
+    () => renderRecentAssetsInner(rows, pid),
+  );
+  const count = $("assets-count");
+  if (count) count.textContent = files.length ? String(sum.files ?? files.length) : "";
+}
+
+function renderRecentAssetsInner(rows, pid) {
+  const body = $("assets-body");
+  if (!body) return;
+  body.textContent = "";
+  if (!rows.length) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td colspan="4" class="empty">${esc(t("empty.files"))}</td>`;
+    body.appendChild(tr);
+    return;
+  }
   rows.forEach((f) => {
     const [dir, base] = splitPath(f.path);
     const [cls, key] = stFor(f);
     const tr = document.createElement("tr");
     tr.title = esc(f.path);
+    // round 27: size next to the name (a 48 GB BRAW row must SAY it),
+    // and hover quick-actions: Open reveals it in the OS file manager,
+    // Pin keeps it on this machine - the two things a dashboard row is FOR
     tr.innerHTML =
       `<td class="td-file">` +
       `<span class="f-name">${fileIcon(f.path)}<span class="f-base" title="${esc(f.path)}">${esc(base)}</span></span>` +
       (dir ? `<span class="f-dir">${esc(dir)}</span>` : "") +
       `</td>` +
+      `<td class="num td-size" title="${esc(t("th.size"))}">${fmtBytes(f.size)}</td>` +
       `<td class="td-status"><span class="f-state s-${cls}" title="${esc(t(key))}">${ST_ICONS[cls]}<span class="sr-only">${esc(t(key))}</span></span></td>` +
       `<td class="td-pin">` +
-      `<button type="button" class="btn btn-icon${f.pinned ? " is-pinned" : ""}" data-pin="${esc(f.path)}" ` +
-      `data-pinned="${f.pinned ? "1" : ""}" aria-label="${f.pinned ? esc(t("btn.unpin")) : esc(t("btn.pin"))}">${PIN_IC}</button>` +
-      `</td>`;
+      `<span class="row-actions">` +
+      `<button type="button" class="btn btn-icon btn-qa" data-open="${esc(f.path)}" aria-label="${esc(t("btn.open"))}" title="${esc(t("btn.open"))}">${OPEN_IC}</button>` +
+      `<button type="button" class="btn btn-icon btn-qa${f.pinned ? " is-pinned" : ""}" data-pin="${esc(f.path)}" ` +
+      `data-pinned="${f.pinned ? "1" : ""}" aria-label="${f.pinned ? esc(t("btn.unpin")) : esc(t("btn.pin"))}" title="${f.pinned ? esc(t("btn.unpin")) : esc(t("btn.pin"))}">${PIN_IC}</button>` +
+      `</span></td>`;
     tr.addEventListener("click", (ev) => {
-      if (ev.target.closest("[data-pin]")) return;
+      if (ev.target.closest("[data-pin]") || ev.target.closest("[data-open]")) return;
       jumpToProject(pid);
+    });
+    const openBtn = tr.querySelector("[data-open]");
+    openBtn.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      doFileOpen(pid, f.path);
     });
     const pinBtn = tr.querySelector("[data-pin]");
     pinBtn.addEventListener("click", (ev) => {
@@ -1596,11 +1878,63 @@ async function doRecall(project, path) {
 
 /* ============================== flags ============================== */
 
+/* round 27: every flag carries a plain-language description - "when
+   one clicks enable it gives explanation as to what it does just
+   there, no obnoxious big boxes". The description is one quiet line
+   under the name (always present), and a click toggles the flag THEN
+   shows a toast naming what just changed. Small, inline, dismisses
+   itself. */
+const FLAG_HELP = {
+  packing_enabled: {
+    line: "Deduplicates file data between writes - only what changed travels.",
+    flip: "Packing on: edits sync as small deltas instead of whole files.",
+  },
+  tiering_enabled: {
+    line: "Moves rarely-used chunks off local disk to make room (pinned files stay).",
+    flip: "Tiering on: cold data frees local space automatically.",
+  },
+  delta_fold_enabled: {
+    line: "Folds journal history into periodic versions - the restore points.",
+    flip: "Delta folding on: history compacts into restore points.",
+  },
+  compression_enabled: {
+    line: "Squeezes chunks before they travel or land (zstd).",
+    flip: "Compression on: transfers and storage shrink.",
+  },
+  placeholder_driver: {
+    line: "How remote files appear locally: native (Explorer-integrated) or plain.",
+    flip: "Placeholder driver set.",
+  },
+  normalize_containers: {
+    line: "Splits container media (MXF/QT) into per-track chunks - big streaming wins, newer path.",
+    flip: "Container normalization on: media is chunked per track on the next pass.",
+  },
+  live_presence: {
+    line: "Shows where teammates are scrubbing in the timeline, live (this device only).",
+    flip: "Live presence ON for this device at the next swarm join.",
+  },
+  semantic_merge: {
+    line: "Auto-merges timeline re-cuts when editors touched different frames.",
+    flip: "Semantic merge on: frame-disjoint re-cuts merge instead of conflicting.",
+  },
+};
+
 function renderFlags(flags) {
+  const grid = $("flag-grid");
+  if (!grid) return;
+  renderIfChanged(
+    "flag-grid",
+    sigOf(flags || [], (f) => `${f.name}:${f.value}`),
+    () => renderFlagsInner(flags),
+  );
+}
+
+function renderFlagsInner(flags) {
   const grid = $("flag-grid");
   grid.innerHTML = "";
   for (const f of flags || []) {
     const on = String(f.value).toLowerCase() !== "false";
+    const help = FLAG_HELP[f.name] || { line: "", flip: "" };
     const div = document.createElement("button");
     div.type = "button";
     div.className = "flag" + (on ? " on" : "");
@@ -1610,11 +1944,20 @@ function renderFlags(flags) {
     div.dataset.next = on ? "false" : "true";
     div.innerHTML =
       `<span class="flag-name">${esc(f.name)}</span>` +
-      `<span class="flag-state">${f.name === "placeholder_driver" ? esc(f.value) : on ? "on" : "off"}</span>`;
+      `<span class="flag-state">${f.name === "placeholder_driver" ? esc(f.value) : on ? "on" : "off"}</span>` +
+      (help.line ? `<span class="flag-desc">${esc(help.line)}</span>` : "");
     div.addEventListener("click", async (ev) => {
       const btn = ev.currentTarget;
       const r = await postJSON("/api/v1/flags", { name: btn.dataset.name, value: btn.dataset.next });
-      if (r && r.ok === false) toast(t("toast.denied", { e: r.error }), true);
+      if (r && r.ok === false) {
+        toast(t("toast.denied", { e: r.error }), true);
+        return;
+      }
+      // the explanation lands WITH the action, naming what it just did
+      const flippedTo = btn.dataset.next === "true";
+      const flipMsg = FLAG_HELP[btn.dataset.name] ? FLAG_HELP[btn.dataset.name].flip : "";
+      if (flipMsg && flippedTo) toast(flipMsg);
+      else if (help.flip && !flippedTo) toast(`${btn.dataset.name} off`);
       refreshAll();
     });
     grid.appendChild(div);
@@ -1881,6 +2224,7 @@ document.addEventListener("keydown", (ev) => {
     return;
   }
   if (ev.key === "g") { gPending = true; window.setTimeout(() => { gPending = false; }, 900); return; }
+  if (gPending && ev.key === "h") { showView("howto"); gPending = false; return; }
   if (gPending) {
     const map = { d: "dashboard", f: "files", s: "settings" };
     const view = map[ev.key.toLowerCase()];
@@ -1902,6 +2246,16 @@ function copyBtn(ev) {
     .catch(() => {});
 }
 
+/* promise-shaped clipboard write (quick-actions await it to report) */
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /* ============================== actions ============================== */
 
 async function attachFlow(root, project) {
@@ -1910,8 +2264,10 @@ async function attachFlow(root, project) {
   if (!r.ok) toast(t("toast.failed", { e: r.error }), true);
   else {
     toast(t("toast.attached"));
-    const ws = $("ws-path");
-    if (ws) ws.value = "";
+    for (const id of ["attach-root", "attach-project", "ob-root"]) {
+      const el = $(id);
+      if (el) el.value = "";
+    }
     closePanels();
   }
   refreshAll();
@@ -1998,6 +2354,7 @@ function rerenderAllDynamic() {
 /* card cascade indexes */
 stagger(document.querySelector(".dash-grid"), ".card");
 stagger(document.querySelector(".settings-col"), ".card");
+stagger(document.querySelector(".howto-grid"), ".card");
 
 /* boot */
 applyI18n();

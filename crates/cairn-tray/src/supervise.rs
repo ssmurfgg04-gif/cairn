@@ -95,9 +95,11 @@ impl Supervision {
         }
     }
 
-    /// Attempts that never saw the daemon up (tests assert the ladder;
-    /// `cfg(test)` keeps the non-test windows build warning-clean).
-    #[cfg(test)]
+    /// Consecutive spawn attempts without ever seeing the daemon up.
+    /// Public since round 27: the tray's spawn path reads it to decide
+    /// whether a stale `cairn.exe` should be swept before the next
+    /// spawn (crash-loop path only — attempt 1 spawns clean; the
+    /// daemon-side self-dedup resolves the startup race).
     pub fn attempts(&self) -> u32 {
         self.attempts
     }
