@@ -160,7 +160,10 @@ jobs:
       - run: rustup target add x86_64-pc-windows-msvc
       - uses: Swatinem/rust-cache@v2
         with: { prefix-key: beta-cross }
-      - run: cargo check --target x86_64-pc-windows-msvc -p cairn-shell-ext -p cairn-tray -p cairn-fs-win
+      # cairn-fs-win pulls blake3 (C build script: needs MSVC's lib.exe,
+      # absent on a linux host) — it compiles on the windows-* shards
+      # below instead; the linux cross-check covers the COM-only crates
+      - run: cargo check --target x86_64-pc-windows-msvc -p cairn-shell-ext -p cairn-tray
 
   linux-lint:
     runs-on: ubuntu-latest

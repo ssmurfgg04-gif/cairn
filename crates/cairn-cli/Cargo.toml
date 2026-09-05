@@ -46,18 +46,6 @@ keyring = { workspace = true }
 once_cell = "1"
 rustls = { workspace = true }
 
-[target.'cfg(windows)'.dependencies]
-# round 27 "attach just works": the dashboard's native folder picker
-# (SHBrowseForFolderW — the SAME legacy dialog the tray ships, no COM
-# apartment juggling) — the user's first instinct on the attach scene
-# is to CLICK, not to type a path. Same windows crate line as the
-# other crates (0.58), only the shell/com features added.
-windows = { version = "0.58", features = [
-    "Win32_Foundation",
-    "Win32_System_Com",
-    "Win32_UI_Shell",
-] }
-
 [lints]
 workspace = true
 

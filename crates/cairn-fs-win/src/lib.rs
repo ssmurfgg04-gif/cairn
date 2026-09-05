@@ -59,6 +59,13 @@ pub fn is_syncable(path: &str) -> bool {
 #[cfg(windows)]
 pub mod cfapi;
 
+/// Native folder picker (round 27): the OS dialog behind the dashboard's
+/// Browse button. Same FFI-boundary pattern as badge/cfapi — the module
+/// carries its own documented `allow(unsafe_code)`. The FFI function is
+/// cfg(windows); every host gets a `pick_folder()` answer (non-Windows
+/// hosts get `Unsupported`, the typed path stays the path).
+pub mod dialog;
+
 // Explorer badge layer (P1 #2): the decision state machine is portable and
 // unit-tested everywhere; the FFI is Windows-only and policy-free.
 pub mod badge;

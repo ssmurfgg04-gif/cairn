@@ -1244,77 +1244,18 @@ async fn live_snapshot(State(state): State<Arc<DaemonState>>) -> Json<serde_json
 /// on the async runtime's thread (STA COM + modal), so it runs on the
 /// blocking pool; the request stays open until the user decides.
 async fn pick_folder() -> Json<serde_json::Value> {
-    let picked = tokio::task::spawn_blocking(native_folder_dialog).await;
+    // cairn-fs-win owns the FFI (the badge/cfapi boundary pattern);
+    // cairn-cli stays forbid(unsafe_code) — the dialog is a SAFE call
+    let picked = tokio::task::spawn_blocking(cairn_fs_win::dialog::pick_folder).await;
     match picked {
-        Ok(Picked::Folder(path)) => Json(json!({"ok": true, "path": path})),
+        Ok(cairn_fs_win::dialog::Picked::Folder(path)) => Json(json!({"ok": true, "path": path})),
         // user closed the dialog — not an error
-        Ok(Picked::Cancelled) => Json(json!({"ok": true, "cancelled": true})),
-        Ok(Picked::Unsupported) => Json(json!({"ok": true, "unsupported": true})),
+        Ok(cairn_fs_win::dialog::Picked::Cancelled) => Json(json!({"ok": true, "cancelled": true})),
+        Ok(cairn_fs_win::dialog::Picked::Unsupported) => {
+            Json(json!({"ok": true, "unsupported": true}))
+        }
         Err(e) => Json(json!({"ok": false, "error": format!("picker failed: {e}")})),
     }
-}
-
-/// What the native folder dialog decided. (Folder/Cancelled are only
-/// constructed on Windows — the non-Windows stub returns Unsupported;
-/// allow dead_code so the linux clippy gate stays clean.)
-#[allow(dead_code)]
-enum Picked {
-    Folder(String),
-    Cancelled,
-    Unsupported,
-}
-
-#[cfg(windows)]
-fn native_folder_dialog() -> Picked {
-    // SAFETY: the SAME SHBrowseForFolderW sequence the tray has shipped
-    // since round 19 (tray.rs pick_folder) — the legacy folder dialog:
-    // no COM apartment juggling, no IFileDialog generic bounds, works
-    // with a NULL owner HWND (the daemon has no window). The PIDL is
-    // freed with CoTaskMemFree exactly like the tray does.
-    unsafe {
-        use windows::core::PCWSTR;
-        use windows::Win32::System::Com::CoTaskMemFree;
-        use windows::Win32::UI::Shell::{SHBrowseForFolderW, SHGetPathFromIDListW, BROWSEINFOW};
-
-        let title: Vec<u16> = "Choose a project folder"
-            .encode_utf16()
-            .chain(std::iter::once(0))
-            .collect();
-        let mut display = [0u16; 260];
-        let bi = BROWSEINFOW {
-            // HWND is a newtype in windows 0.58 — null wrapped, not raw
-            hwndOwner: windows::Win32::Foundation::HWND(std::ptr::null_mut()), // the daemon owns no window
-            pidlRoot: std::ptr::null_mut(),
-            pszDisplayName: windows::core::PWSTR(display.as_mut_ptr()),
-            lpszTitle: PCWSTR(title.as_ptr()),
-            ulFlags: 0x0040, // BIF_RETURNONLYFSDIRS
-            lpfn: None,
-            lParam: windows::Win32::Foundation::LPARAM(0),
-            iImage: 0,
-        };
-        let pidl = SHBrowseForFolderW(&bi);
-        if pidl.is_null() {
-            return Picked::Cancelled; // user closed the dialog
-        }
-        let mut path = [0u16; 260];
-        let ok = SHGetPathFromIDListW(pidl, &mut path).as_bool();
-        CoTaskMemFree(Some(pidl.cast()));
-        if !ok {
-            return Picked::Cancelled;
-        }
-        let len = path.iter().position(|&c| c == 0).unwrap_or(0);
-        if len == 0 {
-            return Picked::Cancelled;
-        }
-        Picked::Folder(String::from_utf16_lossy(&path[..len]))
-    }
-}
-
-#[cfg(not(windows))]
-fn native_folder_dialog() -> Picked {
-    // non-Windows: no dialog from the daemon (Linux/macOS attach flows
-    // type a path or use the CLI) — the UI offers the text input
-    Picked::Unsupported
 }
 
 /// Resolve a project-relative path inside the project's attached root,

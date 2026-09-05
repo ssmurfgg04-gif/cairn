@@ -339,7 +339,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
- "windows",
 ]
 
 [[package]]
