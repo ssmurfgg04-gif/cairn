@@ -3,380 +3,415 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>cairn — local console</title>
-<meta name="theme-color" content="#f7f7f9">
+<title>cairn</title>
+<meta name="theme-color" content="#fbfbfa">
 <link rel="icon" href='data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><rect x="9" y="3.5" width="6" height="4" rx="1.2" fill="%23087cff"/><rect x="6.5" y="9" width="11" height="4" rx="1.2" fill="%230059d1"/><rect x="3.5" y="14.5" width="17" height="4" rx="1.2" fill="%230a0a0a"/></svg>'>
-<!-- webfont: the Space pattern, verbatim — preconnect both origins, then the
-     stylesheet itself loads non-blocking (media=print flips to all on load).
-     First paint renders on the system stack, the identity fonts swap in
-     ~200 ms later, and offline it simply never arrives (fallbacks carry). -->
+<!-- theme before first paint: no flash of the wrong scheme -->
+<script>
+(function () {
+  var pref = null;
+  try { pref = localStorage.getItem("cairn-theme"); } catch (e) {}
+  var dark = pref === "dark" || (!pref && window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.dataset.theme = dark ? "dark" : "light";
+})();
+</script>
+<!-- webfonts: preconnect both origins, the stylesheet itself loads
+     non-blocking (media=print flips to all on load). First paint rides
+     the system stack, identity fonts swap in ~200 ms, offline never
+     arrives (fallbacks carry). -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,100..1000&family=Google+Sans+Flex:wght@100..1000&family=Google+Sans+Code:wght@400..600&display=swap" media="print" onload="this.media='all'">
-<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,100..1000&family=Google+Sans+Flex:wght@100..1000&family=Google+Sans+Code:wght@400..600&display=swap"></noscript>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400..700&family=Google+Sans+Code:wght@400..600&display=swap" media="print" onload="this.media='all'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400..700&family=Google+Sans+Code:wght@400..600&display=swap"></noscript>
 <link rel="stylesheet" href="/assets/app.css">
 </head>
 <body>
-<!-- the Space shell: isolate keeps the aurora stacked under the stage/footer
-     z-layers (without it the blurred fields paint through the footer); the
-     aurora lives INSIDE the shell, pointer-events none, blurred 18px -->
-<div class="shell">
-  <div class="bg-aurora" aria-hidden="true"></div>
+<a class="skip" href="#main" data-i18n="a11y.skip">skip to content</a>
 
-  <div class="shell-content">
+<!-- ================= zero roots: the onboarding stage =================
+     One mark, one headline, one sentence. The first Continue reveals
+     the attach scene; the second attaches. Daemon down -> the honest
+     error card. No aurora, no glass: a quiet canvas and one soft light. -->
+<section class="ob" id="onboarding" hidden>
+  <div class="ob-tint" aria-hidden="true"></div>
+  <div class="ob-copy reveal">
+    <span class="ob-mark" aria-hidden="true">
+      <svg width="44" height="44" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+        <rect x="9" y="3.5" width="6" height="4" rx="1.2" opacity="0.7"/>
+        <rect x="6.5" y="9" width="11" height="4" rx="1.2" opacity="0.85"/>
+        <rect x="3.5" y="14.5" width="17" height="4" rx="1.2"/>
+      </svg>
+    </span>
+    <h1 class="ob-title" id="ob-title" data-i18n="ob.title">Welcome to Cairn</h1>
+    <p class="ob-sub" id="ob-sub" data-i18n="ob.sub">Choose a project folder to attach.</p>
 
-    <!-- the Space onboarding stage — zero roots ONLY. Full-viewport light
-         glass, not a card: centered step-copy (670px max), the 76px mark,
-         the attach affordance. Attached (projects > 0) -> this hides and
-         the cairn console (.frame) takes over; the 82px footer stays. -->
-    <section class="stage" id="onboarding" hidden>
-      <div class="stage-motion">
-        <div class="step centered">
-          <div class="step-copy reveal">
-            <span class="ob-mark" aria-hidden="true">
-              <svg width="36" height="36" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-                <rect x="9" y="3.5" width="6" height="4" rx="1.2" opacity="0.75"/>
-                <rect x="6.5" y="9" width="11" height="4" rx="1.2" opacity="0.88"/>
-                <rect x="3.5" y="14.5" width="17" height="4" rx="1.2"/>
-              </svg>
-            </span>
-            <h1 id="ob-title" data-i18n="ob.title.welcome">Welcome to Cairn</h1>
-            <p id="ob-sub" data-i18n="ob.sub.welcome">Choose a project folder to attach.</p>
+    <!-- progressive disclosure: first Continue reveals the attach scene -->
+    <button type="button" class="btn btn-primary ob-continue" id="ob-continue" data-i18n="ob.continue">Continue</button>
 
-            <!-- progressive disclosure, Space-style: the first Continue
-                 reveals the attach scene (input + CLI); the second attaches.
-                 The zero-roots first paint is pure Space: mark, h1, p. -->
-            <div class="scene-step" id="ob-attach" hidden>
-              <div class="ob-input-row">
-                <input id="ob-root" class="input" type="text" spellcheck="false"
-                       data-i18n-attr="placeholder:attach.root" placeholder="/path/to/workspace — attach a root"
-                       aria-label="project folder path">
-                <button type="button" class="btn btn-secondary" id="ob-cli-copy-btn" data-copy="cairn attach /path/to/project" data-i18n="ob.cli">copy CLI</button>
-              </div>
-              <p class="ob-cli"><code id="ob-cli-cmd">cairn attach /path/to/project</code><button type="button" class="btn btn-ghost btn-copy" id="ob-cli-copy" data-copy="cairn attach /path/to/project">copy</button></p>
-            </div>
-
-            <!-- daemon unreachable at zero roots: the Space error-fallback
-                 card — the mark, one plain sentence, no spinner -->
-            <div class="error-fallback-card" id="ob-error" hidden>
-              <span class="error-fallback-mark" aria-hidden="true">
-                <svg width="36" height="36" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-                  <rect x="9" y="3.5" width="6" height="4" rx="1.2" opacity="0.75"/>
-                  <rect x="6.5" y="9" width="11" height="4" rx="1.2" opacity="0.88"/>
-                  <rect x="3.5" y="14.5" width="17" height="4" rx="1.2"/>
-                </svg>
-              </span>
-              <p class="ef-title" data-i18n="ob.daemonDown">Cannot reach the daemon</p>
-              <p class="ef-sub" data-i18n="ob.daemonDownSub">Start it with cairn daemon, then reload.</p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- the cairn console: attached state. Cairn's own language for
-         Files/Team/Live — the Space shell + 82px footer still frame it. -->
-    <div class="frame" id="frame" hidden>
-      <aside class="side">
-        <div class="brand">
-          <span class="brand-mark" aria-hidden="true">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
-              <rect x="9" y="3.5" width="6" height="4" rx="1.2" opacity="0.75"/>
-              <rect x="6.5" y="9" width="11" height="4" rx="1.2" opacity="0.88"/>
-              <rect x="3.5" y="14.5" width="17" height="4" rx="1.2"/>
-            </svg>
-          </span>
-          <div>
-            <h1 class="brand-name">cairn</h1>
-            <p class="brand-sub" data-i18n="brand.sub">local console</p>
-          </div>
-        </div>
-        <nav class="nav" id="nav" aria-label="console sections">
-          <a href="#overview" class="nav-item is-active" data-i18n="nav.overview">Overview</a>
-          <a href="#projects" class="nav-item" data-i18n="nav.projects">Projects</a>
-          <a href="#files" class="nav-item" data-i18n="nav.files">Files</a>
-          <a href="#activity" class="nav-item" data-i18n="nav.activity">Activity</a>
-          <a href="#review" class="nav-item" data-i18n="nav.review">Review</a>
-          <a href="#team" class="nav-item" data-i18n="nav.team">Team</a>
-          <a href="#live" class="nav-item" data-i18n="nav.live">Live</a>
-          <a href="#locks" class="nav-item" data-i18n="nav.locks">Locks</a>
-          <a href="#versions" class="nav-item" data-i18n="nav.versions">Versions</a>
-          <a href="#pins" class="nav-item" data-i18n="nav.pins">Pins</a>
-          <a href="#recall" class="nav-item" data-i18n="nav.recall">Recall</a>
-          <a href="#storage" class="nav-item" data-i18n="nav.storage">Storage</a>
-          <a href="#flags" class="nav-item" data-i18n="nav.flags">Kill switches</a>
-          <a href="#doctor" class="nav-item" data-i18n="nav.doctor">Doctor</a>
-        </nav>
-        <div class="side-foot">
-          <div class="lang-row" role="group" aria-label="language">
-            <button type="button" class="lang" data-lang="en">EN</button>
-            <button type="button" class="lang" data-lang="de-DE">DE</button>
-            <button type="button" class="lang" data-lang="ja-JP">JA</button>
-            <button type="button" class="lang" data-lang="zh-CN">中文</button>
-          </div>
-          <p class="meta">daemon <span id="daemon-version">—</span></p>
-          <p class="meta">proto <span id="daemon-proto">—</span></p>
-          <p class="meta" id="daemon-uptime">uptime —</p>
-        </div>
-      </aside>
-
-      <main class="main">
-        <header class="head">
-          <div>
-            <p class="kicker" data-i18n="head.kicker">project folder</p>
-            <h2 class="title" id="project-name" data-i18n="head.noRoots">no roots attached</h2>
-          </div>
-          <div class="head-right">
-            <div class="search" id="search">
-              <input id="search-input" class="input search-input" type="search"
-                     autocomplete="off" spellcheck="false"
-                     data-i18n-attr="placeholder:search.placeholder" placeholder="search files, projects, reviews…">
-              <div class="search-drop" id="search-drop" hidden></div>
-            </div>
-            <span class="state-chip" id="state-chip"><span class="dot"></span><span id="state-label">checking</span></span>
-            <span class="state-chip chip-update" id="update-chip" hidden><span class="dot"></span><span id="update-label">update</span></span>
-          </div>
-        </header>
-
-        <section id="overview" class="grid">
-          <article class="card card-wide">
-            <h3 class="card-title" data-i18n="card.sync">Sync state</h3>
-            <div class="stat-row">
-              <div class="stat">
-                <p class="stat-num" id="stat-pending">0</p>
-                <p class="stat-label" data-i18n="stat.pending">outbox pending</p>
-              </div>
-              <div class="stat">
-                <p class="stat-num" id="stat-cursor">0</p>
-                <p class="stat-label" data-i18n="stat.cursor">journal cursor</p>
-              </div>
-              <div class="stat">
-                <p class="stat-num" id="stat-files">0</p>
-                <p class="stat-label" data-i18n="stat.files">files known</p>
-              </div>
-              <div class="stat">
-                <p class="stat-num" id="stat-conflicts">0</p>
-                <p class="stat-label" data-i18n="stat.conflicts">conflict copies</p>
-              </div>
-            </div>
-            <p class="note" data-i18n="note.sync">The daemon watches attached roots, chunks content with FastCDC, and appends every save to the server-linearized journal.</p>
-          </article>
-          <article class="card">
-            <h3 class="card-title" data-i18n="card.i1">Hydration (I1)</h3>
-            <p class="stat-num" id="stat-i1">—</p>
-            <p class="stat-label" data-i18n="stat.i1">first byte, cached</p>
-            <div class="meter"><div class="meter-fill" id="i1-meter"></div></div>
-            <p class="note" data-i18n="note.i1">target &lt; 50 ms · measured from the header cache</p>
-          </article>
-        </section>
-
-        <!-- round 20 (ADR-0023 §2): live presence — other editors' playheads,
-             streamed over SSE when this device opted in (flag off = honest chip) -->
-        <section id="live" class="card">
-          <h3 class="card-title" data-i18n="card.live">Live presence</h3>
-          <p class="note" id="live-note" data-i18n="note.live">See other editors' playheads in real time. Off by default — each editor opts in via the live_presence flag.</p>
-          <div id="live-body" class="team-body">
-            <div class="skel"></div>
-          </div>
-        </section>
-
-        <section id="projects" class="card">
-          <h3 class="card-title" data-i18n="card.projects">Attached projects</h3>
-          <div class="action-row">
-            <input id="attach-root" class="input" type="text" data-i18n-attr="placeholder:attach.root" placeholder="/path/to/workspace — attach a root" spellcheck="false">
-            <input id="attach-project" class="input" type="text" data-i18n-attr="placeholder:attach.project" placeholder="project id (optional)" spellcheck="false">
-            <button type="button" class="btn" id="btn-attach" data-i18n="btn.attach">attach</button>
-          </div>
-          <table class="table">
-            <thead><tr><th data-i18n="th.project">project</th><th data-i18n="th.root">root</th><th data-i18n="th.state">state</th><th class="num" data-i18n="th.files">files</th><th class="num" data-i18n="th.outbox">outbox</th><th data-i18n="th.lastError">last error</th><th data-i18n="th.actions">actions</th></tr></thead>
-            <tbody id="project-body">
-              <tr><td colspan="7" class="empty" data-i18n="empty.projects">No attached projects — attach a root above or via <code>cairn attach</code>.</td></tr>
-            </tbody>
-          </table>
-        </section>
-
-        <section id="files" class="card">
-          <h3 class="card-title" data-i18n="card.files">Project files</h3>
-          <div class="action-row">
-            <select id="files-project" class="input"></select>
-            <input id="files-filter" class="input" type="text" data-i18n-attr="placeholder:files.filter" placeholder="filter by name…" spellcheck="false">
-          </div>
-          <div class="files-summary" id="files-summary"></div>
-          <div class="meter files-meter"><div class="meter-fill" id="files-meter-fill"></div></div>
-          <table class="table">
-            <thead><tr><th data-i18n="th.file">file</th><th class="num" data-i18n="th.size">size</th><th data-i18n="th.sync">sync</th><th data-i18n="th.badges">state</th></tr></thead>
-            <tbody id="files-body">
-              <tr><td colspan="4" class="empty" data-i18n="empty.files">No files yet — attach a project and drop media in.</td></tr>
-            </tbody>
-          </table>
-        </section>
-
-        <section id="activity" class="card">
-          <h3 class="card-title" data-i18n="card.activity">Journal activity</h3>
-          <table class="table">
-            <thead><tr><th class="num" data-i18n="th.seq">seq</th><th data-i18n="th.path">path</th><th data-i18n="th.state">state</th><th class="num" data-i18n="th.size">size</th></tr></thead>
-            <tbody id="activity-body">
-              <tr><td colspan="4" class="empty" data-i18n="empty.activity">No entries yet — saves appear here as they are journaled.</td></tr>
-            </tbody>
-          </table>
-        </section>
-
-        <section id="review" class="card">
-          <h3 class="card-title" data-i18n="card.review">Client review</h3>
-          <div id="review-body" class="review-body">
-            <div class="skel"></div>
-          </div>
-        </section>
-
-        <section id="team" class="card">
-          <h3 class="card-title" data-i18n="card.team">Team</h3>
-          <div id="team-body" class="team-body">
-            <div class="skel"></div>
-          </div>
-        </section>
-
-        <section id="locks" class="card">
-          <h3 class="card-title" data-i18n="card.locks">Active locks</h3>
-          <p class="note" data-i18n="note.locks">NLE project files auto-acquire locks on open; fencing tokens protect every append. "Lock" is the word editors already use — a lease is how it is implemented.</p>
-          <table class="table">
-            <thead><tr><th data-i18n="th.path">path</th><th data-i18n="th.token">token</th><th data-i18n="th.expires">expires</th><th></th></tr></thead>
-            <tbody id="lease-body">
-              <tr><td colspan="4" class="empty" data-i18n="empty.locks">No live locks on this machine.</td></tr>
-            </tbody>
-          </table>
-        </section>
-
-        <section id="versions" class="card">
-          <h3 class="card-title" data-i18n="card.versions">Versions</h3>
-          <p class="note" data-i18n="note.versions">Versions fold from the journal every 5,000 entries, every 24h, on demand, or at project close — every fold is a restore point.</p>
-          <div class="action-row">
-            <select id="snapshot-project" class="input"></select>
-            <input id="snapshot-label" class="input" type="text" data-i18n-attr="placeholder:versions.label" placeholder="label (e.g. before color pass)" spellcheck="false">
-            <button type="button" class="btn" id="btn-snapshot" data-i18n="btn.snapshot">create version</button>
-            <button type="button" class="btn btn-ghost" id="btn-snapshots-refresh" data-i18n="btn.refresh">refresh</button>
-          </div>
-          <table class="table">
-            <thead><tr><th data-i18n="th.commit">commit</th><th data-i18n="th.label">label</th><th class="num" data-i18n="th.seq">seq</th><th data-i18n="th.author">author</th><th data-i18n="th.actions">actions</th></tr></thead>
-            <tbody id="snapshot-body">
-              <tr><td colspan="5" class="empty" data-i18n="empty.versions">No versions yet — create one after the first sync.</td></tr>
-            </tbody>
-          </table>
-        </section>
-
-        <section id="pins" class="card">
-          <h3 class="card-title" data-i18n="card.pins">Pins</h3>
-          <p class="note" data-i18n="note.pins">Pinned files are recalled into local storage and exempt from LRU eviction.</p>
-          <div class="action-row">
-            <select id="pin-project" class="input"></select>
-            <input id="pin-path" class="input" type="text" data-i18n-attr="placeholder:pins.path" placeholder="relative path to pin (e.g. scene.prproj)" spellcheck="false">
-            <button type="button" class="btn" id="btn-pin" data-i18n="btn.pin">pin</button>
-          </div>
-          <table class="table">
-            <thead><tr><th data-i18n="th.file">file</th><th class="num" data-i18n="th.size">size</th><th data-i18n="th.state">state</th><th data-i18n="th.actions">actions</th></tr></thead>
-            <tbody id="pin-body">
-              <tr><td colspan="4" class="empty" data-i18n="empty.pins">No pins on this machine.</td></tr>
-            </tbody>
-          </table>
-        </section>
-
-        <section id="recall" class="card">
-          <h3 class="card-title" data-i18n="card.recall">Recall jobs</h3>
-          <p class="note" data-i18n="note.recall">Recall materializes files from the bucket into local storage (progress per job).</p>
-          <div class="action-row">
-            <select id="recall-project" class="input"></select>
-            <input id="recall-path" class="input" type="text" data-i18n-attr="placeholder:recall.path" placeholder="one path (optional — whole project if empty)" spellcheck="false">
-            <button type="button" class="btn" id="btn-recall" data-i18n="btn.recall">start recall</button>
-          </div>
-          <div id="recall-jobs" class="recall-jobs">
-            <p class="note" data-i18n="empty.recall">No recall jobs yet.</p>
-          </div>
-        </section>
-
-        <section id="storage" class="card">
-          <h3 class="card-title" data-i18n="card.storage">Local storage</h3>
-          <div class="stat-row">
-            <div class="stat">
-              <p class="stat-num" id="stat-blobs">0</p>
-              <p class="stat-label" data-i18n="stat.chunks">local chunks</p>
-            </div>
-            <div class="stat">
-              <p class="stat-num" id="stat-bytes">0</p>
-              <p class="stat-label" data-i18n="stat.cached">bytes cached</p>
-            </div>
-            <div class="stat">
-              <p class="stat-num" id="stat-pinned">0</p>
-              <p class="stat-label" data-i18n="stat.pinned">pinned chunks</p>
-            </div>
-          </div>
-          <p class="note" id="storage-note" data-i18n="note.storage">NLE media caches belong on local scratch; pinned chunks are never evicted. The live quota meter lives in the footer.</p>
-        </section>
-
-        <section id="flags" class="card">
-          <h3 class="card-title" data-i18n="card.flags">Kill switches</h3>
-          <p class="note" data-i18n="note.flags">Flags take effect on the next job run. No restart required. Owner/lead only (RBAC-enforced).</p>
-          <div class="flag-grid" id="flag-grid"></div>
-        </section>
-
-        <section id="doctor" class="card">
-          <h3 class="card-title" data-i18n="card.doctor">Doctor</h3>
-          <div id="doctor-body" class="doctor"></div>
-        </section>
-      </main>
+    <div class="ob-scene" id="ob-attach" hidden>
+      <input id="ob-root" class="input" type="text" spellcheck="false" autocomplete="off"
+             data-i18n-attr="placeholder:attach.root" placeholder="/path/to/workspace"
+             aria-label="project folder path">
+      <button type="button" class="btn btn-primary" id="ob-attach-btn" data-i18n="btn.attach">attach</button>
+      <p class="ob-cli"><code id="ob-cli-cmd">cairn attach /path/to/project</code><button type="button" class="btn btn-ghost btn-copy" id="ob-cli-copy" data-copy="cairn attach /path/to/project" data-i18n="btn.copy">copy</button></p>
     </div>
 
-    <!-- the Space footer: 82px, transparent, no border — it floats on the
-         aurora. Left: step-progress (onboarding) / live status pills
-         (attached). Center: the wordmark. Right: the status pill + the ONE
-         primary action of the current state (Space: continue-wrap). -->
-    <footer class="footer" id="footer">
-      <div class="footer-side">
-        <div class="step-progress" id="foot-progress" role="progressbar" aria-label="onboarding progress" aria-valuemin="1" aria-valuemax="3" aria-valuenow="1">
+    <div class="ob-error" id="ob-error" hidden>
+      <span class="ob-error-mark" aria-hidden="true">
+        <svg width="44" height="44" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+          <rect x="9" y="3.5" width="6" height="4" rx="1.2" opacity="0.35"/>
+          <rect x="6.5" y="9" width="11" height="4" rx="1.2" opacity="0.5"/>
+          <rect x="3.5" y="14.5" width="17" height="4" rx="1.2" opacity="0.65"/>
+        </svg>
+      </span>
+      <p class="ob-error-title" data-i18n="ob.daemonDown">Cannot reach the daemon</p>
+      <p class="ob-error-sub" data-i18n="ob.daemonDownSub">Start it with cairn daemon, then reload.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= attached: the three-destination console ================ -->
+<div class="app" id="app" hidden>
+  <aside class="rail" aria-label="console">
+    <div class="rail-brand">
+      <span class="rail-mark" aria-hidden="true">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+          <rect x="9" y="3.5" width="6" height="4" rx="1.2" opacity="0.7"/>
+          <rect x="6.5" y="9" width="11" height="4" rx="1.2" opacity="0.85"/>
+          <rect x="3.5" y="14.5" width="17" height="4" rx="1.2"/>
+        </svg>
+      </span>
+      <span class="rail-name">cairn</span>
+    </div>
+
+    <nav class="rail-nav" id="nav">
+      <button type="button" class="rail-item is-active" data-view="dashboard" id="nav-dashboard">
+        <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.75" y="1.75" width="5" height="5" rx="1.5"/><rect x="9.25" y="1.75" width="5" height="5" rx="1.5"/><rect x="1.75" y="9.25" width="5" height="5" rx="1.5"/><rect x="9.25" y="9.25" width="5" height="5" rx="1.5"/></svg>
+        <span data-i18n="nav.dashboard">Dashboard</span>
+      </button>
+      <button type="button" class="rail-item" data-view="files" id="nav-files">
+        <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3.5 1.75h6L12.5 4.75v9.5h-9z" stroke-linejoin="round"/><path d="M9.5 1.75v3h3" stroke-linejoin="round"/></svg>
+        <span data-i18n="nav.files">Files</span>
+      </button>
+      <button type="button" class="rail-item" data-view="settings" id="nav-settings">
+        <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2 4.25h12M2 8h12M2 11.75h12"/><circle cx="5.75" cy="4.25" r="1.55" fill="currentColor" stroke="none"/><circle cx="10.25" cy="8" r="1.55" fill="currentColor" stroke="none"/><circle cx="6.75" cy="11.75" r="1.55" fill="currentColor" stroke="none"/></svg>
+        <span data-i18n="nav.settings">Settings</span>
+      </button>
+    </nav>
+
+    <div class="rail-foot">
+      <p class="rail-meta dim" id="rail-version">daemon</p>
+    </div>
+  </aside>
+
+  <div class="col">
+    <header class="topbar">
+      <div class="crumb" id="crumb">
+        <span class="crumb-root">cairn</span>
+        <span class="crumb-sep" aria-hidden="true">/</span>
+        <span class="crumb-leaf" id="crumb-leaf" data-i18n="head.noRoots">no project</span>
+      </div>
+
+      <div class="topbar-right">
+        <div class="search" id="search">
+          <svg class="ic search-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="6.75" cy="6.75" r="4.75"/><path d="M10.5 10.5l3.5 3.5"/></svg>
+          <input id="search-input" class="input search-input" type="search" autocomplete="off" spellcheck="false"
+                 data-i18n-attr="placeholder:search.placeholder" placeholder="search files, projects, reviews" aria-label="search">
+          <div class="search-drop" id="search-drop" hidden></div>
+        </div>
+
+        <span class="state-chip" id="state-chip"><span class="dot"></span><span id="state-label">checking</span></span>
+        <span class="state-chip chip-update" id="update-chip" hidden><span class="dot"></span><span id="update-label">update</span></span>
+
+        <button type="button" class="btn btn-icon" id="theme-toggle" aria-label="toggle dark mode" title="dark / light">
+          <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 1 0-13z"/></svg>
+        </button>
+
+        <button type="button" class="btn btn-primary btn-add" id="btn-add">
+          <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
+          <span data-i18n="btn.add">Add project</span>
+        </button>
+      </div>
+    </header>
+
+    <main class="main" id="main">
+      <!-- ============ DASHBOARD: the executive overview ============
+           Two cards, nothing else. Left: pinned assets across projects.
+           Right: sessions with live progress + the journal trail +
+           a volume sparkline. A presence strip appears only while
+           other editors are actually online (opt-in flag). -->
+      <section class="view is-active" id="view-dashboard" aria-labelledby="dash-title">
+        <h2 class="view-title" id="dash-title" data-i18n="nav.dashboard">Dashboard</h2>
+        <div class="dash-grid">
+          <article class="card" id="card-assets">
+            <header class="card-head">
+              <h3 class="card-title" data-i18n="card.assets">Pinned assets</h3>
+              <span class="card-count" id="assets-count"></span>
+            </header>
+            <div class="card-body" id="assets-body">
+              <div class="skel-row"></div><div class="skel-row"></div><div class="skel-row"></div>
+            </div>
+            <footer class="card-foot"><p class="note" data-i18n="note.assets">Pinned files stay on this machine and never evict.</p></footer>
+          </article>
+
+          <article class="card" id="card-sessions">
+            <header class="card-head">
+              <h3 class="card-title" data-i18n="card.sessions">Sessions &amp; activity</h3>
+              <span class="card-count" id="sessions-count"></span>
+            </header>
+            <div class="card-body">
+              <div id="presence-strip" class="presence" hidden></div>
+              <div class="session-list" id="session-list">
+                <div class="skel-row"></div><div class="skel-row"></div>
+              </div>
+              <div class="trail" id="trail-list"></div>
+              <div class="spark" id="spark" aria-hidden="true"></div>
+              <p class="spark-note" id="spark-note"></p>
+              <div class="review-strip" id="review-strip" hidden></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <!-- ============ FILES: the focused workspace ============
+           Full-height table, one project at a time, quick actions
+           on the row. Status reads as icons, not words shouting. -->
+      <section class="view" id="view-files" aria-labelledby="files-title">
+        <div class="files-bar">
+          <h2 class="view-title" id="files-title" data-i18n="nav.files">Files</h2>
+          <div class="files-tools">
+            <select id="files-project" class="input select" aria-label="project"></select>
+            <input id="files-filter" class="input search-files" type="text" spellcheck="false" autocomplete="off"
+                   data-i18n-attr="placeholder:files.filter" placeholder="search this project" aria-label="filter files">
+            <button type="button" class="btn btn-ghost" id="btn-history">
+              <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="8" cy="8" r="5.75"/><path d="M8 4.75V8l2.25 2"/></svg>
+              <span data-i18n="btn.versions">Versions</span>
+            </button>
+            <button type="button" class="btn btn-ghost" id="btn-recall-open">
+              <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5v8M4.75 7.25L8 10.5l3.25-3.25M2.75 13.25h10.5"/></svg>
+              <span data-i18n="btn.recall">Recall</span>
+            </button>
+          </div>
+        </div>
+        <div class="files-summary" id="files-summary"></div>
+        <div class="files-table" id="files-table">
+          <table class="table">
+            <thead><tr>
+              <th class="th-file" data-i18n="th.file">file</th>
+              <th class="num" data-i18n="th.size">size</th>
+              <th data-i18n="th.sync">sync</th>
+              <th class="th-actions"><span class="sr-only" data-i18n="th.actions">actions</span></th>
+            </tr></thead>
+            <tbody id="files-body">
+              <tr><td colspan="4" class="empty" data-i18n="empty.files">No files yet - attach a project and drop media in.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ============ SETTINGS: everything technical, in drawers ============
+           System telemetry, feature flags, storage + paths, team,
+           locks. Creative users never need to open this view to work. -->
+      <section class="view" id="view-settings" aria-labelledby="settings-title">
+        <h2 class="view-title" id="settings-title" data-i18n="nav.settings">Settings</h2>
+        <div class="settings-col">
+
+          <article class="card" id="set-system">
+            <header class="card-head"><h3 class="card-title" data-i18n="set.system">System</h3></header>
+            <div class="card-body">
+              <dl class="kv">
+                <div class="kv-row"><dt data-i18n="set.daemon">daemon</dt><dd class="mono" id="set-daemon">·</dd></div>
+                <div class="kv-row"><dt data-i18n="set.proto">protocol</dt><dd class="mono" id="set-proto">·</dd></div>
+                <div class="kv-row"><dt data-i18n="set.uptime">uptime</dt><dd class="mono" id="set-uptime">·</dd></div>
+                <div class="kv-row"><dt data-i18n="set.node">node</dt><dd id="set-node">·</dd></div>
+                <div class="kv-row"><dt data-i18n="set.update">update</dt><dd id="set-update" data-i18n="set.updateOk">up to date</dd></div>
+              </dl>
+              <details class="fold" id="set-doctor-fold">
+                <summary><span data-i18n="set.doctor">System health (doctor)</span><span class="fold-chev" aria-hidden="true"></span></summary>
+                <div class="doctor" id="doctor-body"></div>
+              </details>
+            </div>
+          </article>
+
+          <article class="card" id="set-flags">
+            <header class="card-head"><h3 class="card-title" data-i18n="set.flags">Feature flags</h3></header>
+            <div class="card-body">
+              <p class="note" data-i18n="note.flags">Flags apply on the next job run, no restart. Owner and lead only (RBAC enforced).</p>
+              <div class="flag-grid" id="flag-grid"></div>
+              <p class="note live-note" id="live-note" hidden></p>
+            </div>
+          </article>
+
+          <article class="card" id="set-storage">
+            <header class="card-head"><h3 class="card-title" data-i18n="set.storage">Storage</h3></header>
+            <div class="card-body">
+              <dl class="kv">
+                <div class="kv-row"><dt data-i18n="stat.chunks">local chunks</dt><dd class="num mono" id="stat-blobs">0</dd></div>
+                <div class="kv-row"><dt data-i18n="stat.cached">cached</dt><dd class="num mono" id="stat-bytes">0 B</dd></div>
+                <div class="kv-row"><dt data-i18n="stat.pinned">pinned chunks</dt><dd class="num mono" id="stat-pinned">0</dd></div>
+                <div class="kv-row"><dt data-i18n="set.quota">disk quota</dt><dd class="mono" id="set-quota">·</dd></div>
+              </dl>
+              <div class="meter quota-meter"><div class="meter-fill" id="quota-fill"></div></div>
+              <p class="note" id="storage-note" data-i18n="note.storage">NLE media caches belong on local scratch; pinned chunks are never evicted.</p>
+            </div>
+          </article>
+
+          <article class="card" id="set-projects">
+            <header class="card-head">
+              <h3 class="card-title" data-i18n="set.paths">Projects &amp; paths</h3>
+              <button type="button" class="btn btn-ghost btn-sm" id="btn-add-2" data-i18n="btn.add">Add project</button>
+            </header>
+            <div class="card-body">
+              <div class="proj-list" id="proj-list">
+                <div class="skel-row"></div>
+              </div>
+            </div>
+          </article>
+
+          <article class="card" id="set-team">
+            <header class="card-head"><h3 class="card-title" data-i18n="card.team">Team &amp; devices</h3></header>
+            <div class="card-body" id="team-body">
+              <div class="skel-row"></div>
+            </div>
+          </article>
+
+          <article class="card" id="set-locks">
+            <header class="card-head"><h3 class="card-title" data-i18n="card.locks">Locks</h3></header>
+            <div class="card-body">
+              <p class="note" data-i18n="note.locks">NLE project files lock automatically on open; fencing tokens protect every append.</p>
+              <div class="lock-list" id="lock-list"></div>
+            </div>
+          </article>
+
+          <article class="card" id="set-appearance">
+            <header class="card-head"><h3 class="card-title" data-i18n="set.appearance">Appearance</h3></header>
+            <div class="card-body">
+              <div class="theme-seg" role="radiogroup" aria-label="theme">
+                <button type="button" class="seg" data-theme-set="light" data-i18n="set.themeLight">Light</button>
+                <button type="button" class="seg" data-theme-set="dark" data-i18n="set.themeDark">Dark</button>
+                <button type="button" class="seg" data-theme-set="system" data-i18n="set.themeSystem">System</button>
+              </div>
+              <p class="note" data-i18n="note.theme">Dark mode follows your choice here; the top bar toggle is the shortcut.</p>
+            </div>
+          </article>
+        </div>
+      </section>
+    </main>
+
+    <!-- ============ status bar: one dot, three quiet pills ============ -->
+    <footer class="statusbar" id="footer">
+      <div class="sb-left">
+        <div class="step-progress" id="foot-progress" hidden role="progressbar" aria-label="onboarding progress" aria-valuemin="1" aria-valuemax="3" aria-valuenow="1">
           <span id="foot-stage-label">1 / 3</span>
           <span class="progress-track"><span id="foot-track-fill"></span></span>
         </div>
-
-        <div class="foot-status-group" id="foot-status" hidden>
-          <span class="foot-pill" id="foot-sync-pill"><span class="dot" id="foot-dot"></span>sync <b id="foot-sync-n">—</b></span>
-          <span class="foot-pill">cursor <b id="foot-cursor">0</b></span>
-          <span class="foot-pill" id="foot-conflict-pill">conflict <b id="foot-conflict">0</b></span>
-          <span class="foot-meter" aria-hidden="true"><span id="foot-files-fill"></span></span>
-          <span class="foot-pill" id="foot-quota-pill">quota <b id="foot-quota">—</b></span>
-          <span class="foot-pill" id="foot-join-pill" hidden>join <code class="join-code" id="foot-join">—</code></span>
+        <div class="sb-group" id="foot-status" hidden>
+          <span class="sb-state"><span class="dot" id="foot-dot"></span><span id="foot-state-label">checking</span></span>
+          <span class="sb-pill" id="foot-sync-pill"><b id="foot-sync-n" class="mono">·</b> <span data-i18n="files.synced">synced</span></span>
+          <span class="sb-meter" aria-hidden="true"><span id="foot-files-fill"></span></span>
+          <span class="sb-pill mono" id="foot-quota-pill">·</span>
         </div>
       </div>
-
-      <div class="footer-side center">
-        <span class="foot-brand" aria-hidden="true">cairn</span>
-        <button type="button" class="foot-help" id="foot-help" aria-label="shortcuts and cheatsheet">?</button>
-      </div>
-
-      <div class="footer-side right">
-        <div class="continue-wrap">
-          <span class="footer-status" id="foot-state"><span class="footer-status-check" id="foot-state-check" aria-hidden="true"><svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6.5l2.5 2.5 4.5-5"/></svg></span><span id="foot-state-label">checking</span></span>
-          <button type="button" class="btn btn-primary" id="foot-cta" data-i18n="ob.cta">Continue</button>
+      <div class="sb-right">
+        <button type="button" class="sb-help" id="foot-help" aria-label="shortcuts and cheatsheet">?</button>
+        <div class="lang-row" role="group" aria-label="language">
+          <button type="button" class="lang" data-lang="en">EN</button>
+          <button type="button" class="lang" data-lang="de-DE">DE</button>
+          <button type="button" class="lang" data-lang="ja-JP">JA</button>
+          <button type="button" class="lang" data-lang="zh-CN">中文</button>
         </div>
       </div>
     </footer>
   </div>
 </div>
 
-<!-- help overlay: ? or the footer link — the footer portales to footer-dark
-     (fixed, z70, opaque) above this scrim while open -->
-<div class="overlay" id="help-overlay" hidden>
-  <div class="card overlay-card" role="dialog" aria-modal="true" aria-labelledby="help-title">
-    <div class="overlay-head">
-      <h3 class="card-title" id="help-title" data-i18n="help.title">Shortcuts &amp; cheatsheet</h3>
-      <button type="button" class="btn btn-ghost" id="help-close" aria-label="close">esc</button>
+<!-- ============ slide-over panels: add / versions / recall ============ -->
+<div class="scrim" id="scrim" hidden></div>
+
+<aside class="panel" id="panel-add" role="dialog" aria-modal="true" aria-labelledby="panel-add-title" hidden>
+  <header class="panel-head">
+    <h3 class="panel-title" id="panel-add-title" data-i18n="panel.add">Add a project</h3>
+    <button type="button" class="btn btn-icon panel-close" data-close aria-label="close">
+      <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/></svg>
+    </button>
+  </header>
+  <div class="panel-body">
+    <label class="field-label" for="attach-root" data-i18n="field.root">Project folder</label>
+    <input id="attach-root" class="input" type="text" spellcheck="false" autocomplete="off"
+           data-i18n-attr="placeholder:attach.root" placeholder="/path/to/workspace">
+    <label class="field-label" for="attach-project" data-i18n="field.project">Project id <span class="dim" data-i18n="field.optional">optional</span></label>
+    <input id="attach-project" class="input" type="text" spellcheck="false" autocomplete="off"
+           data-i18n-attr="placeholder:attach.project" placeholder="project id (optional)">
+    <button type="button" class="btn btn-primary btn-block" id="btn-attach" data-i18n="btn.attach">attach</button>
+    <p class="panel-cli"><span data-i18n="or.cli">or from the terminal</span><br>
+      <code>cairn attach /path/to/project</code>
+      <button type="button" class="btn btn-ghost btn-copy" id="attach-cli-copy" data-copy="cairn attach /path/to/project" data-i18n="btn.copy">copy</button>
+    </p>
+  </div>
+</aside>
+
+<aside class="panel" id="panel-history" role="dialog" aria-modal="true" aria-labelledby="panel-history-title" hidden>
+  <header class="panel-head">
+    <h3 class="panel-title" id="panel-history-title" data-i18n="panel.versions">Versions</h3>
+    <button type="button" class="btn btn-icon panel-close" data-close aria-label="close">
+      <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/></svg>
+    </button>
+  </header>
+  <div class="panel-body">
+    <p class="note" data-i18n="note.versions">Versions fold from the journal every 5,000 entries, every 24h, on demand, or at project close. Every fold is a restore point.</p>
+    <div class="action-row">
+      <input id="snapshot-label" class="input" type="text" spellcheck="false" autocomplete="off"
+             data-i18n-attr="placeholder:versions.label" placeholder="label (e.g. before color pass)">
+      <button type="button" class="btn btn-primary" id="btn-snapshot" data-i18n="btn.snapshot">create version</button>
     </div>
+    <table class="table">
+      <thead><tr><th data-i18n="th.label">label</th><th data-i18n="th.author">author</th><th></th></tr></thead>
+      <tbody id="snapshot-body">
+        <tr><td colspan="3" class="empty" data-i18n="empty.versions">No versions yet - create one after the first sync.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</aside>
+
+<aside class="panel" id="panel-recall" role="dialog" aria-modal="true" aria-labelledby="panel-recall-title" hidden>
+  <header class="panel-head">
+    <h3 class="panel-title" id="panel-recall-title" data-i18n="panel.recall">Recall</h3>
+    <button type="button" class="btn btn-icon panel-close" data-close aria-label="close">
+      <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/></svg>
+    </button>
+  </header>
+  <div class="panel-body">
+    <p class="note" data-i18n="note.recall">Recall materializes files from the bucket into local storage. Whole project when the path is empty.</p>
+    <div class="action-row">
+      <input id="recall-path" class="input" type="text" spellcheck="false" autocomplete="off"
+             data-i18n-attr="placeholder:recall.path" placeholder="one path (optional)">
+      <button type="button" class="btn btn-primary" id="btn-recall" data-i18n="btn.recall">start recall</button>
+    </div>
+    <div id="recall-jobs" class="recall-jobs">
+      <p class="note" data-i18n="empty.recall">No recall jobs yet.</p>
+    </div>
+  </div>
+</aside>
+
+<!-- ============ help overlay ============ -->
+<div class="overlay" id="help-overlay" hidden>
+  <div class="overlay-card" role="dialog" aria-modal="true" aria-labelledby="help-title">
+    <header class="panel-head">
+      <h3 class="panel-title" id="help-title" data-i18n="help.title">Shortcuts &amp; cheatsheet</h3>
+      <button type="button" class="btn btn-icon" id="help-close" aria-label="close">
+        <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/></svg>
+      </button>
+    </header>
     <div class="help-grid">
       <div>
         <p class="help-h" data-i18n="help.keys">Keys</p>
         <ul class="help-list">
           <li><kbd>/</kbd> <span data-i18n="help.search">focus search</span></li>
           <li><kbd>?</kbd> <span data-i18n="help.help">toggle this panel</span></li>
-          <li><kbd>g&nbsp;then&nbsp;o</kbd> <span data-i18n="help.goOverview">go to overview</span></li>
-          <li><kbd>g&nbsp;then&nbsp;f</kbd> <span data-i18n="help.goFiles">go to files</span></li>
-          <li><kbd>esc</kbd> <span data-i18n="help.esc">close overlays</span></li>
+          <li><kbd>g</kbd> <kbd>d</kbd> <span data-i18n="help.goDash">go to dashboard</span></li>
+          <li><kbd>g</kbd> <kbd>f</kbd> <span data-i18n="help.goFiles">go to files</span></li>
+          <li><kbd>g</kbd> <kbd>s</kbd> <span data-i18n="help.goSettings">go to settings</span></li>
+          <li><kbd>esc</kbd> <span data-i18n="help.esc">close panels and overlays</span></li>
         </ul>
       </div>
       <div>
@@ -393,9 +428,9 @@
       <div>
         <p class="help-h" data-i18n="help.states">What the dot means</p>
         <ul class="help-list">
-          <li><span class="dot dot-ok"></span> <span data-i18n="help.dotOk">all files synced — safe to edit</span></li>
-          <li><span class="dot dot-warn"></span> <span data-i18n="help.dotWarn">syncing — chunks in flight</span></li>
-          <li><span class="dot dot-bad"></span> <span data-i18n="help.dotBad">attention — see Doctor</span></li>
+          <li><span class="dot dot-ok"></span> <span data-i18n="help.dotOk">all files synced, safe to edit</span></li>
+          <li><span class="dot dot-warn"></span> <span data-i18n="help.dotWarn">syncing, chunks in flight</span></li>
+          <li><span class="dot dot-bad"></span> <span data-i18n="help.dotBad">attention, open Settings</span></li>
         </ul>
       </div>
     </div>
