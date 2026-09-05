@@ -1427,3 +1427,105 @@ kbd {
   .row-actions .btn-icon .lbl { display: none; }
   .statusbar { height: auto; flex-wrap: wrap; padding: 8px 14px; }
 }
+
+/* ============================== round 27 additions ==============================
+   Storage meter neutral fill, flag one-line explanations, file
+   quick-actions with hover reveal, size column on assets, the how-to
+   guide, the Browse-first attach panel. Quiet, small, inline - the
+   retro asked for "no obnoxious big boxes". */
+
+/* neutral meter fill: usage is not a warning until the edge (JS swaps
+   to amber/red past 90/95) */
+.meter-fill { background: #9aa0a6; }
+.meter-fill.is-neutral { background: var(--zinc, #9aa0a6); }
+
+/* the storage card's volume chip: which disk the meter reads */
+#storage-volume-label {
+  font: 500 11px/1 var(--font-sans);
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+  text-transform: none;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+/* flags: the quiet one-line description under the name */
+.flag { flex-wrap: wrap; }
+.flag-desc {
+  flex-basis: 100%;
+  font: 400 11.5px/1.45 var(--font-sans);
+  color: var(--text-3);
+  padding: 3px 0 1px;
+  /* sits under the name+state row, never beside it - no big box */
+  order: 3;
+}
+.flag:hover .flag-desc { color: var(--text-2); }
+
+/* file quick-actions: hidden until row hover, revealed inline (the
+   retro: rows are static no more). Icon-only on the assets table,
+   icon+label on the Files view where there is room. */
+.row-actions .btn-qa { opacity: 0; transform: translateY(1px); }
+tr:hover .row-actions .btn-qa,
+.row-actions .btn-qa:focus-visible,
+.row-actions .btn-qa.is-pinned { opacity: 1; transform: none; }
+.row-actions { transition: opacity 160ms var(--ease); }
+.btn-qa { transition: opacity 160ms var(--ease), transform 160ms var(--ease); }
+/* labeled variant (Files view): the label rides beside the icon and
+   folds away on narrow screens (existing .lbl rule) */
+.btn-qa-labeled .lbl { margin-left: 3px; }
+
+/* the assets table's new size column */
+.assets-table .td-size {
+  font: 500 11.5px/1 var(--font-mono);
+  color: var(--text-3);
+  white-space: nowrap;
+  padding-right: 6px;
+}
+.assets-table .th-size { width: 1%; }
+
+/* the add panel: Browse leads, the typed path follows */
+.btn-browse { margin-bottom: 4px; }
+.or-line {
+  display: flex; align-items: center; gap: 10px;
+  margin: 10px 0 12px;
+  font: 400 11px/1 var(--font-sans);
+  letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--text-3);
+}
+.or-line::before, .or-line::after {
+  content: ""; flex: 1; height: 1px; background: var(--border);
+}
+
+/* onboarding scene: Browse is the wide, obvious first move */
+.ob-scene { display: flex; flex-direction: column; gap: 10px; }
+.ob-browse { width: 100%; }
+
+/* ============================== how to use ============================== */
+
+.howto-lede {
+  max-width: 640px;
+  margin: 0 0 18px;
+  font: 400 14px/1.55 var(--font-sans);
+  color: var(--text-2);
+}
+.howto-grid { max-width: 900px; }
+.howto-card .card-title { font: 500 14px/1.3 var(--font-sans); }
+.howto-step {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 22px; height: 22px; padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent-soft, rgba(8, 124, 255, 0.12));
+  color: var(--accent, #087cff);
+  font: 600 11.5px/1 var(--font-mono);
+}
+.howto-list {
+  margin: 0; padding-left: 18px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.howto-list li { font: 400 13px/1.55 var(--font-sans); color: var(--text-2); }
+.howto-card .card-body > p { margin: 0 0 8px; font: 400 13px/1.55 var(--font-sans); color: var(--text-2); }
+.howto-card .card-body > p:last-child { margin-bottom: 0; }
+.howto-card .note { margin-top: 4px; }
+.howto-card .note.mono { font-family: var(--font-mono); font-size: 11.5px; word-break: break-all; }

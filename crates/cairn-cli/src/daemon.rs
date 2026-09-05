@@ -26,7 +26,7 @@ use crate::audit::AuditFile;
 use crate::doctor;
 use crate::projects;
 
-use cairn_core::rbac::{self, Permission, Role};
+use cairn_core::rbac::{self, MemberFile, Permission, Role};
 
 /// Daemon-wide swarm options (ADR-0017): the signal server to rendezvous
 /// through + the join code the host shared (swarm admission, §7).
@@ -306,8 +306,22 @@ async fn project_root(state: &DaemonState, project_id: &str) -> Option<PathBuf> 
 /// No resolvable root (first attach, unbound project, daemon with no
 /// projects) enforces nothing — there is no members.json to read; the
 /// CLI-side guards remain the second layer for root-present commands.
-/// A CORRUPT members.json fails closed (parse error → precondition),
-/// never open.
+///
+/// Read-shape policy (round 27, the stale-CfAPI-reparse lesson):
+/// * READABLE file → the matrix decides (an assistant still cannot
+///   detach; the ADR-0020 boundary holds).
+/// * ABSENT file/root → the barnstorm default (Editor) — the matrix
+///   still runs, so owner-only permissions still deny.
+/// * CORRUPT file (parses wrong) → fail CLOSED, EXCEPT `DetachRoot`:
+///   unbinding is the repair path, and a corrupt-file detach lockdown
+///   would be circular (you cannot fix the root by policy you cannot
+///   read). The bypass is ledgered.
+/// * UNREADABLE file (broken CfAPI reparse / transient filter HRESULT
+///   `0x801F0005`) → fail OPEN with a loud ledger record: the bytes
+///   behind a wedged placeholder are unproven, not corrupt. Before this,
+///   `members.json unreadable: An invalid name request was made` locked
+///   the whole console (status/projects/dashboard) AND made `cairn
+///   detach --project <that-root>` a circular denial.
 pub(crate) async fn rbac_guard(
     state: &DaemonState,
     project_id: &str,
@@ -326,9 +340,63 @@ pub(crate) async fn rbac_guard(
     let store = cairn_store::Store::open(&state.home, Arc::new(WallClock))
         .map_err(|e| Status::failed_precondition(e.message))?;
     let device = acting_device(&store);
-    // fail CLOSED on corrupt members (parse error propagates)
-    let members = crate::members::load(&root)
-        .map_err(|e| Status::failed_precondition(format!("members.json unreadable: {e}")))?;
+    // read-shape policy: see the doc comment above
+    let members = match crate::members::load_classified(&root) {
+        Ok(f) => f,
+        Err(crate::members::LoadError::Corrupt(e)) => {
+            // DetachRoot is the repair path: ledgered bypass, never a
+            // circular lockdown. Everything else fails closed.
+            if perm == Permission::DetachRoot {
+                if let Err(ae) = AuditFile::decision(
+                    &root,
+                    now_ms_i64(),
+                    &device,
+                    Role::Editor.as_str(),
+                    action,
+                    project_id,
+                    true,
+                ) {
+                    tracing::warn!(error = %ae, "audit ledger write failed (detach repair proceeds)");
+                }
+                tracing::warn!(
+                    project = %project_id,
+                    "members.json corrupt — detach allowed as the repair path"
+                );
+                return Ok(Role::Editor);
+            }
+            return Err(Status::failed_precondition(format!(
+                "members.json corrupt: {e} — fix the file (or `cairn detach --project \
+                 {project_id}` then re-attach) before this action is allowed"
+            )));
+        }
+        Err(crate::members::LoadError::Unreadable(e)) => {
+            if let Err(ae) = AuditFile::decision(
+                &root,
+                now_ms_i64(),
+                &device,
+                Role::Editor.as_str(),
+                action,
+                project_id,
+                true,
+            ) {
+                tracing::warn!(error = %ae, "audit ledger write failed (bypass still allowed)");
+            }
+            tracing::warn!(
+                project = %project_id,
+                action,
+                error = %e,
+                "members.json unreadable (reparse/transient) — failing OPEN; detach + \
+                 re-attach the root to repair"
+            );
+            return Ok(Role::Editor);
+        }
+        Err(crate::members::LoadError::Missing) => {
+            // the barnstorm default: no file = every unlisted device an
+            // Editor — flow through the SAME matrix below so owner-only
+            // permissions (ManageMembers/ManageFlags) still deny
+            MemberFile::default()
+        }
+    };
     let role = members.role_of(&device);
     let allowed = rbac::allows(role, perm);
     if let Err(e) = AuditFile::decision(
@@ -539,6 +607,25 @@ pub async fn run(
     review_addr: Option<String>,
     swarm: Option<SwarmOpts>,
 ) -> anyhow::Result<()> {
+    // Self-dedup (round 27, the `10048` lesson): the installer, the tray
+    // supervisor AND a user's `cairn daemon` can all race to own the ctl
+    // port. The bind is exclusive, so the loser crashed with
+    // "Only one usage of each socket address" into daemon.log — every
+    // login, twice. Now the loser probes the winner first: if a daemon
+    // already ANSWERS on the ctl port, exit 0 quietly ("already running")
+    // — the survivor is the daemon. gRPC health probing before bind is
+    // the single-owner handshake the tray/install path never had.
+    {
+        // a TCP-level connect is enough to know SOMETHING owns the port:
+        // cheaper than a gRPC round-trip and immune to proto drift
+        let owned = tokio::net::TcpStream::connect(&ctl_addr).await.is_ok();
+        if owned {
+            tracing::info!(ctl_addr = %ctl_addr, "daemon already running here — exiting 0 (single owner)");
+            // keep the recorded endpoint (the survivor may have a fresh
+            // home path; do not clobber it)
+            return Ok(());
+        }
+    }
     let state = Arc::new(DaemonState::new(home));
     // persist the ctl endpoint so CLI status/attach in THIS home find the right daemon
     // (multi-daemon machines run several ctl ports; 17777 is only the default)
@@ -680,7 +767,24 @@ pub async fn login_full(
             device_pubkey: "dev-local".into(), // device keypair generation lands with server auth (M2)
             device_name: name.to_string(),
         })
-        .await?;
+        .await
+        .map_err(|e| {
+            // enrollment codes are SINGLE-USE (dev-enroll-code minted one
+            // per login): the round-27 retro hit "invalid enrollment code"
+            // 3x because a second machine reused a consumed code. Name the
+            // shape instead of a bare gRPC message.
+            let msg = e.message().to_string();
+            if msg.to_ascii_lowercase().contains("enrollment")
+                || msg.to_ascii_lowercase().contains("code")
+            {
+                anyhow::anyhow!(
+                    "{msg} — enrollment codes are single-use: mint a fresh one for this \
+                     device and log in again (the old one was consumed)"
+                )
+            } else {
+                anyhow::anyhow!("enroll failed: {msg}")
+            }
+        })?;
     let inner = resp.into_inner();
     let device_id = inner.device_id.clone();
     crate::projects::save_identity(
@@ -1436,10 +1540,23 @@ mod tests {
         assert!(r.is_ok());
         assert_eq!(crate::audit::AuditFile::load(&root).unwrap().len(), 1);
 
-        // corrupt members.json: fail closed (precondition), never open
+        // corrupt members.json: fail closed (precondition), never open —
+        // EXCEPT detach, which is the repair path (round 27: a corrupt
+        // file must never create a circular un-detachable root)
         std::fs::create_dir_all(root.join(".cairn")).unwrap();
         std::fs::write(crate::members::members_path(&root), b"{ broken").unwrap();
         let r2 = rbac_guard(
+            &state,
+            "p",
+            Some(&root),
+            Permission::Restore,
+            "ctl/restore-snapshot",
+        )
+        .await;
+        assert!(r2.is_err());
+        assert_eq!(r2.err().unwrap().code(), tonic::Code::FailedPrecondition);
+        // ...and the escape hatch: detach of the SAME corrupt root passes
+        let r3 = rbac_guard(
             &state,
             "p",
             Some(&root),
@@ -1447,8 +1564,38 @@ mod tests {
             "ctl/detach-root",
         )
         .await;
-        assert!(r2.is_err());
-        assert_eq!(r2.err().unwrap().code(), tonic::Code::FailedPrecondition);
+        assert!(r3.is_ok(), "corrupt root must be detachable (repair path)");
+    }
+
+    /// Round 27, the stale-CfAPI-reparse production lesson: a members.json
+    /// the OS cannot READ (HRESULT 0x801F0005 "An invalid name request was
+    /// made" through a wedged placeholder) is NOT corruption — the guard
+    /// fails OPEN (ledgered) so status/projects/detach keep working and the
+    /// user can repair by re-attaching. Only proven-bad BYTES fail closed.
+    #[tokio::test]
+    async fn unreadable_members_fails_open_not_circular() {
+        let home = enrolled_home("dev-artist");
+        let state = Arc::new(DaemonState::new(home));
+        let root = members_root("dev-artist", Role::Assistant);
+        // simulate the wedged read: a members.json that cannot be read.
+        // EISDIR (a directory where the file should be) is the portable
+        // "read fails, bytes unproven" shape.
+        std::fs::remove_file(crate::members::members_path(&root)).unwrap();
+        std::fs::create_dir(crate::members::members_path(&root)).unwrap();
+        let r = rbac_guard(
+            &state,
+            "p",
+            Some(&root),
+            Permission::DetachRoot,
+            "ctl/detach-root",
+        )
+        .await;
+        assert!(r.is_ok(), "unreadable members must not block detach: {r:?}");
+        // the bypass is ledgered (not fiction)
+        let audit = crate::audit::AuditFile::load(&root).unwrap();
+        assert!(audit
+            .iter()
+            .any(|(_, e)| e.allowed && e.action == "ctl/detach-root"));
     }
 
     /// No root resolvable -> nothing to enforce against (first attach on

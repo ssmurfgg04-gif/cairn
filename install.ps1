@@ -1,5 +1,6 @@
 # Cairn -- one-command Windows installer (round 12: CLI + tray, ADR-0016;
-# round 19: + the cairn-app native window, ADR-0022).
+# round 19: + the cairn-app native window, ADR-0022; round 27: the
+# install retro hardening).
 #
 #   irm https://raw.githubusercontent.com/ssmurfgg04-gif/cairn/main/install.ps1 | iex
 #
@@ -18,11 +19,26 @@
 #      beside the engine + tray -- the tray's "Open Console" finds it there
 #   7. Starts the tray for THIS session (no reboot needed to see it)
 #   8. Runs `cairn init` (creates the store; device id is issued at `cairn login`)
-#   9. Starts the daemon hidden (stderr -> <home>/daemon.log) so the
-#      dashboard at http://127.0.0.1:17778 is live immediately -- no
-#      terminal, no reboot, no tray click. The tray supervises it from
-#      every login onward (round 26; CAIRN_INSTALL_NO_LAUNCH skips this)
+#   9. Starts the daemon hidden (stderr -> <home>/daemon.log) ONLY when no
+#      daemon already answers on :17778 -- round 27: the installer + tray
+#      supervisor + user's own `cairn daemon` all racing the port produced
+#      "10048 Only one usage of each socket address" in every daemon.log.
+#      The daemon now self-dedups too (probes before bind, exits 0).
+#      (round 26 kept: CAIRN_INSTALL_NO_LAUNCH skips this)
 #  10. Prints the next step
+#
+# Round 27 hardening (the clone-to-dashboard retro):
+#   * GitHub API 403 (anonymous 60/hr): the API call carries
+#     Authorization from $env:GH_TOKEN / $env:GITHUB_TOKEN when present,
+#     retries 4x with backoff, and falls back to parsing the
+#     /releases/latest redirect for the tag when the API stays closed.
+#     Asset downloads themselves need no auth.
+#   * File-in-use (cairn.exe locked by the running daemon/tray):
+#     Stop-Process cairn,cairn-tray BEFORE any download, wait for the
+#     handles to drop, download to a .tmp file, Move-Item -Force into
+#     place, hash AFTER the move (a truncated in-flight file used to
+#     compare CDDB3AC3... vs 1536FEAF...).
+#   * The PATH write dedups both registry and session scope.
 #
 # Explorer badge registration is NOT installer work: the daemon registers the
 # CfAPI sync root + provider state at `cairn attach` time (badge.rs). The
@@ -54,6 +70,119 @@ function Fail {
     exit 1
 }
 
+# ---- helpers: retrying web calls + atomic replace ----------------------
+
+# An auth header for the GitHub API ONLY when a token is available (the
+# asset browser_download_url works anonymously; the 60/hr API ceiling is
+# what 403'd the retro). Never echoed - tokens are credentials.
+function Get-GhApiHeaders {
+    $tok = $null
+    foreach ($name in @("GH_TOKEN", "GITHUB_TOKEN")) {
+        $v = [Environment]::GetEnvironmentVariable($name)
+        if ($v) { $tok = $v; break }
+    }
+    if ($tok) { return @{ Authorization = "token $tok" } }
+    return @{}
+}
+
+function Invoke-RestWithRetry {
+    param([string]$Uri, [int]$Tries = 4)
+    $delay = 2
+    for ($i = 1; $i -le $Tries; $i++) {
+        try {
+            $h = Get-GhApiHeaders
+            if ($h.Count -gt 0) {
+                return Invoke-RestMethod -Uri $Uri -UserAgent "cairn-installer" -Headers $h -UseBasicParsing
+            }
+            return Invoke-RestMethod -Uri $Uri -UserAgent "cairn-installer" -UseBasicParsing
+        } catch {
+            $resp = $_.Exception.Response
+            $code = if ($resp) { [int]$resp.StatusCode } else { 0 }
+            if ($i -eq $Tries) { throw }
+            if ($code -eq 403 -or $code -eq 429 -or $code -eq 0) {
+                Write-Host "api attempt $i failed (HTTP $code) - retrying in ${delay}s (set GH_TOKEN to lift the rate limit)"
+                Start-Sleep -Seconds $delay
+                $delay = [Math]::Min($delay * 2, 30)
+            } else {
+                throw
+            }
+        }
+    }
+    throw "unreachable"
+}
+
+# Download to <dest>.tmp, verify the SHA, THEN move into place: a
+# half-written file can never be mistaken for an install, and the
+# file-in-use window (daemon still holding the old exe) is closed by
+# Stop-Cairn before we get here.
+function Install-VerifiedExe {
+    param([string]$Url, [string]$Dest, [string]$What)
+    $tmp = "$Dest.tmp"
+    if (Test-Path $tmp) { Remove-Item $tmp -Force -ErrorAction SilentlyContinue }
+    $shaUrl = "$Url.sha256"
+    $expected = $null
+    try {
+        $resp = Invoke-WebRequest -Uri $shaUrl -UserAgent "cairn-installer" -UseBasicParsing
+        $shaText = if ($resp.Content -is [byte[]]) {
+            [Text.Encoding]::ASCII.GetString($resp.Content)
+        } else {
+            $resp.Content
+        }
+        $expected = ($shaText.Trim() -split '\s+')[0].ToLower()
+    } catch {
+        Fail "cannot fetch the SHA256 manifest ($shaUrl): $($_.Exception.Message)"
+    }
+    try {
+        Invoke-WebRequest -Uri $Url -OutFile $tmp -UserAgent "cairn-installer" -UseBasicParsing
+    } catch {
+        if (Test-Path $tmp) { Remove-Item $tmp -Force }
+        Fail "download failed: $Url ($($_.Exception.Message))"
+    }
+    if (-not (Test-Path $tmp)) { Fail "download produced no file: $Url" }
+    $actual = (Get-FileHash $tmp -Algorithm SHA256).Hash.ToLower()
+    if ($actual -ne $expected) {
+        Remove-Item $tmp -Force
+        Fail "SHA256 mismatch for $What -- expected $expected, got $actual (refusing to install)"
+    }
+    Move-Item -Path $tmp -Destination $Dest -Force
+    if (Get-Command Unblock-File -ErrorAction SilentlyContinue) {
+        Unblock-File $Dest
+    }
+    Write-Host "$What installed (SHA256 verified: $actual)"
+}
+
+# Stop the running daemon + tray so the exes we are about to replace are
+# not held open (retro error #2: "being used by another process" ->
+# truncated download -> hash mismatch).
+function Stop-Cairn {
+    foreach ($n in @("cairn", "cairn-tray", "cairn-app")) {
+        Get-Process -Name $n -ErrorAction SilentlyContinue | ForEach-Object {
+            Write-Host "stopping $($_.ProcessName) (pid $($_.Id)) so the update can replace it"
+            Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
+        }
+    }
+    # handles take a beat to drop after kill
+    $deadline = (Get-Date).AddSeconds(10)
+    while ((Get-Date) -lt $deadline) {
+        $alive = Get-Process -Name cairn,cairn-tray -ErrorAction SilentlyContinue
+        if (-not $alive) { break }
+        Start-Sleep -Milliseconds 300
+    }
+}
+
+# Is a daemon already answering on the dashboard port? (round 27: the
+# double-start fix - the installer must not spawn a second daemon.)
+function Test-DaemonUp {
+    try {
+        $c = New-Object Net.Sockets.TcpClient
+        $r = $c.BeginConnect("127.0.0.1", 17778, $null, $null)
+        $ok = $r.AsyncWaitHandle.WaitOne(500)
+        if ($ok -and $c.Connected) { $c.Close(); return $true }
+        $c.Close()
+        return $false
+    } catch { return $false }
+}
+
 # ---- 1. Windows version + edition -------------------------------------------------
 $cv = Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion'
 $build = [int]$cv.CurrentBuildNumber
@@ -72,86 +201,79 @@ if ($ArtifactUrl -ne "") {
     $api = "https://api.github.com/repos/$Repo/releases/latest"
     $rel = $null
     try {
-        $rel = Invoke-RestMethod -Uri $api -UserAgent "cairn-installer" -UseBasicParsing
+        $rel = Invoke-RestWithRetry -Uri $api
     } catch {
-        Fail "cannot query the latest release ($api): $($_.Exception.Message)"
+        # API closed (persistent 403 with no token): fall back to the
+        # releases/latest REDIRECT - GitHub answers it anonymously and
+        # lands on /tag/<tag>, which names the assets deterministically.
+        Write-Host "API path exhausted - trying the tag redirect fallback"
+        try {
+            $tagReq = [System.Net.HttpWebRequest]::Create("https://github.com/$Repo/releases/latest")
+            $tagReq.AllowAutoRedirect = $false
+            $tagReq.UserAgent = "cairn-installer"
+            $tagResp = $tagReq.GetResponse()
+            $loc = $tagResp.Headers["Location"]
+            $tagResp.Close()
+            $tag = ($loc -split '/tag/')[-1]
+            if (-not $tag) { throw "no tag in redirect" }
+            $exeUrl = "https://github.com/$Repo/releases/download/$tag/cairn-windows-$tag.exe"
+            $rel = $null
+            Write-Host "Fallback tag resolved: $tag"
+        } catch {
+            Fail "cannot resolve the latest release: $($_.Exception.Message) -- set GH_TOKEN to lift the API rate limit, or re-run in ~an hour"
+        }
     }
-    $release = $rel
-    $asset = $rel.assets |
-        Where-Object { $_.name -match '^cairn-windows-.*\.exe$' } |
-        Select-Object -First 1
-    if (-not $asset) {
-        Fail "no cairn-windows-*.exe asset on release $($rel.tag_name) -- was the release workflow run?"
+    if ($rel) {
+        $release = $rel
+        $asset = $rel.assets |
+            Where-Object { $_.name -match '^cairn-windows-.*\.exe$' } |
+            Select-Object -First 1
+        if (-not $asset) {
+            Fail "no cairn-windows-*.exe asset on release $($rel.tag_name) -- was the release workflow run?"
+        }
+        $exeUrl = $asset.browser_download_url
+        Write-Host "Latest release: $($rel.tag_name) -- asset $($asset.name)"
     }
-    $exeUrl = $asset.browser_download_url
-    Write-Host "Latest release: $($rel.tag_name) -- asset $($asset.name)"
 }
-$shaUrl = "$exeUrl.sha256"
 
-# ---- 3. Download + verify ---------------------------------------------------------
+# ---- 3. Stop what holds the exes, then download + verify atomically ---------------
+Stop-Cairn
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 $exePath = Join-Path $InstallDir "cairn.exe"
-
-Invoke-WebRequest -Uri $exeUrl -OutFile $exePath -UserAgent "cairn-installer" -UseBasicParsing
-if (-not (Test-Path $exePath)) { Fail "download failed: $exeUrl" }
-
-$expected = $null
-try {
-    # PS 5.1 returns [byte[]] for application/octet-stream (all release assets);
-    # PS 7 returns a string. Decode bytes explicitly so -split parses the manifest,
-    # not the byte-array's decimal dump.
-    $resp = Invoke-WebRequest -Uri $shaUrl -UserAgent "cairn-installer" -UseBasicParsing
-    $shaText = if ($resp.Content -is [byte[]]) {
-        [Text.Encoding]::ASCII.GetString($resp.Content)
-    } else {
-        $resp.Content
-    }
-    $expected = ($shaText.Trim() -split '\s+')[0].ToLower()
-} catch {
-    Fail "cannot fetch the SHA256 manifest ($shaUrl): $($_.Exception.Message)"
+# A LOCAL artifact (clone-and-go's local-build path, or a dev pin) is
+# copied in, not downloaded: no .sha256 sidecar exists and
+# Invoke-WebRequest cannot read a bare filesystem path. The local build
+# is trusted (it never left the machine).
+if ($ArtifactUrl -ne "" -and (Test-Path $ArtifactUrl)) {
+    Copy-Item $ArtifactUrl $exePath -Force
+    Write-Host "cairn.exe installed from local artifact: $ArtifactUrl"
+} else {
+    Install-VerifiedExe -Url $exeUrl -Dest $exePath -What "cairn.exe"
 }
-$actual = (Get-FileHash $exePath -Algorithm SHA256).Hash.ToLower()
-if ($actual -ne $expected) {
-    Fail "SHA256 mismatch for cairn.exe -- expected $expected, got $actual (refusing to install)"
-}
-Write-Host "SHA256 verified: $actual"
 
 # ---- 3b. Download + verify the TRAY (optional asset: older releases, dev
 # pins and partial releases may ship engine-only; installer degrades
 # gracefully and says so) -------------------------------------------
-$trayUrl = "$exeUrl".Replace("cairn-windows-", "cairn-tray-windows-")
 $trayPath = Join-Path $InstallDir "cairn-tray.exe"
 $trayInstalled = $false
-try {
-    Invoke-WebRequest -Uri $trayUrl -OutFile $trayPath -UserAgent "cairn-installer" -UseBasicParsing
-    $trayShaUrl = "$trayUrl.sha256"
-    $tresp = Invoke-WebRequest -Uri $trayShaUrl -UserAgent "cairn-installer" -UseBasicParsing
-    $tshaText = if ($tresp.Content -is [byte[]]) {
-        [Text.Encoding]::ASCII.GetString($tresp.Content)
-    } else {
-        $tresp.Content
-    }
-    $texpected = ($tshaText.Trim() -split '\s+')[0].ToLower()
-    $tactual = (Get-FileHash $trayPath -Algorithm SHA256).Hash.ToLower()
-    if ($tactual -ne $texpected) {
-        Remove-Item $trayPath -Force
-        Write-Host "tray SHA256 mismatch -- skipping tray (engine still fully installed)"
-    } else {
-        if (Get-Command Unblock-File -ErrorAction SilentlyContinue) {
-            Unblock-File $trayPath
-        }
-        $trayInstalled = $true
-        Write-Host "cairn-tray.exe installed (SHA256 verified: $tactual)"
-    }
-} catch {
-    if (Test-Path $trayPath) { Remove-Item $trayPath -Force }
-    Write-Host "no tray asset on this release -- engine-only install (the CLI path works; re-run after a release that ships the tray)"
+$localTray = ""
+if ($ArtifactUrl -ne "" -and (Test-Path $ArtifactUrl)) {
+    # local build: the tray sits beside the engine in the same target dir
+    $localTray = Join-Path (Split-Path $ArtifactUrl -Parent) "cairn-tray.exe"
 }
-
-# Clear the Mark-of-the-Web so the freshly downloaded exe does not trip
-# SmartScreen on every launch (we just verified its hash).
-if (Get-Command Unblock-File -ErrorAction SilentlyContinue) {
-    Unblock-File $exePath
+if ($localTray -ne "" -and (Test-Path $localTray)) {
+    Copy-Item $localTray $trayPath -Force
+    $trayInstalled = $true
+    Write-Host "cairn-tray.exe installed from local artifact"
+} else {
+    $trayUrl = "$exeUrl".Replace("cairn-windows-", "cairn-tray-windows-")
+    try {
+        Install-VerifiedExe -Url $trayUrl -Dest $trayPath -What "cairn-tray.exe"
+        $trayInstalled = $true
+    } catch {
+        if (Test-Path $trayPath) { Remove-Item $trayPath -Force }
+        Write-Host "no tray asset on this release -- engine-only install (the CLI path works; re-run after a release that ships the tray)"
+    }
 }
 
 # ---- 3c. Download + verify + RUN the WINDOW bundle (optional asset: the
@@ -171,7 +293,8 @@ if ($AppSetupUrl -ne "") {
 if ($appUrl -ne "") {
     $setupPath = Join-Path $env:TEMP "cairn-window-setup.exe"
     try {
-        Invoke-WebRequest -Uri $appUrl -OutFile $setupPath -UserAgent "cairn-installer" -UseBasicParsing
+        $tmpSetup = "$setupPath.tmp"
+        Invoke-WebRequest -Uri $appUrl -OutFile $tmpSetup -UserAgent "cairn-installer" -UseBasicParsing
         $appShaUrl = "$appUrl.sha256"
         $aresp = Invoke-WebRequest -Uri $appShaUrl -UserAgent "cairn-installer" -UseBasicParsing
         $ashaText = if ($aresp.Content -is [byte[]]) {
@@ -180,11 +303,12 @@ if ($appUrl -ne "") {
             $aresp.Content
         }
         $aexpected = ($ashaText.Trim() -split '\s+')[0].ToLower()
-        $aactual = (Get-FileHash $setupPath -Algorithm SHA256).Hash.ToLower()
+        $aactual = (Get-FileHash $tmpSetup -Algorithm SHA256).Hash.ToLower()
         if ($aactual -ne $aexpected) {
-            Remove-Item $setupPath -Force
+            Remove-Item $tmpSetup -Force -ErrorAction SilentlyContinue
             Write-Host "window bundle SHA256 mismatch -- skipping cairn-app (browser console still fully installed)"
         } else {
+            Move-Item -Path $tmpSetup -Destination $setupPath -Force
             if (Get-Command Unblock-File -ErrorAction SilentlyContinue) {
                 Unblock-File $setupPath
             }
@@ -208,16 +332,19 @@ if ($appUrl -ne "") {
     Write-Host "no cairn-window-*-setup.exe asset on this release -- the console opens in your browser (same surface)"
 }
 
-# ---- 4. PATH (user scope, idempotent) ---------------------------------------------
+# ---- 4. PATH (user scope, idempotent, DEDUPED both scopes) ------------------------
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-if (($userPath -split ';') -notcontains $InstallDir) {
-    $newPath = if ($userPath) { "$userPath;$InstallDir" } else { $InstallDir }
-    [Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+if (-not $userPath) { $userPath = "" }
+$userParts = @($userPath -split ';' | Where-Object { $_ -ne "" })
+if ($userParts -notcontains $InstallDir) {
+    $userParts += $InstallDir
+    [Environment]::SetEnvironmentVariable("Path", ($userParts -join ";"), "User")
     Write-Host "Added $InstallDir to your user PATH (new shells pick it up)"
 }
 # Make the binary visible to THIS session too (the registry write above does not
 # propagate into an already-running process).
-if (($env:Path -split ';') -notcontains $InstallDir) {
+$sessionParts = @($env:Path -split ';' | Where-Object { $_ -ne "" })
+if ($sessionParts -notcontains $InstallDir) {
     $env:Path = "$env:Path;$InstallDir"
 }
 
@@ -272,23 +399,26 @@ if ($LASTEXITCODE -ne 0) {
     Fail "cairn init exited $LASTEXITCODE"
 }
 
-# ---- 6b. Start the daemon NOW (round 26: install-and-it-just-works) ---------------
+# ---- 6b. Start the daemon NOW (round 26: install-and-it-just-works;
+# round 27: ONLY when one is not already up - the 10048 dedup) -----------
 # The tray supervises it from every login onward (supervise.rs: probe ->
-# spawn hidden -> backoff). Right HERE the install should hand the user a
-# live daemon + dashboard with no terminal, no reboot, no tray click: the
-# same Start-Process shape the tray uses (hidden, stderr to daemon.log so
-# "why did it die" is answerable). CI (CAIRN_INSTALL_NO_LAUNCH=1) skips it.
+# spawn hidden -> backoff; the daemon itself self-dedups on the bind).
+# CI (CAIRN_INSTALL_NO_LAUNCH=1) skips it.
 if ($env:CAIRN_INSTALL_NO_LAUNCH -ne "1") {
-    try {
-        $cairnHome = if ($env:CAIRN_HOME) { $env:CAIRN_HOME } else { Join-Path $env:USERPROFILE ".cairn" }
-        if (-not (Test-Path $cairnHome)) { New-Item -ItemType Directory -Force -Path $cairnHome | Out-Null }
-        $daemonLog = Join-Path $cairnHome "daemon.log"
-        Start-Process -FilePath $exePath -ArgumentList "daemon" -WindowStyle Hidden -RedirectStandardError $daemonLog | Out-Null
-        Write-Host "Cairn daemon started (hidden)."
-        Write-Host "Dashboard: http://127.0.0.1:17778  (open it in your browser)"
-    } catch {
-        Write-Host "could not start the daemon: $($_.Exception.Message) -- the tray restarts it at next login, or run 'cairn daemon'"
+    if (Test-DaemonUp) {
+        Write-Host "Cairn daemon already running on :17778 - leaving it alone (single owner)."
+    } else {
+        try {
+            $cairnHome = if ($env:CAIRN_HOME) { $env:CAIRN_HOME } else { Join-Path $env:USERPROFILE ".cairn" }
+            if (-not (Test-Path $cairnHome)) { New-Item -ItemType Directory -Force -Path $cairnHome | Out-Null }
+            $daemonLog = Join-Path $cairnHome "daemon.log"
+            Start-Process -FilePath $exePath -ArgumentList "daemon" -WindowStyle Hidden -RedirectStandardError $daemonLog | Out-Null
+            Write-Host "Cairn daemon started (hidden)."
+        } catch {
+            Write-Host "could not start the daemon: $($_.Exception.Message) -- the tray restarts it at next login, or run 'cairn daemon'"
+        }
     }
+    Write-Host "Dashboard: http://127.0.0.1:17778  (open it in your browser)"
 }
 
 # ---- 7. Done ----------------------------------------------------------------------

@@ -49,6 +49,9 @@
     <button type="button" class="btn btn-primary ob-continue" id="ob-continue" data-i18n="ob.continue">Continue</button>
 
     <div class="ob-scene" id="ob-attach" hidden>
+      <!-- first instinct is a CLICK: the picker leads, the typed path
+           follows for hosts without a session dialog -->
+      <button type="button" class="btn btn-primary ob-browse" id="ob-browse" data-i18n="btn.browse">Browse for folder...</button>
       <input id="ob-root" class="input" type="text" spellcheck="false" autocomplete="off"
              data-i18n-attr="placeholder:attach.root" placeholder="/path/to/workspace"
              aria-label="project folder path">
@@ -96,6 +99,13 @@
       <button type="button" class="rail-item" data-view="settings" id="nav-settings">
         <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2 4.25h12M2 8h12M2 11.75h12"/><circle cx="5.75" cy="4.25" r="1.55" fill="currentColor" stroke="none"/><circle cx="10.25" cy="8" r="1.55" fill="currentColor" stroke="none"/><circle cx="6.75" cy="11.75" r="1.55" fill="currentColor" stroke="none"/></svg>
         <span data-i18n="nav.settings">Settings</span>
+      </button>
+      <!-- round 27: the layman's guide — our buyers are editors, not
+           sync engineers. "How to use" sits under Settings in the rail,
+           simple words, the five promises up front. -->
+      <button type="button" class="rail-item" data-view="howto" id="nav-howto">
+        <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="6.25"/><path d="M6.2 6.1c.3-1 1-1.6 1.9-1.6 1.1 0 1.9.7 1.9 1.6 0 1.3-1.9 1.5-1.9 2.8"/><circle cx="8" cy="11.3" r="0.2" fill="currentColor" stroke="none"/></svg>
+        <span data-i18n="nav.howto">How to use</span>
       </button>
     </nav>
 
@@ -147,11 +157,11 @@
 
     <main class="main" id="main">
       <!-- ============ DASHBOARD: hero + two panels ============
-           One heading, one action, one optional path field — then the
-           two panels the mockup draws: recent assets (file / status /
-           pin) and recent sessions (session, projects, actions, and a
-           REAL activity chart drawn from /api/v1/activity). Nothing
-           decorative; every number is store-derived. -->
+           One heading, one action — then the two panels the mockup
+           draws. Round 27: the path input moved INTO the Add panel
+           (the retro called the always-visible field "prime real
+           estate for a power-user feature"); + Add to Workspace is
+           now the single prominent action. -->
       <section class="view is-active" id="view-dashboard" aria-labelledby="dash-title">
         <div class="hero">
           <div class="hero-head">
@@ -162,9 +172,6 @@
             </button>
           </div>
           <p class="hero-sub" id="hero-sub"></p>
-          <input id="ws-path" class="input ws-input" type="text" spellcheck="false" autocomplete="off"
-                 data-i18n-attr="placeholder:ws.placeholder" placeholder="Workspace path or ID (optional)"
-                 aria-label="workspace path or project id">
         </div>
 
         <div class="dash-grid">
@@ -177,11 +184,14 @@
               <table class="table assets-table">
                 <thead><tr>
                   <th class="th-file" data-i18n="th.file">file</th>
+                  <!-- round 27: video editors need sizes at a glance — a
+                       48 GB BRAW row must SAY it is 48 GB -->
+                  <th class="th-size num" data-i18n="th.size">size</th>
                   <th class="th-status" data-i18n="th.status">status</th>
                   <th class="th-pin"><span class="sr-only" data-i18n="th.pinned">pinned</span></th>
                 </tr></thead>
                 <tbody id="assets-body">
-                  <tr><td colspan="3" class="empty" data-i18n="empty.files">No files yet - attach a project and drop media in.</td></tr>
+                  <tr><td colspan="4" class="empty" data-i18n="empty.files">No files yet - attach a project and drop media in.</td></tr>
                 </tbody>
               </table>
             </div>
@@ -283,20 +293,26 @@
           <article class="card" id="set-flags">
             <header class="card-head"><h3 class="card-title" data-i18n="set.flags">Feature flags</h3></header>
             <div class="card-body">
-              <p class="note" data-i18n="note.flags">Flags apply on the next job run, no restart. Owner and lead only (RBAC enforced).</p>
+              <p class="note" data-i18n="flags.lead">Flags apply on the next job run, no restart. Owner and lead only (RBAC enforced). Click a flag to see what it does.</p>
               <div class="flag-grid" id="flag-grid"></div>
               <p class="note live-note" id="live-note" hidden></p>
             </div>
           </article>
 
           <article class="card" id="set-storage">
-            <header class="card-head"><h3 class="card-title" data-i18n="set.storage">Storage</h3></header>
+            <header class="card-head">
+              <h3 class="card-title" data-i18n="set.storage">Storage</h3>
+              <!-- round 27: which volume the meter reads — "260/476 GB"
+                   with no label read as a static mock; now it names the
+                   drive it measures and is live telemetry -->
+              <span class="card-count" id="storage-volume-label"></span>
+            </header>
             <div class="card-body">
               <dl class="kv">
                 <div class="kv-row"><dt data-i18n="stat.chunks">local chunks</dt><dd class="num mono" id="stat-blobs">0</dd></div>
                 <div class="kv-row"><dt data-i18n="stat.cached">cached</dt><dd class="num mono" id="stat-bytes">0 B</dd></div>
                 <div class="kv-row"><dt data-i18n="stat.pinned">pinned chunks</dt><dd class="num mono" id="stat-pinned">0</dd></div>
-                <div class="kv-row"><dt data-i18n="set.quota">disk quota</dt><dd class="mono" id="set-quota">·</dd></div>
+                <div class="kv-row"><dt data-i18n="set.quota">disk usage</dt><dd class="mono" id="set-quota">·</dd></div>
               </dl>
               <div class="meter quota-meter"><div class="meter-fill" id="quota-fill"></div></div>
               <p class="note" id="storage-note" data-i18n="note.storage">NLE media caches belong on local scratch; pinned chunks are never evicted.</p>
@@ -343,6 +359,109 @@
           </article>
         </div>
       </section>
+      <!-- ============ HOW TO USE: the layman's guide ============
+           Round 27. Our customers are editors and studio owners, not
+           sync engineers — the retro's sharpest line: "most of this
+           terms stuff usability how to use is new to our customers".
+           Five cards = the five promises (the things that sell),
+           each: what it replaces, what to do, one sentence of plain
+           words. No jargon, no flags, no namespaces. -->
+      <section class="view" id="view-howto" aria-labelledby="howto-title">
+        <h2 class="view-title" id="howto-title" data-i18n="howto.title">How to use Cairn</h2>
+        <p class="howto-lede" data-i18n="howto.lede">Cairn keeps your whole studio's footage in sync between computers - no upload sites, no hard drives in bags. Get started below; everything else happens automatically.</p>
+        <div class="settings-col howto-grid">
+
+          <article class="card howto-card" id="howto-start">
+            <header class="card-head">
+              <span class="howto-step">1</span>
+              <h3 class="card-title" data-i18n="howto.start.title">Get started (2 minutes)</h3>
+            </header>
+            <div class="card-body">
+              <ol class="howto-list">
+                <li data-i18n="howto.start.1">Click <b>Add to Workspace</b> above and pick your project folder (the one with your footage).</li>
+                <li data-i18n="howto.start.2">Do the same on the other computers in your studio - they join the same project.</li>
+                <li data-i18n="howto.start.3">That's it. Files you drop in the folder appear on every machine, automatically.</li>
+              </ol>
+              <p class="note" data-i18n="howto.start.note">The folder works like a normal folder. Edit, save, move files as you always do - Cairn handles the copying.</p>
+            </div>
+          </article>
+
+          <article class="card howto-card" id="howto-transfer">
+            <header class="card-head">
+              <span class="howto-step">2</span>
+              <h3 class="card-title" data-i18n="howto.transfer.title">Sending big files to each other</h3>
+            </header>
+            <div class="card-body">
+              <p data-i18n="howto.transfer.body">Replaces: SwissTransfer / WeTransfer waits (a 50 GB upload can take 5+ hours).</p>
+              <p data-i18n="howto.transfer.how">Drop the file in the project folder. It travels <b>straight</b> to the other computer - no cloud upload in the middle. On the same network this is minutes, not hours.</p>
+              <p class="note" data-i18n="howto.transfer.note">It even works through firewalls - if a direct line can't be found, an encrypted relay carries it.</p>
+            </div>
+          </article>
+
+          <article class="card howto-card" id="howto-merge">
+            <header class="card-head">
+              <span class="howto-step">3</span>
+              <h3 class="card-title" data-i18n="howto.merge.title">Two people editing the same timeline</h3>
+            </header>
+            <div class="card-body">
+              <p data-i18n="howto.merge.body">Replaces: "who has the newest version?" and merged-copy chaos.</p>
+              <p data-i18n="howto.merge.how">Everyone works on their own copy of the timeline. Cairn's <b>Timeline Merge</b> puts the changes together automatically - frame-accurate, nothing lost, no "conflict copy 47" files.</p>
+              <p class="note mono" data-i18n="howto.merge.note">From a terminal: cairn tl-merge --base old.otio --ours mine.otio --theirs theirs.otio</p>
+            </div>
+          </article>
+
+          <article class="card howto-card" id="howto-vfs">
+            <header class="card-head">
+              <span class="howto-step">4</span>
+              <h3 class="card-title" data-i18n="howto.vfs.title">Seeing footage that isn't on this computer</h3>
+            </header>
+            <div class="card-body">
+              <p data-i18n="howto.vfs.body">Replaces: carrying hard drives between offices.</p>
+              <p data-i18n="howto.vfs.how">Files from other machines show up in the folder as <b>lightweight placeholders</b> - they look real, and the moment you open one, Cairn fetches it in the background. On Windows the folder is a real Explorer folder.</p>
+              <p class="note" data-i18n="howto.vfs.note">Need a file offline (a shoot, a flight)? Hover it and press the pin - it stays on this machine forever.</p>
+            </div>
+          </article>
+
+          <article class="card howto-card" id="howto-proxy">
+            <header class="card-head">
+              <span class="howto-step">5</span>
+              <h3 class="card-title" data-i18n="howto.proxy.title">Editing heavy footage on a weak laptop</h3>
+            </header>
+            <div class="card-body">
+              <p data-i18n="howto.proxy.body">Replaces: waiting for renders, or being chained to the powerful machine.</p>
+              <p data-i18n="howto.proxy.how">Ask Cairn for a <b>proxy</b> - a small, light copy of a huge file that edits exactly the same. Cut on the laptop with proxies; the office machine swaps them back to full quality when it renders.</p>
+              <p class="note mono" data-i18n="howto.proxy.note">From a terminal: cairn proxy generate --media clip1.braw</p>
+            </div>
+          </article>
+
+          <article class="card howto-card" id="howto-review">
+            <header class="card-head">
+              <span class="howto-step">6</span>
+              <h3 class="card-title" data-i18n="howto.review.title">Showing work to a client</h3>
+            </header>
+            <div class="card-body">
+              <p data-i18n="howto.review.body">Replaces: exporting, uploading, and emailing links just for feedback.</p>
+              <p data-i18n="howto.review.how">Publish the cut, then send a <b>review link</b>. The client opens it in their browser, plays the video, and leaves notes pinned to exact frames. No account, no software.</p>
+              <p class="note mono" data-i18n="howto.review.note">From a terminal: cairn review link --note "Client A" (add --role studio for internal notes the client cannot see)</p>
+            </div>
+          </article>
+
+          <article class="card howto-card" id="howto-faq">
+            <header class="card-head">
+              <span class="howto-step">?</span>
+              <h3 class="card-title" data-i18n="howto.faq.title">When something looks wrong</h3>
+            </header>
+            <div class="card-body">
+              <ul class="howto-list">
+                <li data-i18n="howto.faq.1"><b>Yellow dot / "reconnecting"</b> - a sync is in flight or one machine is briefly offline. It fixes itself; give it a moment.</li>
+                <li data-i18n="howto.faq.2"><b>Red dot</b> - open Settings and read the health panel. If a project folder was deleted or moved, remove it under Projects and add the folder again.</li>
+                <li data-i18n="howto.faq.3"><b>A file I need is a placeholder</b> - hover it and press Recall; it materializes from the other machines.</li>
+                <li data-i18n="howto.faq.4"><b>Nothing syncing at all</b> - the green cairn icon in the system tray (near the clock) restarts everything. Right-click it for status.</li>
+              </ul>
+            </div>
+          </article>
+        </div>
+      </section>
     </main>
 
     <!-- ============ status bar: one dot, three quiet pills ============ -->
@@ -377,6 +496,14 @@
     </button>
   </header>
   <div class="panel-body">
+    <!-- round 27 "click, don't type": Browse opens the OS folder picker
+         (the daemon serves it from the user's session). The text field
+         stays for power users and non-Windows hosts. -->
+    <button type="button" class="btn btn-primary btn-block btn-browse" id="btn-browse">
+      <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true"><path d="M1.8 4.2c0-.6.5-1.1 1.1-1.1h3l1.5 1.7h5.7c.6 0 1.1.5 1.1 1.1v6c0 .6-.5 1.1-1.1 1.1H2.9c-.6 0-1.1-.5-1.1-1.1z"/></svg>
+      <span data-i18n="btn.browse">Browse for folder...</span>
+    </button>
+    <div class="or-line" aria-hidden="true"><span data-i18n="or.type">or type a path</span></div>
     <label class="field-label" for="attach-root" data-i18n="field.root">Project folder</label>
     <input id="attach-root" class="input" type="text" spellcheck="false" autocomplete="off"
            data-i18n-attr="placeholder:attach.root" placeholder="/path/to/workspace">
@@ -452,6 +579,7 @@
           <li><kbd>g</kbd> <kbd>d</kbd> <span data-i18n="help.goDash">go to dashboard</span></li>
           <li><kbd>g</kbd> <kbd>f</kbd> <span data-i18n="help.goFiles">go to files</span></li>
           <li><kbd>g</kbd> <kbd>s</kbd> <span data-i18n="help.goSettings">go to settings</span></li>
+          <li><kbd>g</kbd> <kbd>h</kbd> <span data-i18n="help.goHowto">go to the how-to guide</span></li>
           <li><kbd>esc</kbd> <span data-i18n="help.esc">close panels and overlays</span></li>
         </ul>
       </div>

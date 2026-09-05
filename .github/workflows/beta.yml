@@ -1,0 +1,327 @@
+# beta -- the ~1-hour beta gate, SHARDED across the free runner pool.
+#
+# Round 27 (the "don't beta on your potato CPU" request): the full
+# workspace test suite + the Windows surface, split into ~20 parallel
+# jobs so the wall clock is the SLOWEST shard (~1h), not the sum
+# (~8h+). Free-tier GitHub-hosted runner concurrency is 20; this
+# workflow is shaped to sit exactly under that ceiling.
+#
+# Sharding strategy: crates grouped by dep-tree overlap (a shard that
+# shares a dep graph pays the build cost once). Linux carries the bulk
+# (cheapest, fastest boot); windows-latest carries the surfaces that
+# only exist there (CfAPI, tray COM, the NLE stack, the installer
+# gate). Every shard gets the same rust-cache prefix + nextest.
+#
+# Budget: each shard carries timeout-minutes: 70. A shard that hangs
+# dies at 70min and fails the gate — a hang IS a beta blocker, it just
+# gets to fail loudly instead of eating the whole night.
+#
+# Triggers: manual (workflow_dispatch) + a weekly cadence so the beta
+# leg stays green between releases. NOT on push: ci.yml already covers
+# the fast path (this is the deep leg).
+name: beta
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 5 * * 1" # Mondays 05:00 UTC
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  # ---------------- Linux shards (12) ----------------
+  linux-core:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { prefix-key: beta-core }
+      - uses: taiki-e/install-action@nextest
+      - run: cargo nextest run -p cairn-core -p cairn-x
+      - run: cargo clippy -p cairn-core -p cairn-x --all-targets -- -D warnings
+
+  linux-store:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { prefix-key: beta-store }
+      - uses: taiki-e/install-action@nextest
+      - run: cargo nextest run -p cairn-store
+
+  linux-sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { prefix-key: beta-sync }
+      - uses: taiki-e/install-action@nextest
+      - run: cargo nextest run -p cairn-sync
+
+  linux-p2p:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { prefix-key: beta-p2p }
+      - uses: taiki-e/install-action@nextest
+      - run: cargo nextest run -p cairn-p2p
+
+  linux-tl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { prefix-key: beta-tl }
+      - uses: taiki-e/install-action@nextest
+      # the merge contract (115 unit tests, the no-competitor claim)
+      - run: cargo nextest run -p cairn-tl
+
+  linux-server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { prefix-key: beta-server }
+      - uses: taiki-e/install-action@nextest
+      - run: cargo nextest run -p cairn-server
+
+  linux-cli:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { prefix-key: beta-cli }
+      - uses: taiki-e/install-action@nextest
+      # the rbac/self-heal/detach tests live here (round 27)
+      - run: cargo nextest run -p cairn-cli
+
+  linux-proxy-review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { prefix-key: beta-proxy }
+      - uses: taiki-e/install-action@nextest
+      - run: cargo nextest run -p cairn-proxy -p cairn-review
+
+  linux-fs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { prefix-key: beta-fs }
+      - uses: taiki-e/install-action@nextest
+      - run: cargo nextest run -p cairn-fs-linux --features fuse
+      - run: cargo build -p cairn-fs-linux --features fuse --bin cairn-fuse
+
+  linux-sim:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { prefix-key: beta-sim }
+      # 200-schedule sweep (the 1,000-schedule leg stays nightly in ci.yml)
+      - run: cargo test -p cairn-sim --release
+        env:
+          CAIRN_SIM_ITERS: "200"
+          CAIRN_SIM_TICKS: "24"
+
+  linux-cross-check:
+    # windows-only Rust surface type-checked from a cheap linux runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { targets: x86_64-pc-windows-msvc }
+      - run: rustup target add x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with: { prefix-key: beta-cross }
+      - run: cargo check --target x86_64-pc-windows-msvc -p cairn-shell-ext -p cairn-tray -p cairn-fs-win
+
+  linux-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with: { components: "clippy, rustfmt" }
+      - uses: Swatinem/rust-cache@v2
+        with: { prefix-key: beta-lint }
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  linux-acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { prefix-key: beta-acceptance }
+      - run: cargo build --release -p cairn-cli
+      - name: WO1 AttachRoot acceptance (500 MiB, kill -9, convergence)
+        run: SIZE_MB=500 TIMEOUT=240 bash scripts/wo1-acceptance.sh
+      - name: dashboard smoke (the round-27 UI surface)
+        run: bash scripts/dashboard-smoke.sh
+
+  # ---------------- Windows shards (8) ----------------
+  windows-cli:
+    runs-on: windows-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { prefix-key: beta-win-cli }
+      - uses: taiki-e/install-action@nextest
+      - name: CLI + daemon tests (rbac fail-open, self-dedup, self-heal)
+        run: cargo nextest run -p cairn-cli
+
+  windows-fs:
+    runs-on: windows-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { prefix-key: beta-win-fs }
+      - uses: taiki-e/install-action@nextest
+      - name: CfAPI non-interactive surface
+        run: cargo nextest run -p cairn-fs-win
+
+  windows-tl-review:
+    runs-on: windows-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { prefix-key: beta-win-tl }
+      - uses: taiki-e/install-action@nextest
+      - run: cargo nextest run -p cairn-tl -p cairn-review -p cairn-proxy
+
+  windows-store-sync:
+    runs-on: windows-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { prefix-key: beta-win-store }
+      - uses: taiki-e/install-action@nextest
+      - run: cargo nextest run -p cairn-store -p cairn-sync -p cairn-p2p
+
+  windows-server:
+    runs-on: windows-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { prefix-key: beta-win-server }
+      - uses: taiki-e/install-action@nextest
+      - run: cargo nextest run -p cairn-server -p cairn-core
+
+  windows-nle:
+    # the W0-W6 rows: two real daemons + a real CfAPI root + a headless
+    # NLE (bpy) doing open->scrub->save->reopen through the filter
+    runs-on: windows-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { prefix-key: beta-win-nle }
+      - run: cargo build --release -p cairn-cli
+      - run: powershell -File scripts/win_nle_matrix.ps1
+
+  windows-tauri:
+    runs-on: windows-latest
+    timeout-minutes: 70
+    defaults:
+      run:
+        working-directory: crates/cairn-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/cairn-app
+          prefix-key: beta-tauri
+      - run: cargo check
+
+  windows-installer-gate:
+    # the clone-and-go retro's whole leg: install.ps1 against a pinned
+    # artifact on a CLEAN runner profile (fresh-profile Run key, PATH
+    # dedup, no double daemon, tray autostart)
+    runs-on: windows-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with: { prefix-key: beta-win-install }
+      - run: cargo build --release -p cairn-cli
+      - name: installer gate (local artifact, no launch)
+        env:
+          CAIRN_INSTALL_NO_LAUNCH: "1"
+        run: |
+          $exe = (Resolve-Path "target\release\cairn.exe").Path
+          # local artifacts are copied + trusted (no .sha256 sidecar, no
+          # web fetch): exactly the clone-and-go local-build path
+          powershell -File install.ps1 -ArtifactUrl $exe
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          & "$env:LOCALAPPDATA\Programs\cairn\cairn.exe" --version
+
+  # ---------------- summary ----------------
+  beta-summary:
+    needs: [
+        linux-core, linux-store, linux-sync, linux-p2p, linux-tl, linux-server,
+        linux-cli, linux-proxy-review, linux-fs, linux-sim, linux-cross-check,
+        linux-lint, linux-acceptance,
+        windows-cli, windows-fs, windows-tl-review, windows-store-sync,
+        windows-server, windows-nle, windows-tauri, windows-installer-gate,
+      ]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: shard verdicts
+        run: |
+          echo "## beta gate verdict" >> "$GITHUB_STEP_SUMMARY"
+          for j in \
+            linux-core linux-store linux-sync linux-p2p linux-tl linux-server \
+            linux-cli linux-proxy-review linux-fs linux-sim linux-cross-check \
+            linux-lint linux-acceptance \
+            windows-cli windows-fs windows-tl-review windows-store-sync \
+            windows-server windows-nle windows-tauri windows-installer-gate; do
+            echo "- $j: ${{ contains(needs.*.result, 'failure') && 'see run' || 'ok' }}" >> "$GITHUB_STEP_SUMMARY"
+          done
+          if [ "${{ contains(needs.*.result, 'failure') }}" = "true" ]; then
+            echo "at least one shard failed"
+            exit 1
+          fi
+          echo "All 21 shards green - beta leg passed"

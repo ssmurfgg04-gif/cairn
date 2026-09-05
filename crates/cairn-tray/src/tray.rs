@@ -157,7 +157,21 @@ fn notify_transition(
     prev: Option<&LiveStatus>,
     now: &LiveStatus,
 ) -> Option<(&'static str, String, NOTIFY_ICON_INFOTIP_FLAGS)> {
-    let prev = prev?;
+    // FIRST observation (round 27, the "tray not visible" retro): one
+    // welcome balloon on the first healthy poll tells the user where
+    // the icon lives — Windows buries new tray icons in the overflow
+    // (^), and a silent install produced a running tray nobody could
+    // find. The balloon doubles as the drag-me-out hint.
+    let Some(prev) = prev else {
+        if now.daemon_up {
+            return Some((
+                "Cairn is running",
+                "Sync is live. Find the Cairn icon near the clock (drag it onto the taskbar to keep it visible).".into(),
+                NIIF_INFO,
+            ));
+        }
+        return None;
+    };
     if prev.daemon_up && !now.daemon_up {
         // round 26: the supervisor restarts it — say THAT, not "open a
         // terminal" (the product's promise is no terminal, ever)
@@ -368,6 +382,34 @@ fn run_cairn(args: &[&str]) -> (bool, String) {
 
 use std::os::windows::process::CommandExt;
 
+/// Sweep wedged `cairn.exe` processes (round 27 single-owner path). Runs
+/// ONLY on the crash-loop branch: supervision already spawned a daemon,
+/// waited past the boot grace, and the port still does not answer —
+/// that child (or a zombie from an installer race) is holding handles
+/// without serving. `taskkill /IM cairn.exe /F` clears them so the next
+/// spawn owns the port cleanly. A healthy daemon — including one the
+/// user runs in a terminal — answers the probe, keeps supervision
+/// reset, and is never swept.
+fn sweep_stale_daemon() {
+    match std::process::Command::new("taskkill")
+        .args(["/IM", "cairn.exe", "/F", "/T"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    {
+        Ok(o) if !o.status.success() => {
+            // "process not found" is the happy path on a clean machine
+            let text = String::from_utf8_lossy(if o.stdout.is_empty() {
+                &o.stderr
+            } else {
+                &o.stdout
+            });
+            eprintln!("cairn-tray: stale-daemon sweep: {}", text.trim());
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!("cairn-tray: stale-daemon sweep failed: {e}"),
+    }
+}
+
 /// Start the daemon hidden and let it outlive us (round 26). The child's
 /// stderr is appended to `<home>/daemon.log` so a dead daemon is
 /// diagnosable from Status Details without a terminal. The handle is
@@ -537,12 +579,25 @@ unsafe extern "system" fn wnd_proc(
                     // round 26: the probe IS the supervisor's input. Down +
                     // backoff elapsed -> spawn the daemon (hidden, logged,
                     // survives the tray). Up -> reset the crash ladder.
-                    let spawn = shared
-                        .supervision
-                        .lock()
-                        .map(|mut sv| sv.observe(st.daemon_up, std::time::Instant::now()))
-                        .unwrap_or(Action::Wait);
-                    if spawn == Action::Spawn {
+                    let spawn = if let Ok(mut sv) = shared.supervision.lock() {
+                        let a = sv.observe(st.daemon_up, std::time::Instant::now());
+                        (a, sv.attempts())
+                    } else {
+                        (Action::Wait, 0)
+                    };
+                    if spawn.0 == Action::Spawn {
+                        // round 27 single-owner: attempt 1 spawns clean
+                        // (the daemon self-dedups on the bind — probe-
+                        // first, exit-0 if a daemon already answers, the
+                        // 10048 fix). From attempt 2 on, a previous child
+                        // never came up: sweep stale cairn.exe processes
+                        // BEFORE spawning so the wedged one cannot hold
+                        // handles/ports against the fresh one. A healthy
+                        // daemon (user's terminal included) answers the
+                        // probe and is never touched.
+                        if spawn.1 > 1 {
+                            sweep_stale_daemon();
+                        }
                         spawn_daemon();
                     }
                     if let Ok(mut guard) = shared.status.lock() {

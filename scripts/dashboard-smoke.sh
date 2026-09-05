@@ -98,8 +98,50 @@ echo "$S" | grep -q '"blobs"' && chk ok "storage endpoint" || chk fail "storage 
 BLOBS=$(echo "$S" | jget "blobs.count")
 [ "${BLOBS:-0}" -gt 0 ] && chk ok "storage shows $BLOBS blobs" || chk fail "storage blobs > 0" "got $BLOBS"
 
+# ---------- round 27: volumes + file quick-actions ----------
+echo "$S" | grep -q '"volumes":\[' && chk ok "storage lists volumes" || chk fail "storage lists volumes" "$S"
+VOL=$(echo "$S" | jget "volumes[0].total_bytes")
+[ -n "$VOL" ] && [ "$VOL" -gt 0 ] 2>/dev/null && chk ok "volume telemetry is real ($VOL bytes)" || chk fail "volume telemetry" "got ${VOL:-none}"
+R=$(curl -sf "$B/api/v1/pick-folder")
+echo "$R" | grep -q '"ok":true' && chk ok "pick-folder answers (linux: unsupported)" || chk fail "pick-folder answers" "$R"
+R=$(curl -sf -X POST "$B/api/v1/file/open" -H 'Content-Type: application/json' \
+     -d "{\"project_id\": \"$PROJECT\", \"path\": \"notes.txt\"}")
+# ok:true needs xdg-open (present on a desktop, absent on a headless runner):
+# the GATE is that the endpoint resolves the path and answers honest JSON
+echo "$R" | grep -q '"ok":' && chk ok "file/open answers (reveal is desktop-dependent)" || chk fail "file/open" "$R"
+# download: bytes must round-trip exactly
+D=$(curl -sf "$B/api/v1/file/download?project=$PROJECT&path=notes.txt" | md5sum | cut -d' ' -f1)
+M=$(md5sum "$ROOT/notes.txt" | cut -d' ' -f1)
+[ -n "$D" ] && [ "$D" = "$M" ] && chk ok "file/download round-trips" || chk fail "file/download round-trips" "$D vs $M"
+# traversal refusal: ../ must be refused
+CODE_HTTP=$(curl -s -o /dev/null -w "%{http_code}" "$B/api/v1/file/download?project=$PROJECT&path=..%2F..%2Fetc%2Fpasswd")
+[ "$CODE_HTTP" = "400" ] && chk ok "download refuses traversal" || chk fail "download refuses traversal" "HTTP $CODE_HTTP"
+R=$(curl -sf -X POST "$B/api/v1/file/duplicate" -H 'Content-Type: application/json' \
+     -d "{\"project_id\": \"$PROJECT\", \"path\": \"notes.txt\"}")
+echo "$R" | grep -q '"ok":true' && chk ok "file/duplicate copies" || chk fail "file/duplicate" "$R"
+DUP=$(echo "$R" | jget "path")
+[ -f "$ROOT/$DUP" ] && chk ok "duplicate landed beside the original ($DUP)" || chk fail "duplicate on disk" "$ROOT/$DUP"
+
 # ---------- doctor + flags ----------
 curl -sf "$B/api/v1/doctor" | grep -q '"checks":\[' && chk ok "doctor endpoint" || chk fail "doctor endpoint" "—"
+# bootstrap the acting device as OWNER (the smoke's flag-flip + restore
+# legs are owner-gated by design; the pre-round-27 script failed them
+# because a default editor cannot ManageFlags/Restore — RBAC working
+# AS DESIGNED, the fixture was wrong, not the engine)
+DEV=$(curl -sf "$B/api/v1/team" | jget "projects[0].my_device")
+if [ -n "$DEV" ] && [ "$DEV" != "None" ]; then
+  mkdir -p "$ROOT/.cairn"
+  python3 - "$ROOT/.cairn/members.json" "$DEV" <<'PY'
+import json, sys
+path, dev = sys.argv[1], sys.argv[2]
+doc = {"members": {dev: {"device_id": dev, "name": "smoke-owner",
+                          "role": "owner", "added_at_ms": 1, "added_by": "bootstrap"}}}
+open(path, "w").write(json.dumps(doc, indent=2))
+PY
+  chk ok "owner members.json bootstrapped ($DEV)"
+else
+  chk fail "owner bootstrap" "team endpoint returned no device"
+fi
 R=$(curl -sf -X POST "$B/api/v1/flags" -H 'Content-Type: application/json' -d '{"name":"normalize_containers","value":"false"}')
 echo "$R" | grep -q '"ok":true' && chk ok "flag flip endpoint" || chk fail "flag flip endpoint" "$R"
 
