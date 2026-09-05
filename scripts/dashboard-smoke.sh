@@ -8,7 +8,9 @@
 # time — the unit test fold_materializes_and_cas_updates pins the non-empty case).
 set -u
 cd "$(dirname "$0")/.."
-BIN="$PWD/target/debug/cairn"
+# BIN overridable: CI acceptance legs build RELEASE (faster, cached);
+# local runs keep the debug default
+BIN="${BIN:-$PWD/target/debug/cairn}"
 WORK="${WORK:-$PWD/.dashboard-smoke}"
 SRV="127.0.0.1:7443"; OBJ="127.0.0.1:7444"
 CTL="127.0.0.1:17777"; UI="127.0.0.1:17778"
