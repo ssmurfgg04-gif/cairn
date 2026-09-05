@@ -1,0 +1,8 @@
+{
+  // rust-analyzer: clippy on every save (devx top-10 #9) — the same lint
+  // surface CI enforces (`cargo clippy --workspace -- -D warnings`).
+  "rust-analyzer.check.command": "clippy",
+  "rust-analyzer.check.extraArgs": ["--", "-D", "warnings"],
+  // the FUSE daemon is the one feature-gated surface; everything else is default
+  "rust-analyzer.features": []
+}

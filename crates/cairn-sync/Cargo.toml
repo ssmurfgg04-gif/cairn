@@ -12,6 +12,8 @@ cairn-store = { path = "../cairn-store" }
 cairn-proto = { path = "../cairn-proto" }
 tonic = { workspace = true }
 tokio = { workspace = true }
+# CPU offload lane (ADR-0025): rayon::spawn + oneshot, PostHog pattern
+rayon = { workspace = true }
 prost = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }

@@ -1,4 +1,8 @@
 [toolchain]
 channel = "1.98.0"
 profile = "minimal"
-components = ["rustfmt", "clippy"]
+# devx top-10 #1: the four essentials every contributor gets automatically —
+# lint (clippy), format (rustfmt), IDE backend (rust-analyzer), and std source
+# for goto-definition into std (rust-src). rustup installs missing components
+# on first use of the toolchain.
+components = ["rustfmt", "clippy", "rust-analyzer", "rust-src"]

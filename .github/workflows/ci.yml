@@ -30,6 +30,22 @@ jobs:
         with: { components: rustfmt }
       - run: cargo fmt --all -- --check
 
+  # devx round (top-10 #7): per-crate compile-time report for every push —
+  # the honest way to spot WHICH crate regressed build time. `cargo build
+  # --timings` emits an interactive HTML graph; uploaded as an artifact.
+  timings:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --workspace --timings
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cargo-timings
+          path: target/cargo-timings/cargo-timing.html
+          if-no-files-found: warn
+
   # Windows-only Rust surface (shell-ext COM, tray) type-checked from a linux
   # runner: `cargo check` needs no MSVC linker, and these crates have no C
   # build-scripts (blake3/ring can't cross-compile here). This caught the 19

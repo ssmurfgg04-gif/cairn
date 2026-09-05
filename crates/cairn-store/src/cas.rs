@@ -97,6 +97,30 @@ impl Cas {
         Ok(bytes)
     }
 
+    /// Read a chunk WITHOUT parking an async worker (ADR-0025 I/O lane).
+    ///
+    /// `tokio::fs::read` rides the runtime's async file machinery: on Linux with
+    /// the io_uring driver armed (tokio `io-uring` feature, probed at runtime
+    /// with automatic fallback) reads land on the ring; on every other platform
+    /// or driver tokio's blocking pool serves them. Same verification and error
+    /// mapping as [`Cas::get`] — results are byte-identical.
+    pub async fn get_async(&self, h: &Hash) -> Result<Vec<u8>, CairnError> {
+        let path = self.path_for(h);
+        let bytes = tokio::fs::read(&path).await.map_err(|_| {
+            CairnError::new(ErrorKind::NotFound, format!("chunk {h} not in local CAS"))
+        })?;
+        // I2: verify on ingest, "free at 10+GB/s" (SPEC §9.2)
+        let actual = Hash::of(&bytes);
+        if actual != *h {
+            return Err(CairnError::new(
+                ErrorKind::LocalCasCorrupt,
+                format!("local CAS corruption: {h}"),
+            ));
+        }
+        self.touch(h)?;
+        Ok(bytes)
+    }
+
     /// Whether a chunk is present locally (by index; content verified on `get`).
     #[must_use]
     pub fn contains(&self, h: &Hash) -> bool {

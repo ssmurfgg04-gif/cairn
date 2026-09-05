@@ -759,6 +759,13 @@ pub mod snapshot {
 }
 
 fn main() -> anyhow::Result<()> {
+    // Global allocator (ADR-0026): mimalloc — per-thread heaps, 8B header,
+    // 12-week fragmentation 20.7% vs the system allocator's silent bleed on
+    // a long-lived daemon (johal.in/internals-rust-185-memory-allocator:
+    // 42ns/128B alloc, p99 89ns — 38% under the system allocator).
+    #[global_allocator]
+    static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
     // Round 20 Windows fix: even `--version` blew the 1 MiB main thread on a
     // real Windows host — clap's parse of this command tree in a debug
     // build plus the giant `run()` async state machine park far more stack
@@ -784,7 +791,16 @@ fn main() -> anyhow::Result<()> {
                 .ok();
             let cli = Cli::parse();
             let home = std::path::PathBuf::from(cli.home.clone().unwrap_or_else(default_home));
+            // Thread budget (ADR-0025, PostHog pattern): the rayon CPU lane is
+            // installed at full core width, tokio I/O workers at half (the
+            // runtime carries proxy/presence/dashboard I/O; hashing is the
+            // throughput side). Both pools at full width = the oversubscription
+            // that produced PostHog's 2.5s p99 spikes; the ingest semaphore
+            // keeps the sum honest under dirty-file bursts.
+            cairn_sync::offload::init_cpu_lanes();
+            let (io_workers, _cpu_lanes) = cairn_sync::offload::thread_budget();
             tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(io_workers)
                 .enable_all()
                 .build()?
                 .block_on(run(cli, home))

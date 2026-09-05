@@ -9,6 +9,7 @@ pub mod domains;
 pub mod engine;
 pub mod hydrate;
 pub mod native_collab;
+pub mod offload;
 pub mod peer;
 pub mod plane;
 pub mod plane_grpc;

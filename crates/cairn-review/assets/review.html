@@ -101,6 +101,13 @@
         <button type="button" class="chip" data-filter="RESOLVED">done</button>
       </div>
     </header>
+    <div class="notes-tools" id="notes-tools">
+      <input id="search" class="search" type="search" placeholder="search notes, #tags, people"
+             aria-label="search notes" autocomplete="off" spellcheck="false">
+      <button type="button" class="chip" id="sort" aria-label="sort by timecode">tc</button>
+      <button type="button" class="chip" id="export" aria-label="export filtered notes as CSV">csv</button>
+    </div>
+    <div class="tagbar" id="tags" aria-label="hashtag filters"></div>
     <ol id="comments" class="comments"></ol>
     <form class="composer" id="composer" hidden>
       <div class="composer-head">note at <span class="composer-tc" id="composer-tc">00:00:00:00</span></div>

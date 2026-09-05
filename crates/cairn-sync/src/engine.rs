@@ -106,8 +106,28 @@ impl Engine {
             .map_err(|e| CairnError::new(ErrorKind::Io, format!("stat {path}: {e}")))?;
         let pushed_size = pushed_meta.len();
         let pushed_mtime = crate::scan::mtime_millis(&pushed_meta);
-        let bytes = std::fs::read(&full)
+        // async file lane (ADR-0025): `tokio::fs::read` rides the runtime's async
+        // file machinery — on Linux with the io_uring driver armed (tokio
+        // `io-uring` feature, runtime-probed with automatic fallback) big reads
+        // land on the ring instead of parking an I/O worker on `std::fs::read`.
+        let bytes = tokio::fs::read(&full)
+            .await
             .map_err(|e| CairnError::new(ErrorKind::Io, format!("read {path}: {e}")))?;
+        // raw (pre-normalization) size feeds the content-derived idempotency key
+        // and the upsert op below — captured before `bytes` moves into the lane
+        let raw_len = bytes.len();
+        // header cache fill (I1 path, SPEC §5.1): head 2MB + tail 1MB OF THE RAW
+        // FILE — carved before `bytes` moves into the offload lane
+        let head: Vec<u8> = bytes
+            .iter()
+            .take(cairn_core::HEADER_HEAD_BYTES)
+            .copied()
+            .collect();
+        let tail: Vec<u8> = if raw_len > cairn_core::HEADER_HEAD_BYTES {
+            bytes[raw_len.saturating_sub(cairn_core::HEADER_TAIL_BYTES)..].to_vec()
+        } else {
+            Vec::new()
+        };
         // chunk-input normalization (flag-gated): compressed project containers are
         // decompressed so CDC runs on the canonical INNER payload — a 5KB XML edit inside a
         // gzip'd .prproj then reuses ~all chunks instead of avalanching the wrapper
@@ -119,25 +139,6 @@ impl Engine {
             cairn_core::normalize::sniff(&bytes)
         } else {
             cairn_core::normalize::Transform::None
-        };
-        let content: std::borrow::Cow<[u8]> = if transform == cairn_core::normalize::Transform::None
-        {
-            std::borrow::Cow::Borrowed(&bytes)
-        } else {
-            std::borrow::Cow::Owned(cairn_core::normalize::decompress_inner(&bytes, transform)?)
-        };
-        // stable-state gate is enforced by the watcher; a size+mtime mismatch here re-dirties
-        // transformed containers chunk FINE (project-class granularity — a 512-byte edit in
-        // a 6MB .blend must not re-upload a 4MB chunk); media keeps the coarse profile
-        let sh = if transform == cairn_core::normalize::Transform::None {
-            cairn_core::chunker::StreamHash::compute(&content)
-        } else {
-            cairn_core::chunker::StreamHash::compute_with(
-                &content,
-                cairn_core::CHUNK_MIN_FINE,
-                cairn_core::CHUNK_AVG_FINE,
-                cairn_core::CHUNK_MAX_FINE,
-            )
         };
         // transformed containers chunk with plain zstd-3 (the inner payload has no ext to
         // sniff; dict training does not apply to canonical payloads)
@@ -156,6 +157,18 @@ impl Engine {
         if let Some(d) = &dict {
             self.dicts.put(d.clone());
         }
+        // transformed containers chunk FINE (project-class granularity — a 512-byte edit
+        // in a 6MB .blend must not re-upload a 4MB chunk); media keeps the coarse profile.
+        // Hash+chunk is ~1 GiB/s of CPU: it moves to the offload lane (ADR-0025,
+        // PostHog pattern) instead of parking this I/O worker for the whole pass;
+        // small files stay inline, big ones round-trip through rayon + a oneshot.
+        let fine = transform != cairn_core::normalize::Transform::None;
+        let content: Vec<u8> = if fine {
+            cairn_core::normalize::decompress_inner(&bytes, transform)?
+        } else {
+            bytes
+        };
+        let (sh, content) = crate::offload::hash_stream_owned(content, fine).await?;
 
         // local CAS insert (verified) — content-addressed, idempotent
         for (span, h) in sh.spans.iter().zip(sh.chunk_hashes.iter()) {
@@ -340,10 +353,10 @@ impl Engine {
             &self.project_id,
             path,
             &manifest_hash.hex(),
-            bytes.len() as u64,
+            raw_len as u64,
             mtime_ms,
         );
-        let op = upsert_op(path, &manifest_hash.hex(), bytes.len() as u64, base_seq);
+        let op = upsert_op(path, &manifest_hash.hex(), raw_len as u64, base_seq);
         let entry = cairn_store::OutboxEntry {
             request_id: request_id.clone(),
             project_id: self.local_ns.clone(),
@@ -366,17 +379,6 @@ impl Engine {
         self.send_outbox_entry(&request_id, op, lease_token, path, stats)
             .await?;
 
-        // header cache fill (I1 path): head 2MB + tail 1MB
-        let head: Vec<u8> = bytes
-            .iter()
-            .take(cairn_core::HEADER_HEAD_BYTES)
-            .copied()
-            .collect();
-        let tail: Vec<u8> = if bytes.len() > cairn_core::HEADER_HEAD_BYTES {
-            bytes[bytes.len().saturating_sub(cairn_core::HEADER_TAIL_BYTES)..].to_vec()
-        } else {
-            Vec::new()
-        };
         self.headers.put(
             &manifest_hash.hex(),
             &head,

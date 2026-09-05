@@ -889,6 +889,11 @@ static OVERLAY_FP: std::sync::LazyLock<
     std::sync::Mutex<std::collections::HashMap<String, (u64, std::time::Instant)>>,
 > = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
+/// Watcher mailbox budget (ADR-0025): settled-path events the daemon buffers
+/// before the forwarder thread back-pressures the watcher. 512 covers the worst
+/// rename storm a project throws at once; the consumer warns at 80%.
+const WATCH_MAILBOX_CAP: usize = 512;
+
 async fn run_loop(
     rt: &Arc<ProjectRuntime>,
     store: &Store,
@@ -906,7 +911,8 @@ async fn run_loop(
     let outbox = Outbox::new(conn.clone());
     // WO6-5 reader-pool fix (burst CI evidence 2026-09-02): dedicated query-only
     // readers so 32-concurrent-open bursts don't serialize behind store writes
-    let headers = HeaderCache::with_read_pool(conn.clone(), &store.root().join("db.sqlite"), 4);
+    // (8-wide r2d2 pool, ADR-0025 — production width, matches the burst bench)
+    let headers = HeaderCache::with_read_pool(conn.clone(), &store.root().join("db.sqlite"), 8);
     let engine = Engine {
         tenant_id: identity.tenant_id.clone(),
         // server journal scope stays the PROJECT; the local namespace and
@@ -930,14 +936,19 @@ async fn run_loop(
     let swarm = ensure_swarm(rt, store, identity).await;
     let swarm_source: Option<SwarmPeerSource> = swarm.map(|s| SwarmPeerSource { swarm: s });
 
-    // local-edit watcher: settled paths → dirty (suppress hydration echoes)
+    // local-edit watcher: settled paths → dirty (suppress hydration echoes).
+    // Bounded mailbox (ADR-0025): 512 settled-path events of headroom, then the
+    // forwarder thread applies BACKPRESSURE (blocking_send) instead of the old
+    // unbounded queue ballooning through a rename storm — the pmbanugo/PostHog
+    // "strictly bounded mailboxes" discipline. The consumer warns at 80%
+    // saturation so the budget gets spent loudly, not silently.
     let (wtx, wrx) = std::sync::mpsc::channel::<cairn_sync::watch::QuiescedEvent>();
     let _watcher = cairn_sync::watch::watch(&rt.workspace, wtx)?;
-    let (ttx, mut trx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let (ttx, mut trx) = tokio::sync::mpsc::channel::<String>(WATCH_MAILBOX_CAP);
     std::thread::spawn(move || {
         while let Ok(ev) = wrx.recv() {
             let cairn_sync::watch::QuiescedEvent::Settled(abs) = ev;
-            if ttx.send(abs).is_err() {
+            if ttx.blocking_send(abs).is_err() {
                 return;
             }
         }
@@ -947,7 +958,23 @@ async fn run_loop(
         let store2 = store.clone();
         let ws = rt.workspace.clone();
         tokio::spawn(async move {
+            let mut saturated = false;
             while let Some(abs) = trx.recv().await {
+                // saturation gauge: ≥80% of the mailbox budget in flight
+                let in_use = WATCH_MAILBOX_CAP - trx.capacity();
+                if in_use * 5 >= WATCH_MAILBOX_CAP * 4 {
+                    if !saturated {
+                        tracing::warn!(
+                            in_use,
+                            cap = WATCH_MAILBOX_CAP,
+                            "watch mailbox ≥80% saturated — dirty events are arriving faster than sync passes drain them"
+                        );
+                        saturated = true;
+                    }
+                } else if saturated {
+                    tracing::info!("watch mailbox drained below 80%");
+                    saturated = false;
+                }
                 let p = Path::new(&abs);
                 let Ok(rel) = p.strip_prefix(&ws) else {
                     continue;
