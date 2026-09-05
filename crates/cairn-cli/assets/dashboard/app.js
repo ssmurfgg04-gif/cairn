@@ -36,8 +36,8 @@ const STR = {
   "head.noRoots": { en: "no roots attached", "de-DE": "keine Wurzeln verbunden", "ja-JP": "接続されたルートはありません", "zh-CN": "尚未连接项目" },
   "search.placeholder": { en: "search files, projects, reviews…", "de-DE": "Dateien, Projekte, Reviews suchen…", "ja-JP": "ファイル・プロジェクト・レビューを検索…", "zh-CN": "搜索文件、项目、审阅…" },
 
-  "ob.title.welcome": { en: "Welcome to cairn", "de-DE": "Willkommen bei cairn", "ja-JP": "cairn へようこそ", "zh-CN": "欢迎使用 cairn" },
-  "ob.sub.welcome": { en: "Get your studio syncing in three steps — the tray dot turns green when you are done.", "de-DE": "In drei Schritten zum Studio-Sync — das Tray-Symbol wird grün, wenn alles läuft.", "ja-JP": "3ステップでスタジオの同期を開始 — 完了するとトレイのドットが緑になります。", "zh-CN": "三步开启工作室同步 — 完成后托盘点亮起绿灯。" },
+  "ob.title.welcome": { en: "Welcome to Cairn", "de-DE": "Willkommen bei Cairn", "ja-JP": "Cairn へようこそ", "zh-CN": "欢迎使用 Cairn" },
+  "ob.sub.welcome": { en: "Choose a project folder to attach.", "de-DE": "Wähle einen Projektordner zum Verbinden.", "ja-JP": "接続するプロジェクトフォルダーを選択してください。", "zh-CN": "选择要连接的项目文件夹。" },
   "ob.title.rail": { en: "Get your studio syncing", "de-DE": "Studio-Sync starten", "ja-JP": "スタジオ同期を開始", "zh-CN": "开启工作室同步" },
   "ob.step1.name": { en: "Connect a folder", "de-DE": "Ordner verbinden", "ja-JP": "フォルダーを接続", "zh-CN": "连接文件夹" },
   "ob.step1.desc": { en: "Attach the project folder your edit lives in.", "de-DE": "Den Projektordner mit deinem Schnittprojekt verbinden.", "ja-JP": "編集プロジェクトのあるフォルダーを接続します。", "zh-CN": "连接你的剪辑工程所在的文件夹。" },
@@ -46,6 +46,10 @@ const STR = {
   "ob.step3.name": { en: "Ready to edit", "de-DE": "Bereit zum Schneiden", "ja-JP": "編集準備完了", "zh-CN": "可以开工" },
   "ob.step3.desc": { en: "Green dot means every save is journaled and safe.", "de-DE": "Der grüne Punkt bedeutet: jedes Speichern ist sicher protokolliert.", "ja-JP": "緑のドットは「すべての保存が記録され保護されている」の意味。", "zh-CN": "绿灯亮起即每次保存都有日志保护。" },
   "ob.cta": { en: "Open project folder…", "de-DE": "Projektordner öffnen…", "ja-JP": "プロジェクトフォルダーを開く…", "zh-CN": "打开项目文件夹…" },
+  "ob.cli": { en: "copy CLI", "de-DE": "CLI kopieren", "ja-JP": "CLIをコピー", "zh-CN": "复制命令行" },
+  "ob.daemonDown": { en: "Cannot reach the daemon", "de-DE": "Daemon nicht erreichbar", "ja-JP": "デーモンに接続できません", "zh-CN": "无法连接守护进程" },
+  "ob.daemonDownSub": { en: "Start it with cairn daemon, then reload this page.", "de-DE": "Starte ihn mit cairn daemon und lade diese Seite neu.", "ja-JP": "cairn daemon で起動し、このページを再読み込みしてください。", "zh-CN": "请先运行 cairn daemon，然后刷新此页面。" },
+  "foot.stage1": { en: "Connect", "de-DE": "Verbinden", "ja-JP": "接続", "zh-CN": "连接" },
 
   "card.sync": { en: "Sync state", "de-DE": "Sync-Status", "ja-JP": "同期状態", "zh-CN": "同步状态" },
   "card.i1": { en: "Hydration (I1)", "de-DE": "Hydration (I1)", "ja-JP": "ハイドレーション (I1)", "zh-CN": "取回速度 (I1)" },
@@ -216,6 +220,8 @@ document.querySelectorAll(".lang").forEach((b) => {
     localStorage.setItem("cairn-lang", LANG);
     applyI18n();
     renderOnboarding();
+    renderFooter();
+    updateFootCta();
     renderFiles(LAST_FILES);
     renderReview(LAST_REVIEW);
     renderLocks(LAST_LOCKS);
@@ -319,50 +325,91 @@ function fillProjectSelects() {
   }
 }
 
-/* ---------- onboarding: the EMPTY-STATE hero only ----------
-   The design-review verdict was blunt and right: a three-step wizard
-   above the sync metrics treats a DIT like a novice, and a project that
-   is already attached does not need a wizard. So: zero roots -> the full
-   welcome hero (audit #1); anything attached -> the card hides and the
-   state chip + files meter carry the story. */
+/* ---------- the Space shell state (round 21) ----------
+   Zero roots -> the full-viewport onboarding stage (76px mark, h1, sub,
+   the attach input, 1/3 progress in the 82px footer). Attached -> the
+   stage hides, the console .frame returns, and the footer becomes the
+   always-visible status bar: sync, cursor, conflicts, the 4px files
+   meter, quota and the team join code — the numbers the tray dot
+   summarizes, lifted out of the scrolly cards into permanent view. */
+
+const FOOT = {
+  pending: null, cursor: null, conflicts: null, files: null, synced: null,
+  disk: null, join: "", daemonUp: null,
+};
+
+function renderFooter() {
+  if (FOOT.files !== null) $("foot-sync-n").textContent = `${FOOT.synced ?? 0}/${FOOT.files}`;
+  if (FOOT.cursor !== null) $("foot-cursor").textContent = String(FOOT.cursor);
+  if (FOOT.conflicts !== null) {
+    $("foot-conflict").textContent = String(FOOT.conflicts);
+    $("foot-conflict-pill").classList.toggle("is-bad", FOOT.conflicts > 0);
+  }
+  if (FOOT.files !== null) {
+    const total = Math.max(1, FOOT.files);
+    const fill = $("foot-files-fill");
+    fill.style.width = `${Math.max(2, Math.round(((FOOT.synced ?? 0) / total) * 100))}%`;
+    fill.style.background = FOOT.conflicts > 0 ? "var(--warn)" : "var(--ok)";
+  }
+  if (FOOT.disk && Number.isFinite(FOOT.disk.total)) {
+    const used = Math.max(0, FOOT.disk.total - FOOT.disk.free);
+    $("foot-quota").textContent = `${fmtBytes(used)} / ${fmtBytes(FOOT.disk.total)}`;
+  }
+  const joinPill = $("foot-join-pill");
+  if (FOOT.join) { joinPill.hidden = false; $("foot-join").textContent = FOOT.join; }
+  else joinPill.hidden = true;
+
+  const pill = $("foot-state");
+  pill.className = `footer-status ${HEALTHY ? "is-ok" : "is-bad"}`;
+  $("foot-state-label").textContent = HEALTHY ? t("chip.ok") : t("chip.bad");
+}
+
+/* the footer's ONE primary CTA follows the active section (scroll-spy
+   drives it): one primary action bottom-right, Space-style; the inputs
+   stay in their sections as secondary affordances. */
+const SECTION_CTA = {
+  "#projects": { key: "btn.attach", run: () => doAttach($("attach-root"), $("attach-project")) },
+  "#versions": { key: "btn.snapshot", run: () => doSnapshot() },
+  "#pins": { key: "btn.pin", run: () => doPin() },
+  "#recall": { key: "btn.recall", run: () => doRecall() },
+};
+let ACTIVE_SECTION = "#overview";
+
+function updateFootCta() {
+  const cta = $("foot-cta");
+  if (!cta) return;
+  if (!PROJECTS.length) { cta.textContent = t("ob.cta"); return; }
+  const conf = SECTION_CTA[ACTIVE_SECTION] || SECTION_CTA["#versions"];
+  cta.textContent = t(conf.key);
+}
+
+/* ---------- onboarding: the zero-root Space stage ---------- */
 
 function renderOnboarding() {
-  const card = $("onboarding");
-  if (!card) return;
+  const stage = $("onboarding");
+  if (!stage) return;
   const attached = PROJECTS.length > 0;
 
-  if (attached) {
-    card.hidden = true;
-    return;
-  }
-  card.hidden = false;
-  card.classList.add("hero");
+  // the Space stage owns the viewport at zero roots; the console frame
+  // takes over after the first attach. The 82px footer stays for both.
+  stage.hidden = attached;
+  $("frame").hidden = !attached;
+  $("foot-progress").hidden = attached;
+  $("foot-status").hidden = !attached;
+  $("ob-error").hidden = !(FOOT.daemonUp === false);
+
+  if (attached) { renderFooter(); updateFootCta(); return; }
+
   $("ob-title").textContent = t("ob.title.welcome");
   $("ob-sub").textContent = t("ob.sub.welcome");
 
-  const setStep = (id, state) => {
-    const el = $(id);
-    el.classList.remove("done", "now", "todo");
-    el.classList.add(state);
-    el.querySelector(".ob-num").textContent =
-      state === "done" ? "\u2713" : id.slice(-1);
-  };
-  setStep("ob-step-1", "now");
-  setStep("ob-step-2", "todo");
-  setStep("ob-step-3", "todo");
-  const note = $("ob-note");
-  note.textContent = "";
-
-  // footer track (72x3) over the real state machine, never faked: the hero
-  // only exists at zero roots, so the track honestly sits at 1/3 — attach
-  // a root (button or CLI) and the next poll replaces this card entirely.
-  const stage = 1;
-  const fill = $("ob-track-fill");
-  const track = $("ob-track");
-  const label = $("ob-stage-label");
-  if (fill) fill.style.width = `${(stage / 3) * 100}%`;
-  if (track) track.setAttribute("aria-valuenow", String(stage));
-  if (label) label.textContent = `${stage} / 3 · ${t("ob.step1.name")}`;
+  // the real state machine, never faked: the stage only exists at zero
+  // roots, so the track honestly sits at 1/3 — attach (input or CLI) and
+  // the next poll swaps the stage for the console.
+  $("foot-track-fill").style.width = `${(1 / 3) * 100}%`;
+  $("foot-progress").setAttribute("aria-valuenow", "1");
+  $("foot-stage-label").textContent = `1 / 3 · ${t("foot.stage1")}`;
+  updateFootCta();
 }
 
 /* ---------- status header + overview ---------- */
@@ -388,6 +435,14 @@ async function refreshStatus() {
     $("stat-files").textContent = summary.files ?? 0;
     $("stat-conflicts").textContent = summary.conflicts ?? 0;
 
+    // the 82px footer status bar mirrors the overview numbers
+    FOOT.pending = summary.outbox_pending ?? 0;
+    FOOT.cursor = summary.journal_cursor ?? 0;
+    FOOT.conflicts = summary.conflicts ?? 0;
+    if (FOOT.files === null) FOOT.files = summary.files ?? 0;
+    FOOT.daemonUp = true;
+    renderFooter();
+
     const i1 = summary.hydration_first_byte_ms;
     if (Number.isFinite(i1)) {
       $("stat-i1").textContent = `${i1.toFixed(1)} ms`;
@@ -403,7 +458,11 @@ async function refreshStatus() {
     }
   } catch {
     HEALTHY = false;
+    FOOT.daemonUp = false;
     setChip($("state-chip"), "is-bad", t("chip.bad"));
+    renderFooter();
+    // daemon unreachable at zero roots -> the Space error-fallback card
+    renderOnboarding();
   }
 }
 
@@ -418,24 +477,20 @@ async function refreshStorage() {
     $("stat-bytes").textContent = fmtBytes(b.bytes ?? 0);
     $("stat-pinned").textContent = b.pinned_count ?? 0;
     const note = $("storage-note");
-    const fill = $("quota-meter-fill");
+    // the live quota meter moved to the 82px footer (round 21); the card
+    // keeps the note. Guard: the fill element is gone by design.
     if (r.disk && Number.isFinite(r.disk.free_bytes) && Number.isFinite(r.disk.total_bytes) && r.disk.total_bytes > 0) {
       const used = Math.max(0, r.disk.total_bytes - r.disk.free_bytes);
+      FOOT.disk = { total: r.disk.total_bytes, free: r.disk.free_bytes };
+      renderFooter();
       const pct = Math.min(100, (used / r.disk.total_bytes) * 100);
-      fill.style.width = `${Math.max(2, pct)}%`;
       if (pct >= 95) {
-        fill.style.background = "var(--bad)";
-        fill.classList.add("pulse");
         note.textContent = t("quota.warn");
       } else {
-        fill.style.background = pct >= 80 ? "var(--warn)" : "var(--ok)";
-        fill.classList.remove("pulse");
         note.textContent =
           `${fmtBytes(used)} ${t("quota.note")} ${fmtBytes(r.disk.total_bytes)} — ` +
           "NLE media caches belong on local scratch; pinned chunks are never evicted.";
       }
-    } else {
-      fill.style.width = "0%";
     }
   } catch { /* store down: stats stay at their last honest value */ }
 }
@@ -624,9 +679,17 @@ function renderFiles(r) {
     body.innerHTML = `<tr><td colspan="4" class="empty">${esc(t("empty.files"))}</td></tr>`;
     sum.textContent = "";
     fill.style.width = "0%";
+    FOOT.files = 0;
+    FOOT.synced = 0;
+    renderFooter();
     return;
   }
   const s = r.summary || {};
+  // the footer's 4px files meter + the sync x/y pill
+  FOOT.files = Number(s.files) || 0;
+  FOOT.synced = Number(s.synced) || 0;
+  FOOT.conflicts = Number(s.conflict) || 0;
+  renderFooter();
   sum.textContent = t("files.summary")
     .replace("{files}", String(s.files ?? 0))
     .replace("{synced}", String(s.synced ?? 0))
@@ -761,6 +824,9 @@ async function refreshTeam() {
   try {
     const r = await getJSON("/api/v1/team");
     renderTeam(r);
+    // the footer's join-code pill: first project's invite code
+    FOOT.join = (r.projects && r.projects[0] && r.projects[0].join_code) || "";
+    renderFooter();
   } catch { /* team stays at its last honest value */ }
 }
 
@@ -811,6 +877,10 @@ function navActivate(href) {
   document.querySelectorAll(".nav-item").forEach((x) => {
     x.classList.toggle("is-active", x.getAttribute("href") === href);
   });
+  if (href && href.startsWith("#")) {
+    ACTIVE_SECTION = href;
+    updateFootCta();
+  }
 }
 
 $("search-input").addEventListener("input", (ev) => {
@@ -1057,6 +1127,9 @@ async function refreshReview() {
 function toggleHelp(force) {
   const ov = $("help-overlay");
   ov.hidden = force !== undefined ? !force : !ov.hidden;
+  // the footer portales to footer-dark (fixed, z70) above the scrim while
+  // an overlay is open — Space's drive-forge pattern
+  document.body.classList.toggle("overlay-open", !ov.hidden);
 }
 $("help-close").addEventListener("click", () => toggleHelp(false));
 $("foot-help").addEventListener("click", () => toggleHelp(true));
@@ -1069,6 +1142,7 @@ document.addEventListener("keydown", (ev) => {
   const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
   if (ev.key === "Escape") {
     $("help-overlay").hidden = true;
+    document.body.classList.remove("overlay-open");
     $("search-drop").hidden = true;
     return;
   }
@@ -1243,21 +1317,82 @@ let LAST_ACTIVITY = [];
 
 /* ---------- action buttons ---------- */
 
-$("btn-attach").addEventListener("click", async () => {
-  const root = $("attach-root").value.trim();
-  const project = $("attach-project").value.trim();
-  if (!root) return alert("root path required");
+/* shared actions: the footer's primary CTA and each section's own
+   secondary button run the SAME code — one behavior, two entry points
+   (Space: the primary lives bottom-right; the console keeps in-place
+   secondary buttons next to their inputs). */
+async function doAttach(rootEl, projectEl) {
+  const root = (rootEl && rootEl.value.trim()) || "";
+  if (!root) {
+    // browsers cannot hand a loopback page the absolute path of a picked
+    // folder — no fake picker: focus the honest input
+    if (rootEl) rootEl.focus();
+    return;
+  }
+  const project = projectEl ? projectEl.value.trim() : "";
   const r = await postJSON("/api/v1/attach", { root_path: root, project_id: project });
   if (!r.ok) alert(`attach failed: ${r.error}`);
-  else { $("attach-root").value = ""; $("attach-project").value = ""; }
+  else {
+    rootEl.value = "";
+    if (projectEl) projectEl.value = "";
+  }
   refreshAll();
-});
+}
 
-$("ob-cta-attach").addEventListener("click", () => {
-  // browsers cannot hand a loopback page the absolute path of a picked
-  // folder — focus the input and show the CLI copy (honest, no fake picker)
-  $("attach-root").focus();
-  $("attach-root").scrollIntoView({ behavior: "smooth", block: "center" });
+async function doSnapshot() {
+  const project = selectedProject("snapshot-project");
+  if (!project) return alert("attach a project first");
+  const r = await postJSON("/api/v1/snapshots", {
+    project_id: project,
+    label: $("snapshot-label").value.trim(),
+  });
+  if (r.ok) { $("snapshot-label").value = ""; refreshSnapshots(); }
+  else alert(`version failed: ${r.error}`);
+}
+
+async function doPin() {
+  const project = selectedProject("pin-project");
+  const path = $("pin-path").value.trim();
+  if (!project || !path) return alert("project and path required");
+  const r = await postJSON("/api/v1/pins", { project_id: project, path });
+  if (r.ok) { $("pin-path").value = ""; refreshPins(); }
+  else alert(`pin failed: ${r.error}`);
+}
+
+async function doRecall() {
+  const project = selectedProject("recall-project");
+  if (!project) return alert("attach a project first");
+  const r = await postJSON("/api/v1/recall", {
+    project_id: project,
+    path: $("recall-path").value.trim(),
+  });
+  if (r.ok) { RECALL_JOBS.set(r.job_id, { state: "running", progress: 0 }); renderRecallJobs(); }
+  else alert(`recall failed: ${r.error}`);
+}
+
+$("btn-attach").addEventListener("click", () => doAttach($("attach-root"), $("attach-project")));
+
+/* the footer's ONE primary CTA — Space's continue-wrap: onboarding ->
+   first Continue reveals the attach scene (input + CLI), the second
+   attaches; attached -> the active section's action */
+$("foot-cta").addEventListener("click", () => {
+  if (!PROJECTS.length) {
+    const scene = $("ob-attach");
+    if (scene.hidden) {
+      scene.hidden = false;
+      $("ob-root").focus();
+      return;
+    }
+    doAttach($("ob-root"), null);
+    return;
+  }
+  const conf = SECTION_CTA[ACTIVE_SECTION] || SECTION_CTA["#versions"];
+  if (conf) conf.run();
+});
+$("ob-cli-copy-btn").addEventListener("click", copyBtn);
+/* Enter in the stage input = the footer CTA (no reach needed) */
+$("ob-root").addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter") { ev.preventDefault(); doAttach($("ob-root"), null); }
 });
 
 $("files-filter").addEventListener("input", () => {
@@ -1269,38 +1404,12 @@ $("files-project").addEventListener("change", refreshFiles);
 $("snapshot-project").addEventListener("change", refreshSnapshots);
 $("pin-project").addEventListener("change", refreshPins);
 
-$("btn-snapshot").addEventListener("click", async () => {
-  const project = selectedProject("snapshot-project");
-  if (!project) return alert("attach a project first");
-  const r = await postJSON("/api/v1/snapshots", {
-    project_id: project,
-    label: $("snapshot-label").value.trim(),
-  });
-  if (r.ok) { $("snapshot-label").value = ""; refreshSnapshots(); }
-  else alert(`version failed: ${r.error}`);
-});
-
+$("btn-snapshot").addEventListener("click", doSnapshot);
 $("btn-snapshots-refresh").addEventListener("click", refreshSnapshots);
 
-$("btn-pin").addEventListener("click", async () => {
-  const project = selectedProject("pin-project");
-  const path = $("pin-path").value.trim();
-  if (!project || !path) return alert("project and path required");
-  const r = await postJSON("/api/v1/pins", { project_id: project, path });
-  if (r.ok) { $("pin-path").value = ""; refreshPins(); }
-  else alert(`pin failed: ${r.error}`);
-});
+$("btn-pin").addEventListener("click", doPin);
 
-$("btn-recall").addEventListener("click", async () => {
-  const project = selectedProject("recall-project");
-  if (!project) return alert("attach a project first");
-  const r = await postJSON("/api/v1/recall", {
-    project_id: project,
-    path: $("recall-path").value.trim(),
-  });
-  if (r.ok) { RECALL_JOBS.set(r.job_id, { state: "running", progress: 0 }); renderRecallJobs(); }
-  else alert(`recall failed: ${r.error}`);
-});
+$("btn-recall").addEventListener("click", doRecall);
 
 /* staggered card entry (taste-skill: cascade, never all at once) */
 document.querySelectorAll(".card").forEach((el, i) => {
