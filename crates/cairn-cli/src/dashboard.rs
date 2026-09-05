@@ -39,6 +39,7 @@ pub async fn serve(addr: String, state: Arc<DaemonState>) -> anyhow::Result<()> 
         .route("/assets/app.js", get(js))
         .route("/api/v1/status", get(status))
         .route("/api/v1/feed", get(feed))
+        .route("/api/v1/activity", get(activity))
         .route("/api/v1/flags", get(flags).post(set_flag))
         .route("/api/v1/doctor", get(doctor))
         // WO6-UI: full ctl parity over HTTP (same svc impls as the gRPC ctl server)
@@ -174,7 +175,10 @@ async fn feed(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> 
     let mut activity: Vec<serde_json::Value> = Vec::new();
     let mut leases: Vec<serde_json::Value> = Vec::new();
     if let Some(store) = open_store(state.home.as_path()) {
-        // real local leases (leases_local table — engine-written, expiry-filtered)
+        // real local leases (leases_local table — engine-written, expiry-filtered).
+        // A HELD lease is the "project opened" event (ADR-0014: NLEs lock on
+        // open), so it joins the activity timeline instead of existing in a
+        // separate zone only the settings view can see.
         let now = WallClock.now_millis();
         for (path, token, expires_at) in store.list_leases() {
             leases.push(json!({
@@ -183,18 +187,91 @@ async fn feed(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> 
                 "expires_at": expires_at,
                 "expired": expires_at <= now,
             }));
+            if expires_at > now {
+                activity.push(json!({
+                    "ts": now,
+                    "seq": now,
+                    "kind": "lease",
+                    "path": path,
+                    "project": "",
+                }));
+            }
         }
-        let rows: Vec<cairn_store::FileRow> = store.recent_file_rows(12);
+        // recent file events (mtime-ordered; the journal's file surface)
+        let rows: Vec<cairn_store::FileRow> = store.recent_file_rows(10);
         for f in rows {
             activity.push(json!({
                 "seq": f.mtime,
+                "ts": f.mtime,
                 "path": f.path,
+                "project": f.project_id,
                 "kind": if f.local_state == "conflict" { "conflict" } else { "upsert" },
+                "state": f.local_state,
                 "size": f.size,
             }));
         }
+        // real pin events (pins table — durable intent, WO6-2)
+        for (project, path, pinned_at) in store.recent_pins(6) {
+            activity.push(json!({
+                "ts": pinned_at,
+                "seq": pinned_at,
+                "path": path,
+                "project": project,
+                "kind": "pinned",
+            }));
+        }
+        // newest first, capped: a timeline, not a log viewer
+        activity.sort_by(|a, b| {
+            b["ts"]
+                .as_i64()
+                .unwrap_or(0)
+                .cmp(&a["ts"].as_i64().unwrap_or(0))
+        });
+        activity.truncate(12);
     }
     Json(json!({ "activity": activity, "leases": leases }))
+}
+
+/// GET /api/v1/activity?tz_offset=&days= — the dashboard chart's data:
+/// per-day byte totals for files touched in the window, day boundaries in
+/// the CALLER's timezone (JS `getTimezoneOffset` convention) so the chart's
+/// weekday labels match the user's clock. Reads the real store — no
+/// invented series, no stub shape: an empty project renders an honest
+/// empty chart, never a fake curve (round 25).
+async fn activity(
+    State(state): State<Arc<DaemonState>>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Json<serde_json::Value> {
+    let days = i64::from(
+        q.get("days")
+            .and_then(|d| d.parse::<u32>().ok())
+            .unwrap_or(7)
+            .clamp(1, 31),
+    );
+    let tz_offset = q
+        .get("tz_offset")
+        .and_then(|t| t.parse::<i64>().ok())
+        .unwrap_or(0)
+        .clamp(-14 * 60, 14 * 60);
+    let now = WallClock.now_millis();
+    let cutoff = now.saturating_sub(days.saturating_mul(86_400_000));
+    let days_out: Vec<serde_json::Value> = if let Some(store) = open_store(state.home.as_path()) {
+        store
+                .daily_activity(cutoff, tz_offset)
+                .into_iter()
+                .map(|(start_ms, bytes, files)| {
+                    json!({ "start_ms": start_ms, "bytes": bytes, "files": files })
+                })
+                .collect()
+    } else {
+        Vec::new()
+    };
+    Json(json!({
+        "ok": true,
+        "days": days_out,
+        "window_days": days,
+        "generated_ms": now,
+    }))
 }
 
 async fn projects(State(_state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
@@ -617,7 +694,14 @@ async fn markers(
         )
             .into_response();
     };
-    match crate::handoff::markers_payload(&root, version, &format, None) {
+    // ADR-0028 §E: the panel exports "what the client gets" by default;
+    // ?visibility=all is the studio's own view
+    let vis = match q.get("visibility").map(String::as_str) {
+        Some("all") => None,
+        Some("internal") => Some(cairn_tl::notes::NoteVisibility::Internal),
+        _ => Some(cairn_tl::notes::NoteVisibility::Public),
+    };
+    match crate::handoff::markers_payload(&root, version, &format, None, vis) {
         Ok((body, ctype)) => {
             let ext = match format.as_str() {
                 "otio" => "otio",

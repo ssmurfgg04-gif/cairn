@@ -713,3 +713,67 @@ kbd {
 }
 .clink:hover { color: #65b3ff; background: rgba(47,155,255,.12); }
 .clink:disabled { color: rgba(242,237,227,.25); cursor: default; background: none; }
+
+/* ---------- ADR-0028: v2 compose tools, badges, brackets, overlays ----- */
+
+.composer-tools { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 6px 0 2px; }
+.composer-tools .tool { text-transform: none; letter-spacing: .02em; }
+.composer-tools .tool.active { background: rgba(47,155,255,.22); color: #9ecbff; border-color: rgba(47,155,255,.4); }
+.composer-tools .tool-internal.active { background: rgba(255,215,106,.18); color: #ffd76a; border-color: rgba(255,215,106,.4); }
+.range-field { font-size: 11px; color: rgba(242,237,227,.6); display: inline-flex; align-items: center; gap: 5px; }
+.range-field .frame-end {
+  width: 64px; height: 24px; border-radius: 6px;
+  border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.04);
+  color: #f2ede3; font: 11px/1 var(--mono, monospace); padding: 0 6px; outline: none;
+}
+.range-field .frame-end:focus { border-color: rgba(47,155,255,.55); }
+
+/* note-row badges: pin / drawing / range end / internal */
+.kbadge {
+  font-size: 9px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase;
+  padding: 1px 6px; border-radius: 999px; white-space: nowrap;
+}
+.kbadge.pin { background: rgba(47,155,255,.16); color: #65b3ff; }
+.kbadge.anno { background: rgba(178,124,255,.16); color: #c4a4ff; }
+.kbadge.range { background: rgba(255,255,255,.08); color: rgba(242,237,227,.7); font-family: var(--mono, monospace); letter-spacing: 0; text-transform: none; }
+.kbadge.internal { background: rgba(255,215,106,.14); color: #ffd76a; }
+
+/* range brackets on the scrub bar (a region, not a tick) */
+.crange {
+  position: absolute; top: 50%; transform: translateY(-50%);
+  height: 7px; border-radius: 3px; border: none; padding: 0; cursor: pointer;
+  background: rgba(47,155,255,.4); box-shadow: inset 0 0 0 1px rgba(47,155,255,.6);
+}
+.crange:hover { background: rgba(47,155,255,.65); }
+.crange.resolved { background: rgba(96,196,120,.35); box-shadow: inset 0 0 0 1px rgba(96,196,120,.55); }
+/* pin notes get a distinct diamond tick */
+.cmark.pin { border-radius: 1px; transform: translateY(-50%) rotate(45deg); width: 7px; height: 7px; }
+.cmark.pin:hover { scale: 1.4; }
+
+/* pins + overlays over the frame (inside the zoomer: they track zoom) */
+.overlaylayer { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+.pin-dot {
+  position: absolute; width: 13px; height: 13px; transform: translate(-50%, -100%);
+  background: #2f9bff; clip-path: polygon(50% 100%, 0 0, 100% 0, 50% 100%);
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,.55));
+}
+.pin-dot::after {
+  content: ""; position: absolute; left: 50%; top: 42%; width: 4px; height: 4px;
+  transform: translate(-50%, -50%); border-radius: 50%; background: rgba(11,12,15,.85);
+}
+.pin-dot.resolved { background: #60c478; }
+.pin-dot.compose-pin { opacity: .85; animation: pin-pulse 1.2s ease-in-out infinite; }
+@keyframes pin-pulse { 0%, 100% { opacity: .85; } 50% { opacity: .45; } }
+
+/* annotation overlays: composed over the frame at the pin (centered when
+   absent); a missing or corrupt drawing shows the honest affordance */
+.note-overlay {
+  position: absolute; transform: translate(-50%, -50%);
+  max-width: 46%; max-height: 60%; pointer-events: none;
+}
+.note-overlay img { display: block; max-width: 100%; max-height: 100%; opacity: .92; }
+.overlay-missing {
+  display: inline-block; padding: 5px 10px; border-radius: 6px;
+  border: 1px dashed rgba(242,237,227,.4); color: rgba(242,237,227,.55);
+  font-size: 10.5px; letter-spacing: .04em; background: rgba(11,12,15,.55);
+}

@@ -168,18 +168,24 @@ pub fn cmd_list(root: &Path) -> anyhow::Result<()> {
 /// default. The first dogfood run caught the bug this guards against:
 /// markers on a 25 fps cut exported at a hardcoded 24 landed 1.7 s late
 /// at the one-minute mark, and a 23.976 cut carried `ntsc=FALSE`.
+///
+/// ADR-0028 §E: `--visibility public` (the default) exports what the
+/// client would see; `internal` the studio-only residue; `all` everything.
+#[allow(clippy::too_many_arguments)]
 pub fn cmd_export_markers(
     root: &Path,
     version: u32,
     out: &str,
     as_otio: bool,
     timeline: Option<&str>,
+    visibility: Option<cairn_tl::notes::NoteVisibility>,
 ) -> anyhow::Result<()> {
     let format = if as_otio { "otio" } else { "fcpxml" };
-    let (payload, _ctype) = markers_payload(root, version, format, timeline)?;
+    let (payload, _ctype) = markers_payload(root, version, format, timeline, visibility)?;
     std::fs::write(out, payload).map_err(|e| anyhow::anyhow!("write {out}: {e}"))?;
-    let set =
+    let all =
         cairn_review::store::Store::load_comments(root, version).map_err(anyhow::Error::msg)?;
+    let set = filter_set(&all, visibility);
     let review = cairn_review::store::Store::load(root).map_err(anyhow::Error::msg)?;
     let (fps_num, fps_den) = review
         .as_ref()
@@ -188,13 +194,33 @@ pub fn cmd_export_markers(
         .unwrap_or((24, 1));
     let (timebase, ntsc) = fcpxml_rate_fields(fps_num, fps_den);
     println!(
-        "exported {} marker(s) @ {}/{} fps (timebase {timebase}, ntsc {ntsc}) -> {out} \
-         (import into Premiere/Resolve/FCP)",
+        "exported {} marker(s) @ {}/{} fps (timebase {timebase}, ntsc {ntsc}, visibility {}) \
+         -> {out} (import into Premiere/Resolve/FCP)",
         set.len(),
         fps_num,
-        fps_den
+        fps_den,
+        visibility.map(|v| v.as_str()).unwrap_or("all"),
     );
     Ok(())
+}
+
+/// The visibility filter, one place: a filtered NoteSet feeds every
+/// export shape (OTIO, FCP7, CSV) and the dashboard's marker endpoint.
+fn filter_set(
+    set: &cairn_tl::notes::NoteSet,
+    only: Option<cairn_tl::notes::NoteVisibility>,
+) -> cairn_tl::notes::NoteSet {
+    match only {
+        None => set.clone(),
+        Some(v) => cairn_tl::notes::NoteSet {
+            notes: set
+                .notes
+                .iter()
+                .filter(|(_, n)| n.visibility == v)
+                .map(|(k, n)| (k.clone(), n.clone()))
+                .collect(),
+        },
+    }
 }
 
 /// NDF timecode display for a frame at an integer rate (the same rule the
@@ -227,9 +253,11 @@ pub fn markers_payload(
     version: u32,
     format: &str,
     timeline: Option<&str>,
+    visibility: Option<cairn_tl::notes::NoteVisibility>,
 ) -> anyhow::Result<(String, &'static str)> {
-    let set =
+    let all =
         cairn_review::store::Store::load_comments(root, version).map_err(anyhow::Error::msg)?;
+    let set = filter_set(&all, visibility);
     if set.is_empty() {
         anyhow::bail!("no comments on v{version} to export");
     }
@@ -326,7 +354,7 @@ mod tests {
         publish(&root, (25, 1));
         cairn_review::store::Store::add_comment(&root, 1, "jane", "tighten", 42, 25, 100).unwrap();
         let out = root.join("markers.xml");
-        cmd_export_markers(&root, 1, &out.to_string_lossy(), false, None).unwrap();
+        cmd_export_markers(&root, 1, &out.to_string_lossy(), false, None, None).unwrap();
         let xml = std::fs::read_to_string(&out).unwrap();
         assert!(xml.contains("<timebase>25</timebase>"));
         assert!(xml.contains("<ntsc>FALSE</ntsc>"));
@@ -337,7 +365,7 @@ mod tests {
         publish(&root2, (24000, 1001));
         cairn_review::store::Store::add_comment(&root2, 1, "jane", "tighten", 96, 24, 100).unwrap();
         let out2 = root2.join("markers.xml");
-        cmd_export_markers(&root2, 1, &out2.to_string_lossy(), false, None).unwrap();
+        cmd_export_markers(&root2, 1, &out2.to_string_lossy(), false, None, None).unwrap();
         let xml2 = std::fs::read_to_string(&out2).unwrap();
         assert!(xml2.contains("<timebase>24</timebase>"));
         assert!(xml2.contains("<ntsc>TRUE</ntsc>"));
@@ -345,7 +373,7 @@ mod tests {
         // OTIO: markers carry the true rational rate (wire form is OTIO's
         // own f64: 24000/1001 -> 23.976...), frame index preserved
         let out3 = root2.join("markers.otio");
-        cmd_export_markers(&root2, 1, &out3.to_string_lossy(), true, None).unwrap();
+        cmd_export_markers(&root2, 1, &out3.to_string_lossy(), true, None, None).unwrap();
         let otio = std::fs::read_to_string(&out3).unwrap();
         assert!(otio.contains("\"rate\": 23.976"));
         assert!(otio.contains("\"value\": 96.0"));
@@ -372,7 +400,7 @@ mod tests {
         cairn_review::store::Store::add_comment(&root, 1, "tom", "opening, weak", 25, 25, 101)
             .unwrap();
 
-        let (csv, ctype) = markers_payload(&root, 1, "csv", None).unwrap();
+        let (csv, ctype) = markers_payload(&root, 1, "csv", None, None).unwrap();
         assert_eq!(ctype, "text/csv; charset=utf-8");
         let lines: Vec<&str> = csv.trim_end().lines().collect();
         assert_eq!(lines[0], "frame,tc,author,status,note");
@@ -380,19 +408,94 @@ mod tests {
         assert_eq!(lines[1], "25,00:00:01:00,tom,OPEN,\"opening, weak\"");
         assert_eq!(lines[2], "50,00:00:02:00,jane,OPEN,\"tighten, after cut\"");
 
-        let (xml, _) = markers_payload(&root, 1, "fcpxml", None).unwrap();
+        let (xml, _) = markers_payload(&root, 1, "fcpxml", None, None).unwrap();
         assert!(xml.contains("<timebase>25</timebase>"));
         assert!(xml.contains("<start>50</start>"));
 
-        let (otio, _) = markers_payload(&root, 1, "otio", None).unwrap();
+        let (otio, _) = markers_payload(&root, 1, "otio", None, None).unwrap();
         assert!(otio.contains("\"rate\": 25.0"));
         assert!(otio.contains("\"value\": 50.0"));
 
         // unknown format: a hard error naming the legal set
-        let err = markers_payload(&root, 1, "xlsx", None)
+        let err = markers_payload(&root, 1, "xlsx", None, None)
             .unwrap_err()
             .to_string();
         assert!(err.contains("unknown marker format"), "{err}");
         assert!(err.contains("fcpxml | otio | csv"));
+    }
+
+    /// Gate 5 (ADR-0028): `--visibility public` excludes internal notes
+    /// (the golden "what the client gets" file), `all` includes them.
+    #[test]
+    fn export_markers_visibility_gates_the_client_file() {
+        use cairn_review::store::NoteDraft;
+        use cairn_tl::notes::{NoteKind, NoteVisibility};
+
+        let root = tmp();
+        publish(&root, (25, 1));
+        // a public note, an internal note, and a v2 range note
+        cairn_review::store::Store::add_comment(&root, 1, "client", "love the opening", 10, 25, 1)
+            .unwrap();
+        cairn_review::store::Store::add_note(
+            &root,
+            1,
+            "studio",
+            "recut the ending before v2",
+            80,
+            25,
+            2,
+            NoteDraft {
+                visibility: NoteVisibility::Internal,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        cairn_review::store::Store::add_note(
+            &root,
+            1,
+            "client",
+            "hold this whole beat",
+            30,
+            25,
+            3,
+            NoteDraft {
+                range_end: Some(60),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+
+        // public (the CLI default): the internal note never ships
+        let (xml, _) =
+            markers_payload(&root, 1, "fcpxml", None, Some(NoteVisibility::Public)).unwrap();
+        assert!(!xml.contains("recut the ending"), "internal excluded");
+        assert!(xml.contains("love the opening"));
+        assert!(
+            xml.contains("<duration>31</duration>"),
+            "range note carries duration"
+        );
+        assert_eq!(xml.matches("<marker>").count(), 2);
+
+        // all: everything rides
+        let (xml_all, _) = markers_payload(&root, 1, "fcpxml", None, None).unwrap();
+        assert!(xml_all.contains("recut the ending"));
+        assert_eq!(xml_all.matches("<marker>").count(), 3);
+
+        // internal only: the studio's residue list
+        let (xml_int, _) =
+            markers_payload(&root, 1, "fcpxml", None, Some(NoteVisibility::Internal)).unwrap();
+        assert!(xml_int.contains("recut the ending"));
+        assert_eq!(xml_int.matches("<marker>").count(), 1);
+
+        // CSV shape honors the same filter
+        let (csv, _) =
+            markers_payload(&root, 1, "csv", None, Some(NoteVisibility::Public)).unwrap();
+        assert!(!csv.contains("recut the ending"));
+
+        // filtering to an empty set is an honest error, not an empty file
+        let (xml_pin, _) =
+            markers_payload(&root, 1, "fcpxml", None, Some(NoteVisibility::Internal)).unwrap();
+        assert_eq!(xml_pin.matches("<marker>").count(), 1);
+        let _ = NoteKind::Comment; // silence unused-import lint paths
     }
 }

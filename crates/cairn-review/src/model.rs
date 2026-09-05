@@ -6,12 +6,15 @@ use serde::{Deserialize, Serialize};
 
 /// What a guest link allows: `Commenter` is the default review role (view,
 /// frame-accurate comments, resolve); `Viewer` is present-mode (view only,
-/// no writes through the portal).
+/// no writes through the portal); `Studio` (ADR-0028 §E) is a team link —
+/// it comments AND sees `internal` notes, so the client-facing filter and
+/// the studio view are the same endpoint with different audiences.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum GuestRole {
     Commenter,
     Viewer,
+    Studio,
 }
 
 impl GuestRole {
@@ -19,6 +22,7 @@ impl GuestRole {
         match self {
             GuestRole::Commenter => "commenter",
             GuestRole::Viewer => "viewer",
+            GuestRole::Studio => "studio",
         }
     }
 
@@ -26,13 +30,22 @@ impl GuestRole {
         match s {
             "commenter" => Some(GuestRole::Commenter),
             "viewer" => Some(GuestRole::Viewer),
+            "studio" | "team" => Some(GuestRole::Studio),
             _ => None,
         }
     }
 
     /// Whether this role may write comments / resolve through the portal.
     pub fn can_comment(self) -> bool {
-        matches!(self, GuestRole::Commenter)
+        matches!(self, GuestRole::Commenter | GuestRole::Studio)
+    }
+
+    /// Whether this link's audience may receive `internal` notes
+    /// (ADR-0028 §E). Enforcement is server-side: the session handler
+    /// filters BEFORE serialization, so a client link never receives
+    /// the bytes at all.
+    pub fn sees_internal(self) -> bool {
+        matches!(self, GuestRole::Studio)
     }
 }
 
@@ -348,7 +361,15 @@ mod tests {
     fn roles_gate_commenting() {
         assert!(GuestRole::Commenter.can_comment());
         assert!(!GuestRole::Viewer.can_comment());
+        assert!(GuestRole::Studio.can_comment(), "studio links write too");
+        assert!(!GuestRole::Commenter.sees_internal());
+        assert!(!GuestRole::Viewer.sees_internal());
+        assert!(
+            GuestRole::Studio.sees_internal(),
+            "studio sees internal notes"
+        );
         assert_eq!(GuestRole::parse("viewer"), Some(GuestRole::Viewer));
+        assert_eq!(GuestRole::parse("studio"), Some(GuestRole::Studio));
         assert_eq!(GuestRole::parse("nope"), None);
     }
 

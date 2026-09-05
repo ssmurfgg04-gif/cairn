@@ -552,6 +552,70 @@ impl Store {
         .unwrap_or(0)
     }
 
+    /// Most recent pin events across projects: (project, path, pinned_at).
+    /// The dashboard's "latest actions" timeline reads real intent events,
+    /// not invented history (WO6-2 pins are the durable record).
+    #[must_use]
+    pub fn recent_pins(&self, limit: usize) -> Vec<(String, String, i64)> {
+        let conn = self.conn.lock().expect("store poisoned");
+        let mut stmt = match conn.prepare(
+            "SELECT project_id, path, pinned_at FROM pins
+             ORDER BY pinned_at DESC LIMIT ?1",
+        ) {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        stmt.query_map(rusqlite::params![limit as i64], |r| {
+            Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+        })
+        .map(|rows| rows.filter_map(|r| r.ok()).collect())
+        .unwrap_or_default()
+    }
+
+    /// Daily activity buckets for the dashboard chart: `(day_start_ms,
+    /// bytes, files)` for every local day that has at least one touched
+    /// file, restricted to `mtime >= cutoff_ms`.
+    ///
+    /// Day boundaries use the caller's timezone so the chart's weekday
+    /// labels match what the user's clock says. `tz_offset_minutes` is the
+    /// JS `Date#getTimezoneOffset` convention (UTC minus local, Nairobi
+    /// UTC+3 is -180), so `local_ms = utc_ms - tz_offset_minutes * 60_000`.
+    ///
+    /// Honest telemetry (I4): mtime is "last observed write time", so a
+    /// bucket reads "bytes last touched that day" — the label on the chart
+    /// says exactly that, never "user activity" as a guess.
+    #[must_use]
+    pub fn daily_activity(&self, cutoff_ms: i64, tz_offset_minutes: i64) -> Vec<(i64, u64, u64)> {
+        let conn = self.conn.lock().expect("store poisoned");
+        let mut stmt = match conn
+            .prepare("SELECT mtime, size FROM files WHERE mode = 'file' AND mtime >= ?1")
+        {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        let rows: Vec<(i64, u64)> = stmt
+            .query_map(rusqlite::params![cutoff_ms], |r| {
+                Ok((r.get(0)?, r.get::<_, i64>(1)?.max(0) as u64))
+            })
+            .map(|rows| rows.filter_map(|r| r.ok()).collect())
+            .unwrap_or_default();
+        drop(stmt);
+        drop(conn);
+        let off = tz_offset_minutes.saturating_mul(60_000);
+        let mut days: std::collections::BTreeMap<i64, (u64, u64)> =
+            std::collections::BTreeMap::new();
+        for (mtime, size) in rows {
+            // local_ms = utc_ms - offset (JS convention: offset = UTC - local)
+            let day = (mtime - off).div_euclid(86_400_000);
+            let e = days.entry(day).or_insert((0, 0));
+            e.0 = e.0.saturating_add(size);
+            e.1 += 1;
+        }
+        days.into_iter()
+            .map(|(day, (bytes, files))| (day * 86_400_000 + off, bytes, files))
+            .collect()
+    }
+
     // ---- pins (WO6-2: pin/unpin/list; eviction protection) ----
 
     /// Pin a file: records the file-level intent AND pins every local chunk
@@ -815,6 +879,66 @@ mod tests {
         assert_eq!(f.size, 42);
         s.set_file_state("p1", "A001.mov", "synced").unwrap();
         assert_eq!(s.get_file("p1", "A001.mov").unwrap().local_state, "synced");
+    }
+
+    /// Round 25: the dashboard's honest event sources — cross-project pin
+    /// events and timezone-correct daily byte buckets.
+    #[test]
+    fn recent_pins_and_daily_activity_buckets() {
+        let (_d, s) = open_tmp();
+        let day = 86_400_000i64;
+        let put = |path: &str, size: u64, mtime: i64| {
+            s.put_file(&FileRow {
+                path: path.into(),
+                project_id: "p1".into(),
+                manifest_hash: None,
+                size,
+                mode: "file".into(),
+                mtime,
+                local_state: "synced".into(),
+            })
+            .unwrap();
+        };
+        // two files on day 0, one on day 1, one far in the past (filtered)
+        put("a.mov", 100, 1_000);
+        put("b.mov", 150, 2_000);
+        put("c.mov", 50, day + 3_000);
+        put("old.mov", 999, -90 * day);
+
+        // UTC days (tz offset 0): bucket starts land on UTC midnights
+        let buckets = s.daily_activity(0, 0);
+        assert_eq!(buckets.len(), 2, "old.mov filtered, two days remain");
+        assert_eq!(buckets[0], (0, 250, 2));
+        assert_eq!(buckets[1], (day, 50, 1));
+
+        // UTC+3 (JS offset -180): 23:00 UTC on day 0 belongs to local day 1
+        put("late.wav", 10, day - 3_600_000);
+        let east = s.daily_activity(0, -180);
+        assert_eq!(east.len(), 2);
+        assert_eq!(
+            east[0],
+            (-180 * 60_000, 250, 2),
+            "day 0 unchanged; its bucket start is local midnight in UTC ms (-3h)"
+        );
+        assert_eq!(
+            east[1],
+            (day - 180 * 60_000, 60, 2),
+            "late.wav joins c.mov on local day 1; bucket start is local midnight in UTC ms"
+        );
+
+        // cutoff excludes everything older than it
+        assert_eq!(s.daily_activity(day, 0).len(), 1);
+
+        // pins: newest first, real timestamps from the pin clock
+        s.pin_file("p1", "a.mov").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        s.pin_file("p1", "b.mov").unwrap();
+        let pins = s.recent_pins(10);
+        assert_eq!(pins.len(), 2);
+        assert_eq!(pins[0].1, "b.mov", "newest pin first");
+        assert!(pins[0].2 >= pins[1].2);
+        let one = s.recent_pins(1);
+        assert_eq!(one.len(), 1, "limit is honored");
     }
 
     #[test]

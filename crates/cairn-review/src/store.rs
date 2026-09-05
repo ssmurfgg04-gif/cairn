@@ -16,7 +16,7 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use cairn_tl::notes::{Note, NoteSet};
+use cairn_tl::notes::{Note, NoteAnchor, NoteKind, NoteSet, NoteVisibility};
 
 use crate::model::ReviewFile;
 
@@ -54,6 +54,33 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), String> {
 /// Store operations over a project root.
 #[derive(Clone, Copy, Debug)]
 pub struct Store;
+
+/// The compose envelope for [`Store::add_note`] (ADR-0028). Every field
+/// at its default is the plain v1 shape: a point comment, public, no
+/// attachment. The writer — not the reader — bears the version cost.
+#[derive(Clone, Debug)]
+pub struct NoteDraft {
+    pub kind: NoteKind,
+    /// Inclusive end frame; `None` (or equal to the start) is a point note.
+    pub range_end: Option<u64>,
+    /// Normalized on-frame position, clamped to 0.0..=1.0 on write.
+    pub pin: Option<(f32, f32)>,
+    /// BLAKE3 hex of an overlay blob already in the project CAS.
+    pub attachment: Option<String>,
+    pub visibility: NoteVisibility,
+}
+
+impl Default for NoteDraft {
+    fn default() -> Self {
+        NoteDraft {
+            kind: NoteKind::Comment,
+            range_end: None,
+            pin: None,
+            attachment: None,
+            visibility: NoteVisibility::Public,
+        }
+    }
+}
 
 impl Store {
     /// Load the session file; `None` when no review exists yet (portal
@@ -108,18 +135,58 @@ impl Store {
         rate: i128,
         created_ms: i64,
     ) -> Result<Note, String> {
-        let _guard = VersionLock::acquire(root, version)?;
-        let mut set = Self::load_comments(root, version)?;
-        let note = Note::new(
+        Self::add_note(
+            root,
+            version,
             author,
             body,
-            cairn_tl::notes::NoteAnchor {
+            frame,
+            rate,
+            created_ms,
+            NoteDraft::default(),
+        )
+    }
+
+    /// The v2 compose path (ADR-0028 §A): the FIRST v2 writer. A draft at
+    /// its defaults writes the plain v1 shape (same id, smallest bytes);
+    /// any v2 feature — range, pin, annotation attachment, internal
+    /// visibility, non-comment kind — switches the note to the versioned
+    /// v2 id material. Range ends are validated inclusive (end >= frame).
+    pub fn add_note(
+        root: &Path,
+        version: u32,
+        author: &str,
+        body: &str,
+        frame: u64,
+        rate: i128,
+        created_ms: i64,
+        draft: NoteDraft,
+    ) -> Result<Note, String> {
+        let range = match draft.range_end {
+            Some(end) if end >= frame => Some((i128::from(frame), i128::from(end))),
+            Some(end) => return Err(format!("range end {end} before start frame {frame}")),
+            None => None,
+        };
+        let pin = draft
+            .pin
+            .map(|(x, y)| (x.clamp(0.0, 1.0), y.clamp(0.0, 1.0)));
+        let _guard = VersionLock::acquire(root, version)?;
+        let mut set = Self::load_comments(root, version)?;
+        let note = Note::with_envelope(
+            author,
+            body,
+            NoteAnchor {
                 clip: None,
                 frame: i128::from(frame),
                 rate,
+                range,
             },
             cairn_tl::notes::NoteStatus::Open,
             created_ms,
+            draft.kind,
+            pin,
+            draft.attachment,
+            draft.visibility,
         );
         set.notes.insert(note.id.clone(), note.clone());
         Self::save_comments(root, version, &set)?;

@@ -25,7 +25,7 @@
 //! with `ntsc=FALSE` drifted a frame every ~42 s.
 
 use crate::model::{JsonMap, Marker, TimeRange, TimeVal, Timeline};
-use crate::notes::{Note, NoteSet};
+use crate::notes::{Note, NoteKind, NoteSet, NoteVisibility};
 use crate::rational::Rational;
 
 fn rat(n: i128, d: i128) -> Rational {
@@ -33,17 +33,49 @@ fn rat(n: i128, d: i128) -> Rational {
 }
 
 fn frame_marker(n: &Note, rate: Rational) -> Marker {
-    let frame = rat(n.anchor.frame.max(0), 1);
-    let r = frame_marker_range(frame, rate);
+    let (start_f, end_f) = n.anchor.effective_range();
+    let frame = rat(start_f.max(0), 1);
+    // ADR-0028 §B/C: a range note becomes a marker WITH duration (end -
+    // start + 1, inclusive); a point note keeps the 1-frame duration.
+    let dur = (end_f - start_f + 1).max(1);
+    let r = TimeRange {
+        start: TimeVal { value: frame, rate },
+        duration: TimeVal {
+            value: rat(dur, 1),
+            rate,
+        },
+    };
     let mut metadata = JsonMap::new();
     metadata.insert("cairn/comment-id".into(), serde_json::json!(n.id));
     metadata.insert(
         "cairn/note-status".into(),
         serde_json::json!(n.status.as_str()),
     );
+    // v2 envelope rides as metadata (v1 notes emit none of these)
+    if n.kind != NoteKind::Comment {
+        metadata.insert("cairn/note-kind".into(), serde_json::json!(n.kind.as_str()));
+    }
+    if let Some((x, y)) = n.pin {
+        metadata.insert("cairn/pin-x".into(), serde_json::json!(x));
+        metadata.insert("cairn/pin-y".into(), serde_json::json!(y));
+    }
+    if let Some(att) = &n.attachment {
+        metadata.insert("cairn/attachment".into(), serde_json::json!(att));
+    }
+    if n.visibility != NoteVisibility::Public {
+        metadata.insert(
+            "cairn/visibility".into(),
+            serde_json::json!(n.visibility.as_str()),
+        );
+    }
     Marker {
         schema: "Marker.1".into(),
-        name: format!("{} \u{00b7} {}", n.author, one_line(&n.body, 80)),
+        // an empty-body pin labels itself by kind, not by a blank
+        name: if n.body.trim().is_empty() {
+            format!("{} · ({})", n.author, n.kind.as_str())
+        } else {
+            format!("{} \u{00b7} {}", n.author, one_line(&n.body, 80))
+        },
         color: match n.status.as_str() {
             "RESOLVED" => "Green".into(),
             "REJECTED" => "Red".into(),
@@ -53,16 +85,6 @@ fn frame_marker(n: &Note, rate: Rational) -> Marker {
         marked_range: r,
         metadata,
         extra: JsonMap::new(),
-    }
-}
-
-fn frame_marker_range(frame: Rational, rate: Rational) -> TimeRange {
-    TimeRange {
-        start: TimeVal { value: frame, rate },
-        duration: TimeVal {
-            value: rat(1, 1),
-            rate,
-        },
     }
 }
 
@@ -184,16 +206,25 @@ pub fn notes_to_fcpxml(notes: &NoteSet, timebase: i64, ntsc: bool, sequence_name
     let mut rows: Vec<&Note> = notes.notes.values().collect();
     rows.sort_by(|a, b| a.anchor.frame.cmp(&b.anchor.frame).then(a.id.cmp(&b.id)));
     for n in rows {
-        let frame = n.anchor.frame.max(0);
+        let (start_f, end_f) = n.anchor.effective_range();
+        let frame = start_f.max(0);
+        // a range note becomes a marker WITH duration (ADR-0028 §B)
+        let dur = (end_f - start_f + 1).max(1);
+        // an empty-body pin labels itself by kind, not by a blank
+        let label = if n.body.trim().is_empty() {
+            format!("({})", n.kind.as_str())
+        } else {
+            one_line(&n.body, 80)
+        };
         out.push_str("    <marker>\n");
         out.push_str(&format!(
             "      <name>[{}] {} \u{00b7} {}</name>\n",
             n.status.as_str(),
             esc(&n.author),
-            esc(&one_line(&n.body, 80))
+            esc(&label)
         ));
         out.push_str(&format!("      <start>{}</start>\n", frame));
-        out.push_str("      <duration>1</duration>\n");
+        out.push_str(&format!("      <duration>{}</duration>\n", dur));
         out.push_str(&format!(
             "      <comment>{}</comment>\n",
             esc(&one_line(&n.body, 400))
@@ -219,6 +250,7 @@ mod tests {
                     clip: None,
                     frame: 42,
                     rate: 24,
+                    range: None,
                 },
                 NoteStatus::Open,
                 100,
@@ -230,6 +262,7 @@ mod tests {
                     clip: None,
                     frame: 100,
                     rate: 24,
+                    range: None,
                 },
                 NoteStatus::Resolved,
                 200,
@@ -315,6 +348,7 @@ mod tests {
                 clip: None,
                 frame: 0,
                 rate: 24,
+                range: None,
             },
             NoteStatus::Open,
             1,
@@ -349,6 +383,7 @@ mod tests {
                 clip: None,
                 frame: -5,
                 rate: 24,
+                range: None,
             },
             NoteStatus::Open,
             1,
@@ -358,5 +393,75 @@ mod tests {
         assert_eq!(with.tracks.markers[0].marked_range.start.value, rat(0, 1));
         let xml = notes_to_fcpxml(&neg, 24, false, "t");
         assert!(xml.contains("<start>0</start>"));
+    }
+    /// ADR-0028: range notes become markers WITH duration, pins carry
+    /// their position in metadata, and internal visibility rides along —
+    /// the NLE bridge gains the v2 shape without a schema change.
+    #[test]
+    fn v2_ranges_pins_and_visibility_ride_the_bridge() {
+        use crate::notes::{NoteAnchor, NoteKind, NoteStatus, NoteVisibility};
+        let ranged = Note::with_envelope(
+            "jane",
+            "hold this whole beat",
+            NoteAnchor {
+                clip: None,
+                frame: 42,
+                rate: 24,
+                range: Some((42, 42 + 47)),
+            },
+            NoteStatus::Open,
+            1,
+            NoteKind::Comment,
+            None,
+            None,
+            NoteVisibility::Public,
+        );
+        let pin = Note::with_envelope(
+            "bo",
+            "",
+            NoteAnchor {
+                clip: None,
+                frame: 10,
+                rate: 24,
+                range: None,
+            },
+            NoteStatus::Open,
+            2,
+            NoteKind::Pin,
+            Some((0.25, 0.5)),
+            None,
+            NoteVisibility::Internal,
+        );
+        let set = NoteSet::from_notes([ranged, pin]);
+        let tl = timeline();
+        let with = notes_to_otio(&tl, &set);
+        assert_eq!(with.tracks.markers.len(), 2);
+        let m0 = &with.tracks.markers[0]; // frame 10 sorts first
+        assert_eq!(m0.marked_range.start.value, rat(10, 1));
+        assert_eq!(m0.marked_range.duration.value, rat(1, 1), "pin is point");
+        assert!(m0.name.contains("(pin)"), "empty body labels by kind");
+        assert_eq!(
+            m0.metadata.get("cairn/note-kind").and_then(|v| v.as_str()),
+            Some("pin")
+        );
+        assert_eq!(
+            m0.metadata.get("cairn/visibility").and_then(|v| v.as_str()),
+            Some("internal")
+        );
+        assert!(m0.metadata.contains_key("cairn/pin-x"));
+        let m1 = &with.tracks.markers[1];
+        assert_eq!(m1.marked_range.start.value, rat(42, 1));
+        assert_eq!(
+            m1.marked_range.duration.value,
+            rat(48, 1),
+            "range 42..=89 carries its inclusive duration"
+        );
+        assert!(!m1.metadata.contains_key("cairn/note-kind"));
+
+        // FCP7: <duration> carries the range too
+        let xml = notes_to_fcpxml(&set, 24, false, "t");
+        assert!(xml.contains("<duration>48</duration>"));
+        assert!(xml.contains("<start>42</start>"));
+        assert!(xml.contains("<duration>1</duration>"));
     }
 }

@@ -120,53 +120,100 @@
           <div class="search-drop" id="search-drop" hidden></div>
         </div>
 
-        <span class="state-chip" id="state-chip"><span class="dot"></span><span id="state-label">checking</span></span>
+        <span class="state-chip" id="state-chip"><span class="chip-ic" id="state-ic"></span><span id="state-label">checking</span></span>
         <span class="state-chip chip-update" id="update-chip" hidden><span class="dot"></span><span id="update-label">update</span></span>
 
         <button type="button" class="btn btn-icon" id="theme-toggle" aria-label="toggle dark mode" title="dark / light">
           <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 1 0-13z"/></svg>
         </button>
 
-        <button type="button" class="btn btn-primary btn-add" id="btn-add">
-          <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
-          <span data-i18n="btn.add">Add project</span>
-        </button>
+        <!-- language: globe + current name, the mockup's topbar selector.
+             The footer used to carry four buttons; one menu is calmer. -->
+        <div class="lang-wrap" id="lang-wrap">
+          <button type="button" class="lang-btn" id="lang-btn" aria-haspopup="listbox" aria-expanded="false" aria-label="language">
+            <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="8" cy="8" r="6.25"/><path d="M1.9 6.5h12.2M1.9 9.5h12.2" stroke-linecap="round"/><path d="M8 1.75c-1.8 2-2.6 4-2.6 6.25S6.2 12.3 8 14.25c1.8-1.95 2.6-4 2.6-6.25S9.8 3.75 8 1.75z"/></svg>
+            <span class="lang-cur" id="lang-cur">English</span>
+            <svg class="caret" viewBox="0 0 10 6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5L5 4.5l3.5-3"/></svg>
+          </button>
+          <div class="lang-menu" id="lang-menu" role="listbox" aria-label="language" hidden>
+            <button type="button" class="lang-opt" role="option" data-lang="en">English</button>
+            <button type="button" class="lang-opt" role="option" data-lang="de-DE">Deutsch</button>
+            <button type="button" class="lang-opt" role="option" data-lang="ja-JP">日本語</button>
+            <button type="button" class="lang-opt" role="option" data-lang="zh-CN">中文</button>
+          </div>
+        </div>
       </div>
     </header>
 
     <main class="main" id="main">
-      <!-- ============ DASHBOARD: the executive overview ============
-           Two cards, nothing else. Left: pinned assets across projects.
-           Right: sessions with live progress + the journal trail +
-           a volume sparkline. A presence strip appears only while
-           other editors are actually online (opt-in flag). -->
+      <!-- ============ DASHBOARD: hero + two panels ============
+           One heading, one action, one optional path field — then the
+           two panels the mockup draws: recent assets (file / status /
+           pin) and recent sessions (session, projects, actions, and a
+           REAL activity chart drawn from /api/v1/activity). Nothing
+           decorative; every number is store-derived. -->
       <section class="view is-active" id="view-dashboard" aria-labelledby="dash-title">
-        <h2 class="view-title" id="dash-title" data-i18n="nav.dashboard">Dashboard</h2>
+        <div class="hero">
+          <div class="hero-head">
+            <h2 class="hero-title" id="dash-title" data-i18n="dash.title">Creative Workflow Overview</h2>
+            <button type="button" class="btn btn-primary btn-add-ws" id="btn-add-ws">
+              <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
+              <span data-i18n="btn.addWs">Add to Workspace</span>
+            </button>
+          </div>
+          <p class="hero-sub" id="hero-sub"></p>
+          <input id="ws-path" class="input ws-input" type="text" spellcheck="false" autocomplete="off"
+                 data-i18n-attr="placeholder:ws.placeholder" placeholder="Workspace path or ID (optional)"
+                 aria-label="workspace path or project id">
+        </div>
+
         <div class="dash-grid">
           <article class="card" id="card-assets">
             <header class="card-head">
-              <h3 class="card-title" data-i18n="card.assets">Pinned assets</h3>
+              <h3 class="card-title" data-i18n="card.assets">Recent assets</h3>
               <span class="card-count" id="assets-count"></span>
             </header>
-            <div class="card-body" id="assets-body">
-              <div class="skel-row"></div><div class="skel-row"></div><div class="skel-row"></div>
+            <div class="card-body">
+              <table class="table assets-table">
+                <thead><tr>
+                  <th class="th-file" data-i18n="th.file">file</th>
+                  <th class="th-status" data-i18n="th.status">status</th>
+                  <th class="th-pin"><span class="sr-only" data-i18n="th.pinned">pinned</span></th>
+                </tr></thead>
+                <tbody id="assets-body">
+                  <tr><td colspan="3" class="empty" data-i18n="empty.files">No files yet - attach a project and drop media in.</td></tr>
+                </tbody>
+              </table>
             </div>
-            <footer class="card-foot"><p class="note" data-i18n="note.assets">Pinned files stay on this machine and never evict.</p></footer>
+            <footer class="card-foot"><p class="note" data-i18n="note.assetsRecent">The newest files across this workspace. The pin keeps a file on this machine.</p></footer>
           </article>
 
           <article class="card" id="card-sessions">
             <header class="card-head">
-              <h3 class="card-title" data-i18n="card.sessions">Sessions &amp; activity</h3>
+              <h3 class="card-title" data-i18n="card.sessions">Recent sessions</h3>
               <span class="card-count" id="sessions-count"></span>
             </header>
             <div class="card-body">
               <div id="presence-strip" class="presence" hidden></div>
-              <div class="session-list" id="session-list">
-                <div class="skel-row"></div><div class="skel-row"></div>
-              </div>
-              <div class="trail" id="trail-list"></div>
-              <div class="spark" id="spark" aria-hidden="true"></div>
-              <p class="spark-note" id="spark-note"></p>
+              <section class="rs-sec" id="rs-session" aria-labelledby="rs-session-label">
+                <h4 class="sec-label" id="rs-session-label" data-i18n="label.recentSession">Recent session</h4>
+                <div id="rs-session-body"><div class="skel-row"></div></div>
+              </section>
+              <section class="rs-sec" id="rs-projects" aria-labelledby="rs-projects-label">
+                <h4 class="sec-label" id="rs-projects-label" data-i18n="label.activeProjects">Recent active projects</h4>
+                <div id="rs-projects-body"><div class="skel-row"></div></div>
+              </section>
+              <section class="rs-sec" id="rs-actions" aria-labelledby="rs-actions-label">
+                <h4 class="sec-label" id="rs-actions-label" data-i18n="label.actions">Latest actions</h4>
+                <div id="rs-actions-body"><div class="skel-row"></div></div>
+              </section>
+              <section class="rs-sec" id="rs-activity" aria-labelledby="rs-activity-label">
+                <h4 class="sec-label" id="rs-activity-label" data-i18n="label.activity">User activity</h4>
+                <div id="chart-box" class="chart-box" role="img" aria-label="daily activity chart">
+                  <div class="skel-row"></div>
+                </div>
+                <p class="chart-note" id="chart-note"></p>
+              </section>
               <div class="review-strip" id="review-strip" hidden></div>
             </div>
           </article>
@@ -314,12 +361,6 @@
       </div>
       <div class="sb-right">
         <button type="button" class="sb-help" id="foot-help" aria-label="shortcuts and cheatsheet">?</button>
-        <div class="lang-row" role="group" aria-label="language">
-          <button type="button" class="lang" data-lang="en">EN</button>
-          <button type="button" class="lang" data-lang="de-DE">DE</button>
-          <button type="button" class="lang" data-lang="ja-JP">JA</button>
-          <button type="button" class="lang" data-lang="zh-CN">中文</button>
-        </div>
       </div>
     </footer>
   </div>
