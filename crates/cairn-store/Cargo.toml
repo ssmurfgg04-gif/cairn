@@ -32,6 +32,12 @@ libc = { workspace = true }
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_Storage_FileSystem",
+    # db.rs's single-writer lock uses OpenProcess to answer "is the holder
+    # alive"; a STANDALONE `cargo test -p cairn-store` on Windows needs
+    # the feature declared HERE (workspace feature unification from
+    # cairn-fs-win used to mask the gap — the round-27 beta shard
+    # exposed it, exactly as the install retro's #11 footnote predicted)
+    "Win32_System_Threading",
 ] }
 windows-core = "0.58"
 
