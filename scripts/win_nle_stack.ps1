@@ -229,9 +229,16 @@ function Get-CairnStatusJson {
 }
 
 function Find-CairnProject {
-    # the project entry from a parsed status object (or $null)
+    # the project entry from a parsed status object (or $null).
+    # $Status is deliberately NOT Mandatory: PowerShell REJECTS an
+    # explicit $null at BINDING time for Mandatory parameters ("Cannot
+    # bind argument to parameter 'Status' because it is null") BEFORE
+    # the body's own null check can run -- one unreachable status poll
+    # then threw through Wait-ProjectSynced and killed the whole W1 row
+    # (nle-matrix run 33957455343). Null in, null out: the caller's
+    # deadline loop does the retrying.
     param(
-        [Parameter(Mandatory=$true)]$Status,
+        [AllowNull()]$Status,
         [Parameter(Mandatory=$true)][string]$Project
     )
     if (-not $Status) { return $null }
@@ -288,9 +295,11 @@ function Wait-CairnProjectAttached {
 
 function Stop-CairnProcess {
     # kill ONE stack process (the conflict row stops exactly one daemon).
-    # best-effort, never throws.
+    # best-effort, never throws -- including at BINDING time: a null
+    # process handle must not raise (same null-Mandatory class the
+    # Status fix closed; the body already null-checks).
     param(
-        [Parameter(Mandatory=$true)]$Process
+        [AllowNull()]$Process
     )
     try {
         if ($Process -and -not $Process.HasExited) {
