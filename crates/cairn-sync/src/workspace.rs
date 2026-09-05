@@ -256,7 +256,17 @@ mod tests {
         assert_eq!(workspace_dir(&store, "p1"), dir.path().join("workspace"));
         let root = tempfile::tempdir().unwrap();
         set_workspace(&store, "p1", root.path()).unwrap();
-        assert_eq!(workspace_dir(&store, "p1"), root.path());
+        // the binding stores the CANONICAL path: on a Windows runner
+        // tempdir() hands back the 8.3 short form (C:\Users\RUNNER~1\...)
+        // while canonicalize() returns the long \?\ form — the PATHS are
+        // the same directory, the STRINGS are not. Compare the canonical
+        // forms (the round-27 beta windows shard caught this: the test
+        // only ever ran on linux before, where the two shapes coincide).
+        let canon = root
+            .path()
+            .canonicalize()
+            .unwrap_or_else(|_| root.path().to_path_buf());
+        assert_eq!(workspace_dir(&store, "p1"), canon);
         clear_workspace(&store, "p1").unwrap();
         assert_eq!(workspace_dir(&store, "p1"), dir.path().join("workspace"));
     }
