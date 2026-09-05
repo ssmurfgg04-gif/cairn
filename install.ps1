@@ -257,7 +257,8 @@ if ($ArtifactUrl -ne "" -and (Test-Path $ArtifactUrl)) {
 $trayPath = Join-Path $InstallDir "cairn-tray.exe"
 $trayInstalled = $false
 $localTray = ""
-if ($ArtifactUrl -ne "" -and (Test-Path $ArtifactUrl)) {
+$localArtifact = ($ArtifactUrl -ne "" -and (Test-Path $ArtifactUrl))
+if ($localArtifact) {
     # local build: the tray sits beside the engine in the same target dir
     $localTray = Join-Path (Split-Path $ArtifactUrl -Parent) "cairn-tray.exe"
 }
@@ -265,6 +266,11 @@ if ($localTray -ne "" -and (Test-Path $localTray)) {
     Copy-Item $localTray $trayPath -Force
     $trayInstalled = $true
     Write-Host "cairn-tray.exe installed from local artifact"
+} elseif ($localArtifact) {
+    # a local artifact with no tray sibling is an engine-only build
+    # (cargo build -p cairn-cli): do NOT try to web-fetch a derived
+    # local path — the beta installer gate hit exactly that
+    Write-Host "no tray beside the local artifact -- engine-only install (build cairn-tray for the tray)"
 } else {
     $trayUrl = "$exeUrl".Replace("cairn-windows-", "cairn-tray-windows-")
     try {
