@@ -97,6 +97,19 @@ impl PeerMsg {
     /// Encode to the pre-encryption payload (deterministic).
     pub(crate) fn encode(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(64);
+        self.encode_into(&mut out);
+        out
+    }
+
+    /// Encode into a caller-owned scratch buffer (cleared first).
+    ///
+    /// Cloudflare's dns-cache-memory-optimization-1111 lesson: a buffer that
+    /// persists across messages amortizes to zero steady-state reallocation —
+    /// a fresh `Vec` per CHUNK grew 64→…→1233 bytes, paying up to five
+    /// reallocs on the hot send path. `encode` keeps the one-shot shape for
+    /// bootstrap/tests; `PeerSession::seal` reuses one scratch.
+    pub(crate) fn encode_into(&self, out: &mut Vec<u8>) {
+        out.clear();
         match self {
             PeerMsg::Hello { node_id, pubkey } => {
                 out.push(MSG_HELLO);
@@ -161,7 +174,6 @@ impl PeerMsg {
                 out.extend_from_slice(payload);
             }
         }
-        out
     }
 
     /// Decode a pre-encryption payload.
@@ -239,33 +251,50 @@ impl PeerMsg {
 pub(crate) struct PeerSession {
     keys: SessionKeys,
     send_ctr: u64,
+    /// Reusable plaintext scratch (ADR-0024): encodes clear in place; a fresh
+    /// Vec per seal paid up to five growth reallocs for CHUNK payloads.
+    pt_scratch: Vec<u8>,
+    /// Reusable ciphertext scratch (pt.len()+16, exact — never grows).
+    ct_scratch: Vec<u8>,
 }
 
 impl PeerSession {
     pub(crate) fn new(keys: SessionKeys) -> Self {
-        PeerSession { keys, send_ctr: 0 }
+        PeerSession {
+            keys,
+            send_ctr: 0,
+            pt_scratch: Vec::new(),
+            ct_scratch: Vec::new(),
+        }
     }
 
     /// Seal one message into an ENC datagram. Nonce = our direction byte +
     /// strictly-increasing counter (never reused with the same key).
+    ///
+    /// Allocation shape (ADR-0024, the Cloudflare scratch lesson): the
+    /// plaintext and ciphertext live in per-session scratches that persist
+    /// across messages (zero steady-state reallocs); the returned datagram
+    /// is the ONE fresh allocation — it is handed to the socket.
     pub(crate) fn seal(&mut self, msg: &PeerMsg) -> Vec<u8> {
-        let pt = msg.encode();
-        let mut frame = Vec::with_capacity(pt.len() + 16 + 9);
+        msg.encode_into(&mut self.pt_scratch);
+        let pt_len = self.pt_scratch.len();
+        self.ct_scratch.clear();
+        self.ct_scratch.resize(pt_len + 16, 0);
+        let mut frame = Vec::with_capacity(9 + self.ct_scratch.len());
         frame.push(FRAME_ENC);
         frame.extend_from_slice(&self.send_ctr.to_le_bytes());
         let nonce = frame_nonce(self.keys.nonce_dir, self.send_ctr);
         let orion_nonce =
             orion::hazardous::stream::xchacha20::Nonce::from_slice(&nonce).expect("24-byte nonce");
-        let mut ct = vec![0u8; pt.len() + 16];
         orion::hazardous::aead::xchacha20poly1305::seal(
             &self.keys.send,
             &orion_nonce,
-            &pt,
+            &self.pt_scratch,
             None,
-            &mut ct,
+            &mut self.ct_scratch,
         )
         .expect("AEAD seal with valid key/nonce cannot fail");
-        frame.extend_from_slice(&ct);
+        frame.extend_from_slice(&self.ct_scratch);
         self.send_ctr += 1;
         frame
     }

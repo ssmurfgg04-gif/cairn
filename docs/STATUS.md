@@ -21,6 +21,15 @@ Legend: ✅ implemented + tests green · 🟨 implemented, platform-gated / hard
 
 
 
+## Round 21 (2026-09-05) — the Space dashboard shell, the Cloudflare memory lesson, and the installer-gate fix
+
+| Item | Status | Evidence |
+|---|---|---|
+| install.ps1 fresh-profile HKCU Run | ✅ | The v1.0.0 release run's installer-gate caught it: on a fresh Windows profile the Run key does not exist and `Set-ItemProperty` cannot write into a missing key — the installer warned and continued, so a real user's FIRST install silently lost tray autostart (the gate's assert step failed exactly as designed). Fix: `New-Item -Force` creates the full path before the write. |
+| Space dashboard shell | ✅ | The zero-root hero is the Space onboarding, not a dark card: `.shell` isolation:isolate + `.bg-aurora` INSIDE the shell (3 fields, blur 18, inset −20%, 24 s drift), body locked to rgba(247,247,249,.82) + Google Sans stack (`.main` owns the scroll), full-viewport light-glass stage (step 860 / copy 670 / h1 clamp 34–54 w500 −.025em balance / 76 px gradient mark tile), the 82 px transparent footer (step-progress 72×3 → status pills when attached; continue-wrap: 42 px pill + ONE primary CTA — btn-primary gradient + inset highlight + hover #303035 + active .965 + focus-visible 3 px + disabled .45), primary CTAs (attach/create version/pin/recall) moved bottom-right contextual via scroll-spy, progressive disclosure (1st Continue reveals the attach scene, 2nd attaches; Enter works), daemon-down at zero roots → the Space error-fallback card, footer portales fixed/z70/rgba(.92) while overlays are open, fonts preconnect+`media=print` onload, `[hidden]!important` held. Console keeps cairn's DM Sans; review portal 3-col untouched. **Verified headless 1440×1000: 0.72 % pixel diff vs the Space reference (target <5 %), VLM 9/9/9 onboarding / 8/9/9 console, full attach flow + overlay portal exercised, zero JS errors.** |
+| Cloudflare 100 TB memory lesson | ✅ | ADR-0024 maps all five techniques honestly (enum boxing audited with size_of: no bloat; Box-keys not worth it at cap; store is SQLite-backed) and APPLIES the two that fit: (1) per-session scratch buffers on `PeerSession::seal` (encode + ciphertext persist across messages — a CHUNK previously paid up to five growth reallocs per message; the returned datagram stays the one fresh allocation); (2) the counting-allocator budget gate `tests/mem_budget.rs` (2000-event presence flood through a real encrypted session: ≤32 allocs/event — measured 9–12; steady-state live delta ≤64 KiB — measured 13–269 BYTES; quiescence-based completion because UDP loss is the channel's documented contract; the LIVE counter is a signed always-on delta so post-window frees of in-window allocations don't read as phantom retention). |
+| Gates | ✅ | cairn-p2p 66 incl. the new mem-budget gate (10/10 stable locally); fmt + clippy `-D warnings` clean; dashboard verified per above. |
+
 ## Round 20 (2026-09-05) — the collaboration five + the honest-bug batch + v1.0.0
 
 The Pareto round (ADR-0023): the five mechanics that kill the hard-drive
