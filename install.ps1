@@ -221,8 +221,16 @@ if (($env:Path -split ';') -notcontains $InstallDir) {
 if ($trayInstalled) {
     # HKCU Run key: per-user autostart, NO admin rights, silent on boot.
     # Idempotent: overwrite with the same value.
+    # NOTE: on a FRESH user profile the Run key does not exist yet (the CI
+    # runner profile is exactly this shape) -- Set-ItemProperty cannot write
+    # into a missing key, so create it first. New-Item -Force builds the whole
+    # path. Without this, a first install silently loses tray autostart.
     $runKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
     try {
+        if (-not (Test-Path $runKey)) {
+            New-Item -Path $runKey -Force | Out-Null
+            Write-Host "Created the HKCU Run key (fresh profile)"
+        }
         Set-ItemProperty -Path $runKey -Name "CairnTray" -Value "`"$trayPath`"" -ErrorAction Stop
         Write-Host "Tray autostart registered (HKCU Run)"
     } catch {
