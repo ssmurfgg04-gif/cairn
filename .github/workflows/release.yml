@@ -33,14 +33,20 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
 
+      # ⚠ RUSTFLAGS *replaces* .cargo/config.toml's rustflags (cargo's
+      # documented precedence). The workspace enables tokio's io-uring
+      # feature (ADR-0025), which hard-errors without --cfg tokio_unstable
+      # — keep BOTH flags here or the build breaks loudly. This exact trap
+      # killed the v1.0.0 re-tag run (33948944674): crt-static alone, tokio
+      # compile_error!, installer-gate skipped.
       - name: Build (static CRT, self-contained)
         env:
-          RUSTFLAGS: -C target-feature=+crt-static
+          RUSTFLAGS: -C target-feature=+crt-static --cfg tokio_unstable
         run: cargo build --release -p cairn-cli --bin cairn
 
       - name: Build the tray (static CRT)
         env:
-          RUSTFLAGS: -C target-feature=+crt-static
+          RUSTFLAGS: -C target-feature=+crt-static --cfg tokio_unstable
         run: cargo build --release -p cairn-tray --bin cairn-tray
 
       - name: Build the native window (Tauri NSIS bundle, ADR-0022)
@@ -155,3 +161,43 @@ jobs:
           if (-not $app) { throw "cairn-app.exe not installed (NSIS /S leg)" }
           Write-Host "cairn-app: $app"
           Write-Host "installer gate GREEN (engine + tray + window)"
+
+      - name: The installed daemon actually runs (install-and-it-just-works)
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          # Round 26's core promise: install -> daemon runs -> dashboard
+          # serves. On a real desktop the tray supervises the daemon; here we
+          # exercise the exact binary the installer laid down, start it the
+          # way the tray does (hidden, logged), and wait for the dashboard.
+          $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
+          $exe = (Get-Command cairn).Source
+          $home2 = Join-Path $env:USERPROFILE ".cairn"
+          $log = Join-Path $home2 "daemon.log"
+          if (-not (Test-Path $home2)) { New-Item -ItemType Directory -Force -Path $home2 | Out-Null }
+          $proc = Start-Process -FilePath $exe -ArgumentList "daemon" -WindowStyle Hidden -RedirectStandardError $log -PassThru
+          try {
+            $deadline = (Get-Date).AddSeconds(60)
+            $up = $false
+            while ((Get-Date) -lt $deadline) {
+              Start-Sleep -Milliseconds 500
+              if ($proc.HasExited) {
+                $tail = if (Test-Path $log) { (Get-Content $log -Tail 20) -join "`n" } else { "(no log output)" }
+                throw "daemon exited early (code $($proc.ExitCode))`n$tail"
+              }
+              try {
+                $r = Invoke-WebRequest "http://127.0.0.1:17778/" -UseBasicParsing -TimeoutSec 2
+                if ($r.StatusCode -eq 200) { $up = $true; break }
+              } catch { }
+            }
+            if (-not $up) {
+              $tail = if (Test-Path $log) { (Get-Content $log -Tail 20) -join "`n" } else { "(no log output)" }
+              throw "daemon did not serve the dashboard within 60s`n$tail"
+            }
+            # the daemon's own status endpoint answers over the same binary
+            & cairn status --json | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "cairn status failed while the daemon was up" }
+            Write-Host "daemon + dashboard verified live on the installed binary (127.0.0.1:17778 -> 200)"
+          } finally {
+            if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+          }

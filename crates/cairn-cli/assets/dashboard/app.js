@@ -136,6 +136,10 @@ const STR = {
   "th.author": { en: "author", "de-DE": "Autor", "ja-JP": "作成者", "zh-CN": "作者" },
   "th.member": { en: "member", "de-DE": "Mitglied", "ja-JP": "メンバー", "zh-CN": "成员" },
   "th.role": { en: "role", "de-DE": "Rolle", "ja-JP": "役割", "zh-CN": "角色" },
+  "th.status": { en: "status", "de-DE": "Status", "ja-JP": "状態", "zh-CN": "状态" },
+  "th.pinned": { en: "pinned", "de-DE": "angepinnt", "ja-JP": "ピン留め", "zh-CN": "已置顶" },
+  "card.locks": { en: "Locks", "de-DE": "Sperren", "ja-JP": "ロック", "zh-CN": "文件锁" },
+  "card.team": { en: "Team & devices", "de-DE": "Team & Geräte", "ja-JP": "チームとデバイス", "zh-CN": "团队与设备" },
 
   "empty.projects": { en: "No attached projects - add one with the button above.", "de-DE": "Keine verbundenen Projekte - oben hinzufügen.", "ja-JP": "接続済みプロジェクトはありません - 上のボタンで追加。", "zh-CN": "暂无已连接项目 - 用上方按钮添加。" },
   "empty.files": { en: "No files yet - attach a project and drop media in.", "de-DE": "Noch keine Dateien - Projekt verbinden und Medien ablegen.", "ja-JP": "ファイルはまだありません - プロジェクトを接続してメディアを置いてください。", "zh-CN": "暂无文件 - 连接项目后放入媒体。" },
@@ -156,6 +160,8 @@ const STR = {
   "chip.ok": { en: "all synced", "de-DE": "alles synchron", "ja-JP": "すべて同期済み", "zh-CN": "全部已同步" },
   "chip.warn": { en: "syncing", "de-DE": "synchronisiert", "ja-JP": "同期中", "zh-CN": "同步中" },
   "chip.bad": { en: "daemon unreachable", "de-DE": "Daemon nicht erreichbar", "ja-JP": "デーモン到達不可", "zh-CN": "守护进程不可达" },
+  "chip.error": { en: "needs attention", "de-DE": "Aufmerksamkeit nötig", "ja-JP": "注意が必要", "zh-CN": "需要注意" },
+  "chip.retry": { en: "reconnecting", "de-DE": "verbinde neu", "ja-JP": "再接続中", "zh-CN": "正在重连" },
   "chip.update": { en: "update available", "de-DE": "Update verfügbar", "ja-JP": "アップデートあり", "zh-CN": "有可用更新" },
   "chip.updateFailed": { en: "update check failed", "de-DE": "Update-Prüfung fehlgeschlagen", "ja-JP": "アップデート確認に失敗", "zh-CN": "更新检查失败" },
   "node.online": { en: "online", "de-DE": "online", "ja-JP": "オンライン", "zh-CN": "在线" },
@@ -466,13 +472,21 @@ function deriveState() {
     (FOOT.pending ?? 0) > 0 ||
     PROJECTS.some((p) => p.state === "syncing") ||
     (FOOT.files ?? 0) > (FOOT.synced ?? 0);
-  if (!HEALTHY || (FOOT.conflicts ?? 0) > 0 || hasError) return inFlight ? "warn" : "bad";
+  // conflicts or a store problem is a human decision away from healthy:
+  // "error" (red, needs attention) - the daemon is alive and serving this
+  // page. A PROJECT error alone is the sync loop's own retry ladder (5s
+  // backoff; it recovers itself) - "retry" (amber), never a red dead chip.
+  if ((FOOT.conflicts ?? 0) > 0 || !HEALTHY) return "error";
+  if (hasError) return "retry";
   if (inFlight) return "warn";
   return "ok";
 }
 
+/* labels + icons per bucket; "bad" stays reserved for the daemon actually
+   being down (the page's own fetch failing) */
+const CHIP_LABELS = { ok: "chip.ok", warn: "chip.warn", retry: "chip.retry", error: "chip.error", bad: "chip.bad" };
 function stateLabel(st) {
-  return st === "ok" ? t("chip.ok") : st === "warn" ? t("chip.warn") : t("chip.bad");
+  return t(CHIP_LABELS[st] || "chip.bad");
 }
 
 /* the chip's icon: a check when everything landed (the mockup's green
@@ -480,6 +494,8 @@ function stateLabel(st) {
 const CHIP_ICONS = {
   ok: '<svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.2 8.6l3 3 6.6-7.2"/></svg>',
   warn: '<svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.7-3.75"/><path d="M13 2.6v2.4h-2.4"/></svg>',
+  retry: '<svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M13 8a5 5 0 1 1-1.7-3.75"/><path d="M13 2.6v2.4h-2.4"/></svg>',
+  error: '<svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.9l6.3 11H1.7z" stroke-linejoin="round"/><path d="M8 6.2v3.2"/><circle cx="8" cy="11.6" r="0.4" fill="currentColor" stroke="none"/></svg>',
   bad: '<svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 1.9l6.3 11H1.7z" stroke-linejoin="round"/><path d="M8 6.2v3.2"/><circle cx="8" cy="11.6" r="0.4" fill="currentColor" stroke="none"/></svg>',
 };
 
@@ -498,7 +514,7 @@ function paintState() {
   const sb = document.querySelector(".sb-state");
   if (sb) {
     sb.className = `sb-state is-${st}`;
-    $("foot-dot").className = `dot dot-${st === "ok" ? "ok" : st === "warn" ? "warn" : "bad"}`;
+    $("foot-dot").className = `dot dot-${st === "ok" ? "ok" : st === "warn" || st === "retry" ? "warn" : "bad"}`;
     $("foot-state-label").textContent = stateLabel(st);
   }
   renderFooter();
@@ -767,7 +783,7 @@ function renderActiveProjects() {
     chip.className = "proj-chip";
     const st = p.state === "error" ? "bad" : p.state === "syncing" ? "warn" : "ok";
     chip.innerHTML =
-      `<span class="dot dot-${st === "ok" ? "ok" : st === "warn" ? "warn" : "bad"}"></span>` +
+      `<span class="dot dot-${st === "ok" ? "ok" : st === "warn" || st === "retry" ? "warn" : "bad"}"></span>` +
       `<span>${esc(p.display_name || p.project_id)}</span>`;
     chip.title = esc(p.root_path ?? "");
     chip.addEventListener("click", () => jumpToProject(p.project_id));
