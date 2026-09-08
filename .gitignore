@@ -19,3 +19,9 @@ crates/cairn-core/corpus/**/*.dat
 .dashboard-smoke/
 real-corpus-report.json
 actionlint
+
+# local superpowers / skills — never commit (accidental push 4f9c8e8)
+docs/superpowers/
+.superpowers/
+.agents/skills/
+skills/
