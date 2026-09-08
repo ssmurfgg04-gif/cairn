@@ -83,7 +83,8 @@ const STR = {
   "search.placeholder": { en: "search files, projects, reviews", "de-DE": "Dateien, Projekte, Reviews suchen", "ja-JP": "ファイル・プロジェクト・レビューを検索", "zh-CN": "搜索文件、项目、审阅" },
 
   "ob.title": { en: "Welcome to Cairn", "de-DE": "Willkommen bei Cairn", "ja-JP": "Cairn へようこそ", "zh-CN": "欢迎使用 Cairn" },
-  "ob.sub": { en: "Choose a project folder to attach.", "de-DE": "Wähle einen Projektordner zum Verbinden.", "ja-JP": "接続するプロジェクトフォルダーを選んでください。", "zh-CN": "选择要连接的项目文件夹。" },
+  "ob.sub": { en: "One folder — Premiere and DaVinci see the same files. Pick it to link.", "de-DE": "Ein Ordner — Premiere und DaVinci sehen dieselben Dateien. Wähle ihn zum Verknüpfen.", "ja-JP": "1つのフォルダー — PremiereとDaVinciが同じファイルを見る。選んでリンク。", "zh-CN": "一个文件夹 — Premiere 与 DaVinci 看到同一份文件。选一个文件夹即可关联。" },
+  "ob.hint": { en: "Heavy BRAW stays as lightweight proxy on laptop (GPU-made) — no 5-hour export.", "de-DE": "Schweres BRAW bleibt als leichtes Proxy auf dem Laptop (GPU) — kein 5-Stunden-Export.", "ja-JP": "重いBRAWはノートでは軽量プロキシで（GPU生成）— 5時間の書き出しなし。", "zh-CN": "重型 BRAW 在笔记本上以轻量代理呈现（GPU 生成）— 无需 5 小时导出。" },
   "ob.continue": { en: "Continue", "de-DE": "Weiter", "ja-JP": "続ける", "zh-CN": "继续" },
   "ob.daemonDown": { en: "Cannot reach the daemon", "de-DE": "Daemon nicht erreichbar", "ja-JP": "デーモンに接続できません", "zh-CN": "无法连接守护进程" },
   "ob.daemonDownSub": { en: "Start it with cairn daemon, then reload this page.", "de-DE": "Starte ihn mit cairn daemon und lade diese Seite neu.", "ja-JP": "cairn daemon で起動し、このページを再読み込みしてください。", "zh-CN": "请先运行 cairn daemon，然后刷新此页面。" },
@@ -112,8 +113,8 @@ const STR = {
   "versions.label": { en: "label (e.g. before color pass)", "de-DE": "Label (z. B. vor dem Farbdurchgang)", "ja-JP": "ラベル（例: カラー前）", "zh-CN": "标签（如：调色前）" },
   "recall.path": { en: "one path (optional, whole project when empty)", "de-DE": "ein Pfad (optional, sonst ganzes Projekt)", "ja-JP": "1パス（任意、空なら全プロジェクト）", "zh-CN": "单个路径（可选，留空则整个项目）" },
 
-  "dash.title": { en: "Creative Workflow Overview", "de-DE": "Kreativ-Workflow-Übersicht", "ja-JP": "クリエイティブワークフロー概要", "zh-CN": "创意工作流总览" },
-  "dash.sub": { en: "{n} projects · {files} files · {synced} synced on this machine", "de-DE": "{n} Projekte · {files} Dateien · {synced} auf diesem Rechner synchron", "ja-JP": "{n}プロジェクト · {files}ファイル · {synced} 同期済み", "zh-CN": "{n} 个项目 · {files} 个文件 · {synced} 已同步到本机" },
+  "dash.title": { en: "Premiere ↔ DaVinci Sync", "de-DE": "Premiere ↔ DaVinci Sync", "ja-JP": "Premiere ↔ DaVinci 同期", "zh-CN": "Premiere ↔ DaVinci 同步" },
+  "dash.sub": { en: "{n} linked · {files} files · {synced} on this machine (Linked = ready in Premiere)", "de-DE": "{n} verknüpft · {files} Dateien · {synced} auf diesem Rechner (verknüpft = in Premiere bereit)", "ja-JP": "{n}リンク済み · {files}ファイル · {synced} このPCにあり (リンク済み = Premiereで準備完了)", "zh-CN": "{n} 已关联 · {files} 个文件 · {synced} 已在本机 (已关联 = Premiere 可直接打开)" },
   "dash.subEmpty": { en: "attach a project folder to begin", "de-DE": "verbinde einen Projektordner, um zu beginnen", "ja-JP": "プロジェクトフォルダーを接続して開始", "zh-CN": "连接一个项目文件夹即可开始" },
   "btn.addWs": { en: "Add to Workspace", "de-DE": "Zum Workspace hinzufügen", "ja-JP": "ワークスペースに追加", "zh-CN": "添加到工作区" },
   "ws.placeholder": { en: "Workspace path or ID (optional)", "de-DE": "Workspace-Pfad oder ID (optional)", "ja-JP": "ワークスペースのパスまたはID（任意）", "zh-CN": "工作区路径或 ID（可选）" },
@@ -211,11 +212,11 @@ const STR = {
   "team.denied": { en: "denied", "de-DE": "verweigert", "ja-JP": "拒否", "zh-CN": "拒绝" },
   "team.you": { en: "you", "de-DE": "du", "ja-JP": "あなた", "zh-CN": "你" },
 
-  "chip.ok": { en: "all synced", "de-DE": "alles synchron", "ja-JP": "すべて同期済み", "zh-CN": "全部已同步" },
-  "chip.warn": { en: "syncing", "de-DE": "synchronisiert", "ja-JP": "同期中", "zh-CN": "同步中" },
-  "chip.bad": { en: "daemon unreachable", "de-DE": "Daemon nicht erreichbar", "ja-JP": "デーモン到達不可", "zh-CN": "守护进程不可达" },
-  "chip.error": { en: "needs attention", "de-DE": "Aufmerksamkeit nötig", "ja-JP": "注意が必要", "zh-CN": "需要注意" },
-  "chip.retry": { en: "reconnecting", "de-DE": "verbinde neu", "ja-JP": "再接続中", "zh-CN": "正在重连" },
+  "chip.ok": { en: "Linked ✓ Ready in Premiere", "de-DE": "Verknüpft ✓ In Premiere bereit", "ja-JP": "リンク済み ✓ Premiereで準備完了", "zh-CN": "已关联 ✓ Premiere 可用" },
+  "chip.warn": { en: "Uploading — keep editing", "de-DE": "Lädt hoch — weiter schneiden", "ja-JP": "アップロード中 — 編集を続けてOK", "zh-CN": "上传中 — 可继续剪辑" },
+  "chip.bad": { en: "Offline — check tray", "de-DE": "Offline — Tray prüfen", "ja-JP": "オフライン — トレイを確認", "zh-CN": "离线 — 查看托盘" },
+  "chip.error": { en: "Needs attention — open Settings", "de-DE": "Achtung — Einstellungen öffnen", "ja-JP": "要確認 — 設定を開く", "zh-CN": "需要注意 — 打开设置" },
+  "chip.retry": { en: "Reconnecting — auto-retry", "de-DE": "Verbinde neu — automatisch", "ja-JP": "再接続中 — 自動リトライ", "zh-CN": "正在重连 — 自动重试" },
   "chip.update": { en: "update available", "de-DE": "Update verfügbar", "ja-JP": "アップデートあり", "zh-CN": "有可用更新" },
   "chip.updateFailed": { en: "update check failed", "de-DE": "Update-Prüfung fehlgeschlagen", "ja-JP": "アップデート確認に失敗", "zh-CN": "更新检查失败" },
   "node.online": { en: "online", "de-DE": "online", "ja-JP": "オンライン", "zh-CN": "在线" },
@@ -234,9 +235,9 @@ const STR = {
   "help.goSettings": { en: "go to settings", "de-DE": "zu den Einstellungen", "ja-JP": "設定へ", "zh-CN": "前往设置" },
   "help.goHowto": { en: "go to the how-to guide", "de-DE": "zur Anleitung", "ja-JP": "使い方へ", "zh-CN": "打开使用指南" },
   "help.esc": { en: "close panels and overlays", "de-DE": "Panels und Overlays schließen", "ja-JP": "パネルとオーバーレイを閉じる", "zh-CN": "关闭面板与浮层" },
-  "help.dotOk": { en: "all files synced, safe to edit", "de-DE": "alle Dateien synchron, sicher zum Schneiden", "ja-JP": "全ファイル同期済み、編集しても安全", "zh-CN": "全部已同步，可安全编辑" },
-  "help.dotWarn": { en: "syncing, chunks in flight", "de-DE": "synchronisiert, Chunks unterwegs", "ja-JP": "同期中、チャンク転送中", "zh-CN": "同步中，数据块传输中" },
-  "help.dotBad": { en: "attention, open Settings", "de-DE": "Achtung, Einstellungen öffnen", "ja-JP": "要注意、設定を確認", "zh-CN": "需要注意，请查看设置" },
+  "help.dotOk": { en: "Linked — safe to edit in Premiere/DaVinci", "de-DE": "Verknüpft — in Premiere/DaVinci sicher zu schneiden", "ja-JP": "リンク済み — Premiere/DaVinciで安全に編集可", "zh-CN": "已关联 — 可在 Premiere/DaVinci 中安全编辑" },
+  "help.dotWarn": { en: "Uploading in background — keep editing, no export wait", "de-DE": "Lädt im Hintergrund — weiter schneiden, kein Export-Wait", "ja-JP": "バックグラウンドでアップロード中 — 編集を続行、書き出し待ちなし", "zh-CN": "后台上传中 — 继续剪辑，无需等待导出" },
+  "help.dotBad": { en: "Needs fix — open Settings → System health", "de-DE": "Fix nötig — Einstellungen → System-Check", "ja-JP": "要修正 — 設定 → システム健全性", "zh-CN": "需要处理 — 设置 → 系统健康" },
 
   "toast.attached": { en: "project attached", "de-DE": "Projekt verbunden", "ja-JP": "プロジェクトを接続しました", "zh-CN": "项目已连接" },
   "toast.detached": { en: "project detached, local files stay", "de-DE": "Projekt getrennt, lokale Dateien bleiben", "ja-JP": "プロジェクトを切断、ローカルファイルは保持", "zh-CN": "项目已断开，本地文件保留" },
@@ -645,9 +646,28 @@ $("btn-browse").addEventListener("click", (ev) => {
   ev.preventDefault();
   pickFolder($("attach-root"));
 });
-$("ob-browse").addEventListener("click", (ev) => {
+$("ob-browse").addEventListener("click", async (ev) => {
   ev.preventDefault();
-  pickFolder($("ob-root"));
+  const input = $("ob-root");
+  await pickFolder(input);
+  // single-button polish: if picker filled a path, auto-attach immediately (no second click)
+  const path = input && input.value.trim();
+  if (path) {
+    const btn = $("ob-attach-btn");
+    if (btn) btn.click();
+    else {
+      // fallback direct attach when attach button hidden
+      try {
+        const r = await postJSON("/api/v1/attach", { path });
+        if (r && r.ok === false) toast(t("toast.denied", { e: r.error }), true);
+        else { toast(t("toast.attached")); refreshAll(); }
+      } catch (e) { toast(t("toast.failed", { e: String(e) }), true); }
+    }
+  } else {
+    // picker unavailable — reveal manual attach row
+    const scene = $("ob-attach");
+    if (scene) scene.hidden = false;
+  }
 });
 
 /* ============================== footer ============================== */
@@ -684,22 +704,25 @@ function renderOnboarding() {
 
   $("ob-title").textContent = t("ob.title");
   $("ob-sub").textContent = t("ob.sub");
-  $("ob-continue").textContent = t("ob.continue");
+  const hint = document.querySelector(".ob-hint");
+  if (hint) hint.textContent = t("ob.hint");
+  const oc = $("ob-continue");
+  if (oc) oc.textContent = t("ob.continue");
 
-  // the stage only exists at zero roots, so the track honestly sits at 1/3
-  $("foot-track-fill").style.width = `${(1 / 3) * 100}%`;
+  // single-button onboard: stage is 1/1, not 1/3
+  $("foot-track-fill").style.width = `100%`;
   $("foot-progress").setAttribute("aria-valuenow", "1");
-  $("foot-stage-label").textContent = `1 / 3 · ${t("ob.continue")}`;
+  $("foot-stage-label").textContent = t("btn.browse");
 }
 
-/* progressive disclosure: first Continue reveals the attach scene,
-   then gets out of the way - the scene's own attach button takes over */
-$("ob-continue").addEventListener("click", () => {
+/* single-button onboard: Browse is the only CTA — no Continue two-step */
+const _obContinue = $("ob-continue");
+if (_obContinue) _obContinue.addEventListener("click", () => {
   const scene = $("ob-attach");
-  if (scene.hidden) {
+  if (scene && scene.hidden) {
     scene.hidden = false;
-    $("ob-continue").hidden = true;
-    $("ob-root").focus();
+    _obContinue.hidden = true;
+    $("ob-root") && $("ob-root").focus();
   }
 });
 
