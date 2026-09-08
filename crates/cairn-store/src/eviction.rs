@@ -59,14 +59,16 @@ pub fn disk_space(path: &Path) -> Result<DiskSpace, CairnError> {
     // windows-rs 0.58 flattens the ULARGE_INTEGER out-params to *mut u64.
     let mut free = 0u64;
     let mut total = 0u64;
+    // _total_free is a required out-parameter of GetDiskFreeSpaceExW; we don't use it.
+    #[allow(clippy::used_underscore_binding)]
     let mut _total_free = 0u64;
     // SAFETY: w is NUL-terminated; out pointers are valid locals.
     let rc = unsafe {
         GetDiskFreeSpaceExW(
             PCWSTR(w.as_mut_ptr()),
-            Some(&mut free),
-            Some(&mut total),
-            Some(&mut _total_free),
+            Some(&raw mut free),
+            Some(&raw mut total),
+            Some(&raw mut _total_free),
         )
     };
     rc.map_err(|e| CairnError::new(ErrorKind::Io, format!("GetDiskFreeSpaceExW: {e}")))?;

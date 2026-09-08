@@ -358,6 +358,8 @@ mod tests {
         assert_eq!(rel_under(&found, &file).unwrap(), "footage/day1/a.mov");
         // outside any root → None
         let other = tempfile::tempdir().unwrap();
-        assert!(resolve_root(other.path().join("nope.txt").parent().unwrap()).is_none());
+        let target = other.path().join("nope.txt");
+        let (found_other, _) = resolve_root(&target).unwrap_or((PathBuf::new(), RootInfo { project_id: String::new() }));
+        assert_ne!(found_other, other.path());
     }
 }

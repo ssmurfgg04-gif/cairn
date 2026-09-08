@@ -48,6 +48,13 @@ const MSG_DENY: u8 = 0x44;
 /// selection), strictly bounded — this is a coordination channel, NOT a data
 /// channel. Oversized payloads are refused at decode.
 const MSG_PRESENCE: u8 = 0x50;
+/// FEC parity fragment (round 28): XOR of one PARITY_GROUP data-fragment
+/// group, zero-padded to MAX_FRAG_DATA. Lets the receiver rebuild a single
+/// lost fragment per group without a NAK round trip. Old peers drop unknown
+/// tags, so mixed swarms degrade to NAK-only — safe to deploy.
+const MSG_PARITY: u8 = 0x51;
+/// Fragments per parity group (8 data + 1 parity = 12.5% overhead).
+pub(crate) const PARITY_GROUP: usize = 8;
 
 /// Max block-data bytes per CHUNK fragment (keeps encrypted datagrams ≈ MTU).
 pub(crate) const MAX_FRAG_DATA: usize = 1200;
@@ -91,6 +98,15 @@ pub(crate) enum PeerMsg {
     /// and is NEVER persisted, reassembled, or retried. Loss-tolerant by
     /// design (the next heartbeat supersedes).
     Presence { payload: Vec<u8> },
+    /// FEC parity for one fragment group: `group` indexes the group
+    /// (fragments `[group*8, group*8+8)`), `data` is the XOR of the group's
+    /// fragments each zero-padded to MAX_FRAG_DATA. Never enters the data
+    /// slots — recovery rebuilds the missing fragment into its slot.
+    Parity {
+        hash: [u8; 32],
+        group: u16,
+        data: Vec<u8>,
+    },
 }
 
 impl PeerMsg {
@@ -161,6 +177,12 @@ impl PeerMsg {
             PeerMsg::Deny { hash } => {
                 out.push(MSG_DENY);
                 out.extend_from_slice(hash);
+            }
+            PeerMsg::Parity { hash, group, data } => {
+                out.push(MSG_PARITY);
+                out.extend_from_slice(hash);
+                out.extend_from_slice(&group.to_be_bytes());
+                out.extend_from_slice(data);
             }
             PeerMsg::Presence { payload } => {
                 out.push(MSG_PRESENCE);
@@ -241,6 +263,20 @@ impl PeerMsg {
                     return None;
                 }
                 Some(PeerMsg::Presence { payload })
+            }
+            MSG_PARITY => {
+                // Bounded like presence: a parity blob longer than one
+                // padded fragment is malformed (never a memory tap).
+                let group = u16::from_be_bytes(p.get(32..34)?.try_into().ok()?);
+                let data = p.get(34..)?.to_vec();
+                if data.len() > MAX_FRAG_DATA {
+                    return None;
+                }
+                Some(PeerMsg::Parity {
+                    hash: p.get(0..32)?.try_into().ok()?,
+                    group,
+                    data,
+                })
             }
             _ => None,
         }
@@ -361,6 +397,11 @@ pub(crate) struct Reassembly {
     pub total_len: u32,
     pub frags: u16,
     got: Vec<Option<Vec<u8>>>,
+    /// One XOR parity blob per PARITY_GROUP data group (None until seen).
+    /// Parity never enters `got` — recovery rebuilds into the data slot.
+    parity: Vec<Option<Vec<u8>>>,
+    /// Fragments rebuilt from parity (observability: NAKs avoided).
+    pub fec_recovered: u64,
     pub last_progress: std::time::Instant,
 }
 
@@ -382,10 +423,13 @@ impl Reassembly {
             );
             return None;
         }
+        let groups = (frags as usize).div_ceil(PARITY_GROUP);
         Some(Reassembly {
             total_len,
             frags,
             got: vec![None; frags as usize],
+            parity: vec![None; groups],
+            fec_recovered: 0,
             last_progress: std::time::Instant::now(),
         })
     }
@@ -400,6 +444,76 @@ impl Reassembly {
         } else {
             false // duplicate or out-of-range idx
         }
+    }
+
+    /// Store a parity blob for `group`. Returns true if it was new.
+    /// Over-long blobs are refused (memory guard, mirrors decode).
+    pub(crate) fn insert_parity(&mut self, group: u16, data: Vec<u8>) -> bool {
+        if data.len() > MAX_FRAG_DATA {
+            return false;
+        }
+        let Some(slot) = self.parity.get_mut(group as usize) else {
+            return false; // group past the stream's range
+        };
+        if slot.is_some() {
+            return false;
+        }
+        *slot = Some(data);
+        self.last_progress = std::time::Instant::now();
+        true
+    }
+
+    /// Try to rebuild single missing fragments from parity. Returns the
+    /// number rebuilt. Rule: a group rebuilds iff exactly one data slot is
+    /// empty AND its parity is present. Every fragment is zero-padded to
+    /// MAX_FRAG_DATA before the XOR (sender rule); the rebuilt fragment is
+    /// truncated to its exact expected length, and total_len assembly
+    /// re-validates downstream — a corrupt parity yields a length mismatch
+    /// that fails closed into the normal NAK path.
+    pub(crate) fn try_recover(&mut self) -> usize {
+        let mut rebuilt = 0;
+        let n = self.got.len();
+        for (g, par) in self.parity.iter().enumerate() {
+            let Some(par) = par.as_ref() else { continue };
+            if par.len() != MAX_FRAG_DATA {
+                continue;
+            }
+            let start = g * PARITY_GROUP;
+            let end = (start + PARITY_GROUP).min(n);
+            let missing: Vec<usize> = (start..end)
+                .filter(|&i| self.got[i].is_none())
+                .collect();
+            if missing.len() != 1 {
+                continue;
+            }
+            let idx = missing[0];
+            let mut buf = par.clone();
+            for i in start..end {
+                if i == idx {
+                    continue;
+                }
+                let frag = self.got[i].as_ref().expect("present by filter");
+                let mut padded = vec![0u8; MAX_FRAG_DATA];
+                let take = frag.len().min(MAX_FRAG_DATA);
+                padded[..take].copy_from_slice(&frag[..take]);
+                for (b, f) in buf.iter_mut().zip(padded.iter()) {
+                    *b ^= *f;
+                }
+            }
+            // Exact expected length for this slot (tail may be short).
+            let exp = (self.total_len as usize)
+                .saturating_sub(idx * MAX_FRAG_DATA)
+                .min(MAX_FRAG_DATA);
+            if exp == 0 || exp > MAX_FRAG_DATA {
+                continue;
+            }
+            buf.truncate(exp);
+            self.got[idx] = Some(buf);
+            self.fec_recovered += 1;
+            rebuilt += 1;
+            self.last_progress = std::time::Instant::now();
+        }
+        rebuilt
     }
 
     /// Missing fragment indices (bounded to keep NAKs datagram-sized).
@@ -428,7 +542,7 @@ impl Reassembly {
     }
 
     pub(crate) fn is_complete(&self) -> bool {
-        self.assemble().is_some()
+        self.got.iter().all(Option::is_some)
     }
 }
 
@@ -479,11 +593,105 @@ mod tests {
                 idxs: vec![0, 1, 2, 65535],
             },
             PeerMsg::Deny { hash: [9u8; 32] },
+            PeerMsg::Parity {
+                hash: [9u8; 32],
+                group: 2,
+                data: vec![0x5A; MAX_FRAG_DATA],
+            },
         ];
         for m in &msgs {
             let enc = m.encode();
             assert_eq!(&PeerMsg::decode(&enc).unwrap(), m, "round-trip {m:?}");
         }
+    }
+
+    #[test]
+    fn codec_rejects_oversize_parity() {
+        let m = PeerMsg::Parity {
+            hash: [9u8; 32],
+            group: 0,
+            data: vec![0u8; MAX_FRAG_DATA + 1],
+        };
+        assert!(PeerMsg::decode(&m.encode()).is_none());
+    }
+
+    /// Helper: build a reassembly fed with all-but-`lost` fragments of a
+    /// synthetic block plus its group parity (sender rule: pad to
+    /// MAX_FRAG_DATA, XOR).
+    fn fed_reassembly(total: usize, lost: &[usize]) -> Reassembly {
+        let frags = total.div_ceil(MAX_FRAG_DATA) as u16;
+        let mut r = Reassembly::start(&[7u8; 32], total as u32, frags).unwrap();
+        let full: Vec<u8> = (0..total as u64).map(|i| (i % 251) as u8).collect();
+        // insert all fragments except the lost ones
+        for idx in 0..frags as usize {
+            if lost.contains(&idx) {
+                continue;
+            }
+            let s = idx * MAX_FRAG_DATA;
+            let e = (s + MAX_FRAG_DATA).min(total);
+            r.insert(idx as u16, full[s..e].to_vec());
+        }
+        // parity per group over padded fragments
+        for g in 0..frags as usize / PARITY_GROUP + 1 {
+            let start = g * PARITY_GROUP;
+            let end = (start + PARITY_GROUP).min(frags as usize);
+            if start >= end {
+                break;
+            }
+            let mut par = vec![0u8; MAX_FRAG_DATA];
+            for idx in start..end {
+                let s = idx * MAX_FRAG_DATA;
+                let e = (s + MAX_FRAG_DATA).min(total);
+                let mut padded = vec![0u8; MAX_FRAG_DATA];
+                padded[..e - s].copy_from_slice(&full[s..e]);
+                for (p, b) in par.iter_mut().zip(padded.iter()) {
+                    *p ^= *b;
+                }
+            }
+            assert!(r.insert_parity(g as u16, par));
+        }
+        r
+    }
+
+    #[test]
+    fn fec_recovers_single_loss_no_nak_needed() {
+        // 20 fragments; lose #7 (mid-block, full-size slot).
+        let mut r = fed_reassembly(20 * MAX_FRAG_DATA, &[7]);
+        assert_eq!(r.missing(), vec![7]);
+        assert_eq!(r.try_recover(), 1);
+        assert!(r.missing().is_empty());
+        assert_eq!(r.fec_recovered, 1);
+        let out = r.assemble().unwrap();
+        let expect: Vec<u8> =
+            (0..20 * MAX_FRAG_DATA as u64).map(|i| (i % 251) as u8).collect();
+        assert_eq!(out, expect);
+    }
+
+    #[test]
+    fn fec_recovers_short_tail_fragment() {
+        // tail fragment is short; rebuild must truncate to exact length.
+        let total = 3 * MAX_FRAG_DATA + 117;
+        let mut r = fed_reassembly(total, &[3]);
+        assert_eq!(r.try_recover(), 1);
+        assert!(r.missing().is_empty());
+        let out = r.assemble().unwrap();
+        assert_eq!(out.len(), total);
+    }
+
+    #[test]
+    fn fec_two_losses_in_one_group_stay_nak() {
+        let mut r = fed_reassembly(20 * MAX_FRAG_DATA, &[3, 5]);
+        // group 0 has two missing → unrecoverable; nothing rebuilt.
+        assert_eq!(r.try_recover(), 0);
+        assert_eq!(r.missing(), vec![3, 5]);
+        assert_eq!(r.fec_recovered, 0);
+    }
+
+    #[test]
+    fn fec_ignores_out_of_range_parity() {
+        let mut r = fed_reassembly(2 * MAX_FRAG_DATA, &[]);
+        assert!(!r.insert_parity(99, vec![0u8; MAX_FRAG_DATA]));
+        assert!(!r.insert_parity(0, vec![0u8; MAX_FRAG_DATA + 1]));
     }
 
     #[test]

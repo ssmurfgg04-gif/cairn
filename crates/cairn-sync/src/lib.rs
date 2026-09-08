@@ -10,6 +10,7 @@ pub mod engine;
 pub mod hydrate;
 pub mod native_collab;
 pub mod offload;
+pub mod outbox_worker;
 pub mod peer;
 pub mod plane;
 pub mod plane_grpc;
@@ -20,6 +21,7 @@ pub mod workspace;
 
 pub use aimd::Gate;
 pub use engine::{Engine, PassStats};
+pub use outbox_worker::{ChunkUploader, GrpcChunkUploader, OutboxWorker, DEFAULT_MAX_CONCURRENT};
 pub use plane::{Entry, Plane, Session};
 pub use workspace::{set_workspace, workspace_dir};
 

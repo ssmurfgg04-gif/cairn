@@ -53,20 +53,31 @@ impl Aimd {
         let _ = self.limit.fetch_add(1, Ordering::SeqCst);
     }
 
-    /// Additive increase after success (+1, capped).
+    /// Additive increase after success (+1, capped at max).
     pub fn on_success(&self) {
-        let _ = self.limit.fetch_add(1, Ordering::SeqCst);
-        let cur = self.limit.load(Ordering::Relaxed);
-        if cur > self.max {
+        // Saturating add then clamp: two atomic ops is fine — the gate
+        // is advisory concurrency control, not a hard lock.
+        let prev = self.limit.fetch_add(1, Ordering::Relaxed);
+        if prev >= self.max {
+            // We overshot; pull back. This is a best-effort cap, not exact.
             self.limit.store(self.max, Ordering::Relaxed);
         }
     }
 
     /// Multiplicative decrease on 5xx/timeout (halve, floored at min).
     pub fn on_failure(&self) {
-        let cur = self.limit.load(Ordering::Relaxed);
-        let next = (cur / 2).max(self.min);
-        self.limit.store(next, Ordering::Relaxed);
+        // CAS loop so concurrent failures don't clobber each other.
+        loop {
+            let cur = self.limit.load(Ordering::Relaxed);
+            let next = (cur / 2).max(self.min);
+            if self
+                .limit
+                .compare_exchange(cur, next, Ordering::Relaxed, Ordering::Relaxed)
+                .is_ok()
+            {
+                break;
+            }
+        }
     }
 }
 
@@ -97,14 +108,20 @@ impl Gate {
         }
     }
 
-    /// Finish an attempt: success → additive increase; failure → multiplicative decrease.
+    /// Finish an attempt: release the slot, then apply AIMD adjustment.
+    /// success → additive increase (+1); failure → multiplicative decrease (÷2).
     pub fn finish(&self, success: bool) {
         let _ = self.in_flight.fetch_sub(1, Ordering::Relaxed);
-        // release the slot, then apply the AIMD adjustment
+        // Release the slot back first so the limit reflects actual capacity.
         self.aimd.release();
         if success {
+            // Additive increase: one extra slot per completion up to max.
+            // Note: release already added 1 back; on_success adds one more
+            // to grow the window. That is the correct AIMD AI step.
             self.aimd.on_success();
         } else {
+            // Multiplicative decrease: halve *after* the slot is returned
+            // so we halve the correct restored value.
             self.aimd.on_failure();
         }
     }

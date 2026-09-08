@@ -1,0 +1,16 @@
+[package]
+name = "cairn-fec"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Cairn forward error correction for relay paths (XOR parity now, LDPC roadmap)"
+
+[dependencies]
+cairn-core = { path = "../cairn-core" }
+thiserror = "2"
+
+[dev-dependencies]
+proptest = { workspace = true }
+
+[lints]
+workspace = true

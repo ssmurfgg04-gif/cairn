@@ -26,6 +26,7 @@ notify = { workspace = true }
 reqwest = { workspace = true }
 futures = { workspace = true }
 rusqlite = { workspace = true }
+num_cpus = "1.16"
 
 [lints]
 workspace = true

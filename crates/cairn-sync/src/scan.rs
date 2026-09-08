@@ -341,6 +341,7 @@ mod tests {
         std::os::unix::fs::symlink("real.mov", ws.path().join("link.mov")).unwrap();
 
         let s = scan_root(&store, "p1", ws.path()).unwrap();
+        assert!(s.files_seen >= 1);
         assert!(store.get_file("p1", ".cairn-tmp").is_none(), "ignored");
         assert!(store.get_file("p1", "real.mov").is_some());
         #[cfg(unix)]

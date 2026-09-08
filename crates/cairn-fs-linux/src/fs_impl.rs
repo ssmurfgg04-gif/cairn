@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 #[cfg(feature = "fuse")]
 use std::ffi::OsStr;
 use std::io::{Read, Seek, SeekFrom};
+#[cfg(unix)]
 use std::os::unix::fs::FileExt;
 #[cfg(feature = "fuse")]
 use std::path::Path;
@@ -13,6 +14,27 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
+
+trait FileExtWriteAt {
+    fn write_all_at(&self, buf: &[u8], offset: u64) -> std::io::Result<()>;
+}
+
+#[cfg(unix)]
+impl FileExtWriteAt for std::fs::File {
+    fn write_all_at(&self, buf: &[u8], offset: u64) -> std::io::Result<()> {
+        FileExt::write_all_at(self, buf, offset)
+    }
+}
+
+#[cfg(not(unix))]
+impl FileExtWriteAt for std::fs::File {
+    fn write_all_at(&self, _buf: &[u8], _offset: u64) -> std::io::Result<()> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "FUSE is only supported on Unix",
+        ))
+    }
+}
 
 use cairn_core::chunker::FastCdc;
 use cairn_core::hash::Hash;
@@ -1644,6 +1666,7 @@ mod tests {
     /// CfAPI probe measures — a cold-ish open (first read, offset 0) against a warm
     /// header cache must land under the 50ms gate, and the metric must EXPOSE it.
     #[test]
+    #[cfg(unix)]
     fn i1_through_read_path_measured_by_metrics() {
         let content: Vec<u8> = (0..8 * 1024 * 1024).map(|i| (i % 249) as u8).collect();
         let (_d, fs, mh) = setup_with_file(&content);
@@ -1705,6 +1728,7 @@ mod tests {
 
     // === Write-back path (leases + spool + commit) ==================================
 
+    #[cfg(unix)]
     fn empty_setup() -> (tempfile::TempDir, CairnFs) {
         use cairn_core::clock::WallClock;
         let dir = tempfile::tempdir().unwrap();
@@ -1717,6 +1741,7 @@ mod tests {
     }
 
     /// A live "foreign editor" pid for lease-conflict tests: a real spawned process.
+    #[cfg(unix)]
     fn live_foreign_pid() -> u32 {
         std::process::Command::new("sleep")
             .arg("3")
@@ -1729,6 +1754,7 @@ mod tests {
     /// content is served back verified, the row is dirty (engine pushes it), and
     /// the header cache is warm for the next editor (I1).
     #[test]
+    #[cfg(unix)]
     fn write_back_commits_and_serves_verified() {
         let (_d, fs) = empty_setup();
         let pid = std::process::id();
@@ -1779,6 +1805,7 @@ mod tests {
     /// prefix before the patch point is lazily seeded from the store, and the
     /// commit lands a NEW manifest while old chunks stay for GC.
     #[test]
+    #[cfg(unix)]
     fn positioned_patch_seeds_prefix_and_commits() {
         use cairn_core::chunker::StreamHash;
         let content: Vec<u8> = (0..2 * 1024 * 1024).map(|i| (i % 249) as u8).collect();
@@ -1804,6 +1831,7 @@ mod tests {
 
     /// O_TRUNC open discards existing content (no lazy seed) and commits empty.
     #[test]
+    #[cfg(unix)]
     fn truncate_open_discards_content() {
         let content: Vec<u8> = vec![7u8; 3 * 1024 * 1024];
         let (_d1, fs, _mh) = setup_with_file(&content);
@@ -1819,6 +1847,7 @@ mod tests {
     /// Lease conflict: a LIVE foreign editor holds the file → EBUSY (with an
     /// override hint logged), and after the lease drops the open succeeds.
     #[test]
+    #[cfg(unix)]
     fn live_lease_conflicts_until_dropped() {
         let (_d, fs) = empty_setup();
         let foreign = live_foreign_pid();
@@ -1857,6 +1886,7 @@ mod tests {
     /// CRASHED (pid gone) — the next acquire reaps the stale row and succeeds
     /// with a fresh token, no human in the loop.
     #[test]
+    #[cfg(unix)]
     fn dead_owner_lease_is_reaped_on_acquire() {
         let (_d, fs) = empty_setup();
         // file exists (a prior editor committed it) and its lease row is stale
@@ -1889,6 +1919,7 @@ mod tests {
     /// the live foreign pen (EBUSY), while other domains and unscoped files proceed
     /// independently. This is the >90% collision reduction, enforced by config.
     #[test]
+    #[cfg(unix)]
     fn domain_scope_shares_lease_within_domain_and_isolates_across() {
         let (d, fs) = empty_setup();
         // config is an ordinary synced project file at the store root
@@ -1949,6 +1980,7 @@ mod tests {
     /// decision (it is a synced file — a teammate's push takes effect on the next
     /// write-open). Also covers longest-root-wins scoping through the mount.
     #[test]
+    #[cfg(unix)]
     fn domain_config_applies_live_without_remount() {
         let (d, fs) = empty_setup();
         let me = std::process::id();
@@ -1981,6 +2013,7 @@ mod tests {
     /// Native passthrough (ADR-0014 Phase 1): `.prodsys` paths and operator-declared
     /// markers take NO lease — Cairn stands down, the vendor engine arbitrates.
     #[test]
+    #[cfg(unix)]
     fn passthrough_paths_skip_leases() {
         let (_d, fs) = empty_setup();
         // marker as a synced project file (content read via the mount's read path)
@@ -2023,6 +2056,7 @@ mod tests {
     /// `Show/Show.prodsys/` makes `Show/Sequences/*` passthrough (Premiere owns
     /// the production), while files outside stay Cairn-leased.
     #[test]
+    #[cfg(unix)]
     fn sibling_prodsys_resolved_from_synced_paths() {
         let (_d, fs) = empty_setup();
         let pid = std::process::id();
@@ -2044,6 +2078,7 @@ mod tests {
     /// Heartbeat renews the open write's lease with the SAME token (fencing
     /// stability) inside the TTL window; closed files are not renewed.
     #[test]
+    #[cfg(unix)]
     fn heartbeat_renews_open_write_leases() {
         let (_d, fs) = empty_setup();
         let pid = std::process::id();
@@ -2064,6 +2099,7 @@ mod tests {
     /// and readdir exposes them with the right kind — the old mount could not even
     /// open a nested path.
     #[test]
+    #[cfg(unix)]
     fn nested_paths_resolve_through_synthesized_dirs() {
         let (_d, fs) = empty_setup();
         let pid = std::process::id();
@@ -2093,6 +2129,7 @@ mod tests {
 
     /// unlink removes the local row; open spools block removal (EBUSY).
     #[test]
+    #[cfg(unix)]
     fn unlink_removes_row_and_blocks_open_spools() {
         let content: Vec<u8> = vec![9u8; 1024];
         let (_d1, fs, _mh) = setup_with_file(&content);
@@ -2107,6 +2144,7 @@ mod tests {
 
     /// rename commits the content under the new name and removes the old row.
     #[test]
+    #[cfg(unix)]
     fn rename_copies_commit_and_drops_old() {
         let content: Vec<u8> = (0..1024u32).map(|i| i as u8).collect();
         let (_d1, fs, _mh) = setup_with_file(&content);
@@ -2120,6 +2158,7 @@ mod tests {
 
     /// truncate_entry shrinks to the requested size (seeded prefix + set_len).
     #[test]
+    #[cfg(unix)]
     fn truncate_entry_shrinks_committed_content() {
         let content: Vec<u8> = (0..2 * 1024 * 1024).map(|i| (i % 251) as u8).collect();
         let (_d1, fs, _mh) = setup_with_file(&content);
@@ -2136,6 +2175,7 @@ mod tests {
     /// OVER the target. Caught by the blender-headless CI gate (run 1): after
     /// save_mainfile, stat("scene.blend") returned ENOENT through the mount.
     #[test]
+    #[cfg(unix)]
     fn blender_save_dance_via_backup_and_temp() {
         let content: Vec<u8> = (0..2 * 1024 * 1024).map(|i| (i % 249) as u8).collect();
         let (_d1, fs, _mh) = setup_with_file(&content);
@@ -2168,6 +2208,7 @@ mod tests {
     /// refused. Every editor's atomic save (write temp + rename over) depends on
     /// it; the old EEXIST guard broke exactly that (blender-headless CI gate).
     #[test]
+    #[cfg(unix)]
     fn rename_over_existing_target_replaces_posix() {
         let (_d1, fs, _mh) = setup_with_file(&[7u8; 4096]);
         let pid = std::process::id();
@@ -2204,6 +2245,7 @@ mod tests {
     /// Direct truncate-in-place overwrite (editor fopen "wb" without temp): the
     /// row must survive release with the new content and stay stat-able.
     #[test]
+    #[cfg(unix)]
     fn direct_truncate_overwrite_keeps_row_statable() {
         let (_d1, fs, _mh) = setup_with_file(&[0u8; 4096]);
         let pid = std::process::id();

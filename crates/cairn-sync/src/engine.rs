@@ -438,14 +438,164 @@ impl Engine {
         }
     }
 
+    /// Parallel outbox drain (priority #1): entries are grouped by path and
+    /// each path-group appends sequentially (FIFO per path preserved —
+    /// renames/deletes on one path never reorder), while distinct paths
+    /// append concurrently under a 4-wide semaphore. The common Ok path
+    /// (ack + mark_synced) runs inline in the task; anything else
+    /// (STALE_LEASE / CONFLICT / transport error) is deferred to the
+    /// existing sequential `send_outbox_entry`, which owns all tricky
+    /// logic (conflict copies, cursor re-pins). Re-append is safe:
+    /// request_id dedup makes the second append a no-op fetch of the
+    /// same verdict. Error semantics match the old loop: first hard
+    /// error aborts the pass.
     async fn flush_outbox(&self, stats: &mut PassStats) -> Result<(), CairnError> {
+        use std::collections::BTreeMap;
+
+        struct Job {
+            request_id: String,
+            op: cairn_proto::pb::JournalOp,
+            lease_token: u64,
+            path: String,
+            manifest: Option<String>,
+        }
+
+        // 1. Collect + decode FIFO (pending() is created_at ASC).
+        let mut groups: BTreeMap<String, Vec<Job>> = BTreeMap::new();
         for e in self.outbox.pending(&self.local_ns, 256) {
             if let Ok(op) = cairn_proto::pb::JournalOp::decode(e.op.as_slice()) {
                 let path = op_path(&op);
                 let lease_token = self.store.get_lease(&path).map_or(0, |(t, _)| t);
-                self.send_outbox_entry(&e.request_id, op, lease_token, &path, stats)
-                    .await?;
+                let manifest = match op.op.as_ref() {
+                    Some(cairn_proto::pb::journal_op::Op::FileUpsert(u)) => {
+                        Some(u.manifest_hash.clone())
+                    }
+                    _ => None,
+                };
+                groups.entry(path.clone()).or_default().push(Job {
+                    request_id: e.request_id,
+                    op,
+                    lease_token,
+                    path,
+                    manifest,
+                });
             }
+        }
+        if groups.is_empty() {
+            return Ok(());
+        }
+
+        // 2. One task per path-group, bounded concurrency.
+        let sem = Arc::new(tokio::sync::Semaphore::new(4));
+        let mut set = tokio::task::JoinSet::new();
+        for (_path, group) in groups {
+            let permit = sem.clone().acquire_owned().await.map_err(|e| {
+                CairnError::new(ErrorKind::Io, format!("flush semaphore: {e}"))
+            })?;
+            let tenant = self.tenant_id.clone();
+            let project = self.project_id.clone();
+            let author = self.author_id.clone();
+            let local_ns = self.local_ns.clone();
+            let store = self.store.clone();
+            let outbox = self.outbox.clone();
+            let plane = Arc::clone(&self.plane);
+            set.spawn(async move {
+                let _permit = permit;
+                let mut appended: u64 = 0;
+                // Entries that did NOT clean-append: re-driven sequentially
+                // by the caller through the full handler below.
+                let mut retry: Vec<Job> = Vec::new();
+                let mut first_err: Option<CairnError> = None;
+                for job in group {
+                    match plane
+                        .append(
+                            &tenant,
+                            &project,
+                            &author,
+                            &job.request_id,
+                            job.op.clone(),
+                            job.lease_token,
+                        )
+                        .await
+                    {
+                        Ok((_seq, _dedup)) => {
+                            if let Err(e) = outbox.ack(&job.request_id) {
+                                first_err = Some(CairnError::new(
+                                    ErrorKind::Io,
+                                    format!("ack {}: {e}", job.request_id),
+                                ));
+                                retry.push(job);
+                                break;
+                            }
+                            // Same post-ack pipeline as the sequential path:
+                            // the row's content identity lands with synced
+                            // state so self-pull never mistakes our own
+                            // entry for a remote update.
+                            if let Some(mh) = job.manifest.clone() {
+                                let full =
+                                    workspace_dir(&store, &local_ns).join(&job.path);
+                                match std::fs::metadata(&full) {
+                                    Ok(m) => {
+                                        if let Err(e) = store.mark_synced_with_stat(
+                                            &local_ns,
+                                            &job.path,
+                                            &mh,
+                                            m.len(),
+                                            crate::scan::mtime_millis(&m),
+                                        ) {
+                                            first_err = Some(e);
+                                            retry.push(job);
+                                            break;
+                                        }
+                                    }
+                                    Err(_) => {
+                                        if let Err(e) =
+                                            store.mark_synced(&local_ns, &job.path, &mh)
+                                        {
+                                            first_err = Some(e);
+                                            retry.push(job);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            appended += 1;
+                        }
+                        Err(_) => {
+                            retry.push(job);
+                            break; // stop group on first non-Ok: FIFO per path
+                        }
+                    }
+                }
+                (appended, retry, first_err)
+            });
+        }
+
+        // 3. Join; sum fast-path appends; collect sequential retries.
+        let mut retry_jobs: Vec<Job> = Vec::new();
+        while let Some(res) = set.join_next().await {
+            let (appended, mut retry, first_err) = res.map_err(|e| {
+                CairnError::new(ErrorKind::Internal, format!("flush task: {e}"))
+            })?;
+            stats.appended += appended as u32;
+            if let Some(e) = first_err {
+                return Err(e);
+            }
+            retry_jobs.append(&mut retry);
+        }
+
+        // 4. Sequential fallback through the full handler (conflict copies,
+        // cursor re-pins, lease surfacing — byte-identical to the old loop).
+        // Re-append hits request_id dedup; verdicts replay deterministically.
+        retry_jobs.sort_by(|a, b| a.request_id.cmp(&b.request_id));
+        for job in retry_jobs {
+            // Re-resolve the lease fresh (it may have changed while racing).
+            let lease_token = self
+                .store
+                .get_lease(&job.path)
+                .map_or(job.lease_token, |(t, _)| t);
+            self.send_outbox_entry(&job.request_id, job.op, lease_token, &job.path, stats)
+                .await?;
         }
         Ok(())
     }
@@ -657,4 +807,25 @@ fn date_of(millis: i64) -> String {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
     format!("{y:04}-{m:02}-{d:02}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn date_of_computes_civil_calendar_correctly() {
+        // Unix epoch: 1970-01-01
+        assert_eq!(date_of(0), "1970-01-01");
+        // 2000-02-29 (leap year 400-year rule)
+        assert_eq!(date_of(951_782_400_000), "2000-02-29");
+        // 2024-02-29 (regular leap year)
+        assert_eq!(date_of(1_709_164_800_000), "2024-02-29");
+        // 2024-03-01 (day after leap day)
+        assert_eq!(date_of(1_709_251_200_000), "2024-03-01");
+        // 2100-02-28 (century non-leap year: 47540 days from epoch)
+        assert_eq!(date_of(4_107_456_000_000), "2100-02-28");
+        // 2100-03-01 (day 47541 from epoch)
+        assert_eq!(date_of(4_107_542_400_000), "2100-03-01");
+    }
 }

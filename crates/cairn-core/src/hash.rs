@@ -79,13 +79,15 @@ impl fmt::Debug for Hash {
     }
 }
 
+const HEX_LOWER: &[u8; 16] = b"0123456789abcdef";
+
 /// Hex encode (lowercase).
 #[must_use]
 pub fn hex_encode(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len() * 2);
     for b in bytes {
-        s.push(char::from_digit(u32::from(b >> 4), 16).unwrap_or('0'));
-        s.push(char::from_digit(u32::from(b & 0xF), 16).unwrap_or('0'));
+        s.push(HEX_LOWER[(b >> 4) as usize] as char);
+        s.push(HEX_LOWER[(b & 0xF) as usize] as char);
     }
     s
 }

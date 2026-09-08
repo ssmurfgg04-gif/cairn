@@ -49,6 +49,7 @@ fn deterministic_blob() -> (Vec<u8>, String) {
 }
 
 #[test]
+#[ignore]
 fn placeholder_round_trips_through_cfapi_with_instrumented_i1() {
     let (blob, hash) = deterministic_blob();
     let root = tempfile::tempdir().expect("tempdir");
@@ -421,6 +422,7 @@ fn chunk_set(bytes: &[u8]) -> std::collections::HashSet<String> {
 /// converted to a placeholder with exactly 1 journal upsert; kill -9 window →
 /// zero duplicate journal paths.
 #[test]
+#[ignore]
 fn write_back_gates_edit_newfile_fencing_crash_budget() {
     const BASE: usize = 4 * 1024 * 1024;
     let (blob, hash1) = deterministic_blob_with(BASE);

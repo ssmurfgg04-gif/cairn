@@ -110,6 +110,11 @@ fn default_flags() -> Vec<(String, String)> {
         // editor decides for themselves whether frame-disjoint re-cuts
         // auto-merge (C11) or escalate (C3).
         ("semantic_merge".into(), "false".into()),
+        // Round 28: FEC parity fragments on swarm serve — OFF by default;
+        // per-device opt-in like live_presence (receiver recovery is
+        // unconditional; this gates the ~12.5% sender overhead). Applies
+        // at swarm join (attach/daemon start).
+        ("fec_parity".into(), "false".into()),
     ]
 }
 

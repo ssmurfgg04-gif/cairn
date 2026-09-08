@@ -20,6 +20,7 @@
 //! - `CfReportProviderProgress` per block so Explorer's copy dialog animates;
 //! - placeholder creation with `CF_PLACEHOLDER_CREATE_FLAG_MARK_IN_SYNC` + all four
 //!   file timestamps (zero timestamps render as 1601-01-01 in Explorer).
+//!
 //! One deviation from the skeleton's first draft, caught while porting: `ParamSize`
 //! must be `offsetof(CF_OPERATION_PARAMETERS, Anonymous) + sizeof(member)`
 //! (`CF_SIZE_OF_OP_PARAM`) — the union sits at offset 8 on x64, so the previous
@@ -34,6 +35,9 @@
 //! Safety: CfAPI is a raw C API — this module necessarily contains `unsafe`. Every
 //! unsafe block touches the documented CF ABI and is annotated with its invariant.
 #![allow(unsafe_code)]
+// CfAPI takes raw pointers derived from local borrows; using `&raw const` at every
+// call site would be noisier without any additional safety guarantee here.
+#![allow(clippy::borrow_as_ptr)]
 
 use std::ffi::c_void;
 use windows_core::PCWSTR;
@@ -276,7 +280,7 @@ pub fn create_placeholder(
         LastAccessTime: ft,
         LastWriteTime: ft,
         ChangeTime: ft,
-        FileAttributes: FILE_ATTRIBUTE_NORMAL.0 as u32,
+        FileAttributes: FILE_ATTRIBUTE_NORMAL.0,
     };
     // SAFETY: one info entry; returned-count pointer unused for a single create.
     unsafe {
@@ -815,7 +819,7 @@ fn transfer_placeholders(
             };
             info.FsMetadata.FileSize = e.size as i64;
             info.FsMetadata.BasicInfo.FileAttributes = if e.is_directory {
-                FILE_ATTRIBUTE_DIRECTORY.0 as u32
+                FILE_ATTRIBUTE_DIRECTORY.0
             } else {
                 0 // plain file attributes
             };
@@ -836,7 +840,7 @@ fn transfer_placeholders(
         PlaceholderArray: if infos.is_empty() {
             std::ptr::null_mut()
         } else {
-            infos.as_ptr() as *mut CF_PLACEHOLDER_CREATE_INFO
+            infos.as_ptr().cast_mut()
         },
         PlaceholderCount: infos.len() as u32,
         EntriesProcessed: infos.len() as u32,
@@ -917,7 +921,7 @@ fn transfer_placeholders_keys(job: &FetchPlaceholdersJob, entries: &[PopulateEnt
             };
             info.FsMetadata.FileSize = e.size as i64;
             info.FsMetadata.BasicInfo.FileAttributes = if e.is_directory {
-                FILE_ATTRIBUTE_DIRECTORY.0 as u32
+                FILE_ATTRIBUTE_DIRECTORY.0
             } else {
                 0
             };
@@ -938,7 +942,7 @@ fn transfer_placeholders_keys(job: &FetchPlaceholdersJob, entries: &[PopulateEnt
         PlaceholderArray: if infos.is_empty() {
             std::ptr::null_mut()
         } else {
-            infos.as_ptr() as *mut CF_PLACEHOLDER_CREATE_INFO
+            infos.as_ptr().cast_mut()
         },
         PlaceholderCount: infos.len() as u32,
         EntriesProcessed: infos.len() as u32,
@@ -1342,7 +1346,7 @@ pub fn create_placeholders_batch(root: &str, entries: &[BulkEntry]) -> Result<us
         // subtree materializes with the placeholders, so create the parents here.
         if !parent.is_empty() {
             std::fs::create_dir_all(&base)
-                .map_err(|e| (0, e.raw_os_error().unwrap_or(2) as i32))?;
+                .map_err(|e| (0, e.raw_os_error().unwrap_or(2)))?;
         }
         let base_w = wide(&base);
         // per-batch buffers must outlive the call
@@ -1391,7 +1395,7 @@ pub fn create_placeholders_batch(root: &str, entries: &[BulkEntry]) -> Result<us
                 LastAccessTime: ft,
                 LastWriteTime: lwt,
                 ChangeTime: cht,
-                FileAttributes: FILE_ATTRIBUTE_NORMAL.0 as u32,
+                FileAttributes: FILE_ATTRIBUTE_NORMAL.0,
             };
             infos.push(info);
         }
@@ -1406,7 +1410,7 @@ pub fn create_placeholders_batch(root: &str, entries: &[BulkEntry]) -> Result<us
             )
         };
         match res {
-            Ok(_) => created += idxs.len(),
+            Ok(()) => created += idxs.len(),
             Err(e) => {
                 // partial success: find the FIRST per-entry failure and report
                 // its index (attach is idempotent: re-running creates only
@@ -1420,7 +1424,8 @@ pub fn create_placeholders_batch(root: &str, entries: &[BulkEntry]) -> Result<us
                     if code == 0 || code == 0x0000_00B7 {
                         // 0xB7 = ERROR_ALREADY_EXISTS (win32) — idempotent re-run
                         continue;
-                    } else if first_fail.is_none() {
+                    }
+                    if first_fail.is_none() {
                         first_fail = Some(idxs[k]);
                     }
                 }

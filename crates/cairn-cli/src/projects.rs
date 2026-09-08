@@ -278,6 +278,21 @@ async fn ensure_swarm(
             // editor flipped their own flag (default false — read per join so
             // the flip takes effect on the next attach/swarm join).
             presence: presence_on,
+            // Round 28: FEC parity emission, same per-device opt-in pattern
+            // as live_presence (dashboard flag persists flag:fec_parity).
+            // Receiver recovery is unconditional; this gates the ~12.5%
+            // sender overhead. Read per join like presence.
+            fec_parity: store
+                .meta_get("flag:fec_parity")
+                .map(|v| v == "true")
+                .unwrap_or(false),
+            // Round 28: QUIC relay uplink, same per-device opt-in pattern
+            // as live_presence (dashboard flag persists flag:quic_relay).
+            // Receiver handles both transports; this gates the ~12.5%
+            // sender overhead. Read per join like presence.
+            quic_relay: store
+                .meta_get("flag:quic_relay")
+                .and_then(|v| v.parse::<std::net::SocketAddr>().ok()),
         },
         serving,
     )
@@ -614,7 +629,7 @@ fn spawn_cfapi_watchdog(
             .unwrap_or(30);
         loop {
             let jitter = std::time::Duration::from_secs(
-                interval + (rt.sweep_counter.load(Ordering::Relaxed) as u64 % 5),
+                interval + (rt.sweep_counter.load(Ordering::Relaxed) % 5),
             );
             tokio::select! {
                 _ = shutdown.changed() => return,
@@ -1130,11 +1145,11 @@ async fn run_loop(
         v
     };
     #[cfg(windows)]
-    let mut badge_pass_ok = true;
+    let mut badge_pass_ok;
     #[cfg(windows)]
     let mut badge_syncing = false;
     #[cfg(windows)]
-    let mut badge_error: Option<cairn_fs_win::badge::RootError> = None;
+    let mut badge_error;
 
     loop {
         tokio::select! {

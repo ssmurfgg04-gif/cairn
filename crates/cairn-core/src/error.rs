@@ -178,5 +178,13 @@ mod tests {
         assert_eq!(ErrorKind::StaleLease.code(), "STALE_LEASE");
         assert_eq!(ErrorKind::Conflict.code(), "CONFLICT");
         assert_eq!(ErrorKind::RefCas.code(), "REF_CAS");
+        assert_eq!(ErrorKind::ManifestFormat.code(), "CHECKSUM_MISMATCH");
+        assert_eq!(ErrorKind::LocalCasCorrupt.code(), "CHECKSUM_MISMATCH");
+        assert_eq!(ErrorKind::Compression.code(), "CHECKSUM_MISMATCH");
+        assert_eq!(ErrorKind::ChecksumMismatch.code(), "CHECKSUM_MISMATCH");
+        assert_eq!(ErrorKind::ChunkVerification.code(), "CHECKSUM_MISMATCH");
+        assert_eq!(ErrorKind::Unavailable.code(), "UNAVAILABLE");
+        assert_eq!(ErrorKind::Io.code(), "UNAVAILABLE");
+        assert_eq!(ErrorKind::InvalidPath.code(), "INVALID_PATH");
     }
 }

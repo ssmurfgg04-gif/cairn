@@ -1,67 +1,105 @@
-//! Native folder picker (round 27, "click, don't type"): the OS dialog
-//! behind the dashboard's Add-to-Workspace Browse button and the
-//! onboarding attach scene.
-//!
-//! SAFETY rationale (the module opts into `unsafe`, lib.rs's deny stays
-//! the crate policy): `SHBrowseForFolderW` is raw C FFI. The call
-//! sequence is the SAME one cairn-tray has shipped since round 19
-//! (tray.rs `pick_folder`) — the legacy folder dialog:
-//! * no COM apartment juggling, no IFileDialog generic bounds;
-//! * works with a NULL owner HWND (the daemon owns no window);
-//! * the returned PIDL is freed with `CoTaskMemFree` exactly once, on
-//!   every path (the tray's contract);
-//! * all buffers are stack arrays with fixed capacity (MAX_PATH);
-//! * every FFI result is checked; failure paths return `None`, never a
-//!   half-constructed string.
-//!
-//! The rest of the crate stays `deny(unsafe_code)`: this module is the
-//! boundary, reviewed like `cfapi`/`badge` (the WO6-9 unsafe policy).
-
 #![allow(unsafe_code)]
+// Win32 folder picker APIs take raw pointers; suppressed module-wide.
+#![allow(clippy::borrow_as_ptr)]
 
 /// What the dialog decided.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Picked {
-    /// The user chose this filesystem folder.
     Folder(String),
-    /// The user closed the dialog without choosing (not an error).
     Cancelled,
-    /// No dialog could be shown on this host (no interactive session,
-    /// non-Windows target). The UI keeps the typed path centered.
     Unsupported,
 }
 
-/// Open the native folder dialog and return the choice. Blocks until
-/// the user decides — run it on a blocking-pool thread
-/// (`tokio::task::spawn_blocking`), never the async runtime.
 #[cfg(windows)]
 pub fn pick_folder() -> Picked {
-    // SAFETY: see the module doc — the tray's shipped sequence, all
-    // results checked, PIDL freed on every path.
+    if let Some(p) = try_modern() {
+        return p;
+    }
+    try_legacy()
+}
+
+#[cfg(windows)]
+fn try_modern() -> Option<Picked> {
+    unsafe {
+        use windows::Win32::System::Com::{
+            CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
+            COINIT_APARTMENTTHREADED,
+        };
+        use windows::Win32::UI::Shell::{
+            FileOpenDialog, IFileOpenDialog, IShellItem, FOS_PICKFOLDERS, SIGDN_FILESYSPATH,
+        };
+        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let dialog: Result<IFileOpenDialog, _> =
+            CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER);
+        let dialog = match dialog {
+            Ok(d) => d,
+            Err(_) => {
+                CoUninitialize();
+                return None;
+            }
+        };
+        let opts = dialog
+            .GetOptions()
+            .unwrap_or(windows::Win32::UI::Shell::FILEOPENDIALOGOPTIONS(0));
+        let _ = dialog.SetOptions(windows::Win32::UI::Shell::FILEOPENDIALOGOPTIONS(
+            opts.0 | FOS_PICKFOLDERS.0,
+        ));
+        let _ = dialog.SetTitle(windows::core::w!("Choose a project folder"));
+        let hr = dialog.Show(None);
+        if hr.is_err() {
+            CoUninitialize();
+            return Some(Picked::Cancelled);
+        }
+        let item: Result<IShellItem, _> = dialog.GetResult();
+        let item = match item {
+            Ok(i) => i,
+            Err(_) => {
+                CoUninitialize();
+                return Some(Picked::Cancelled);
+            }
+        };
+        let pwstr = match item.GetDisplayName(SIGDN_FILESYSPATH) {
+            Ok(s) => s,
+            Err(_) => {
+                CoUninitialize();
+                return Some(Picked::Cancelled);
+            }
+        };
+        let s = pwstr.to_string().unwrap_or_default();
+        windows::Win32::System::Com::CoTaskMemFree(Some(pwstr.0 as *const _));
+        CoUninitialize();
+        if s.is_empty() {
+            Some(Picked::Cancelled)
+        } else {
+            Some(Picked::Folder(s))
+        }
+    }
+}
+
+#[cfg(windows)]
+fn try_legacy() -> Picked {
     unsafe {
         use windows::core::PCWSTR;
         use windows::Win32::System::Com::CoTaskMemFree;
         use windows::Win32::UI::Shell::{SHBrowseForFolderW, SHGetPathFromIDListW, BROWSEINFOW};
-
         let title: Vec<u16> = "Choose a project folder"
             .encode_utf16()
             .chain(std::iter::once(0))
             .collect();
         let mut display = [0u16; 260];
         let bi = BROWSEINFOW {
-            // HWND is a newtype in windows 0.58 — null wrapped, not raw
-            hwndOwner: windows::Win32::Foundation::HWND(std::ptr::null_mut()), // the daemon owns no window
+            hwndOwner: windows::Win32::Foundation::HWND(std::ptr::null_mut()),
             pidlRoot: std::ptr::null_mut(),
             pszDisplayName: windows::core::PWSTR(display.as_mut_ptr()),
             lpszTitle: PCWSTR(title.as_ptr()),
-            ulFlags: 0x0040, // BIF_RETURNONLYFSDIRS
+            ulFlags: 0x0040,
             lpfn: None,
             lParam: windows::Win32::Foundation::LPARAM(0),
             iImage: 0,
         };
         let pidl = SHBrowseForFolderW(&bi);
         if pidl.is_null() {
-            return Picked::Cancelled; // user closed the dialog
+            return Picked::Cancelled;
         }
         let mut path = [0u16; 260];
         let ok = SHGetPathFromIDListW(pidl, &mut path).as_bool();
@@ -77,8 +115,6 @@ pub fn pick_folder() -> Picked {
     }
 }
 
-/// Non-Windows host: no dialog from the daemon — the attach flows type
-/// a path or use the CLI. The UI offers the text input.
 #[cfg(not(windows))]
 pub fn pick_folder() -> Picked {
     Picked::Unsupported

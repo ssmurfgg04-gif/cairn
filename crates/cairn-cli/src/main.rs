@@ -347,6 +347,13 @@ pub enum Cmd {
         /// candidates only; relay still works). Persists.
         #[arg(long)]
         swarm_no_stun: bool,
+        /// Disable Windows Remote Differential Compression (RDC). RDC hooks
+        /// file writes to compute its own rolling deltas and fights FastCDC
+        /// for the same CPU; on media trees it slows ingest and never helps.
+        /// No-op off Windows. Needs admin; failure only warns (runbook:
+        /// docs/runbooks/tcp-tuning.md).
+        #[arg(long)]
+        disable_rdc: bool,
     },
     /// AAF/OMF handoff ledger (ADR-0020 §6): bind exports to picture lock
     Handoff {
@@ -880,7 +887,42 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
             swarm_mdns,
             swarm_stun,
             swarm_no_stun,
+            disable_rdc,
         } => {
+            if disable_rdc {
+                // Best-effort, loud on failure: RDC removal needs admin and
+                // (sometimes) a reboot; the daemon must never die over it.
+                #[cfg(windows)]
+                {
+                    match std::process::Command::new("powershell")
+                        .args([
+                            "-NoProfile",
+                            "-Command",
+                            "Disable-WindowsOptionalFeature -Online -FeatureName RDC -NoRestart",
+                        ])
+                        .output()
+                    {
+                        Ok(o) if o.status.success() => {
+                            tracing::info!(
+                                "--disable-rdc: RDC disabled (may need reboot to fully unload)"
+                            );
+                        }
+                        Ok(o) => tracing::warn!(
+                            "--disable-rdc: DISM exited {} (need admin?) — continuing. {}",
+                            o.status,
+                            String::from_utf8_lossy(&o.stderr)
+                                .chars()
+                                .take(200)
+                                .collect::<String>()
+                        ),
+                        Err(e) => {
+                            tracing::warn!("--disable-rdc: powershell failed ({e}) — continuing");
+                        }
+                    }
+                }
+                #[cfg(not(windows))]
+                tracing::warn!("--disable-rdc is Windows-only; ignoring on this host");
+            }
             // WAN NAT discovery override persists in the home store (the
             // swarm join reads it later; durable like swarm/signal)
             if swarm_no_stun {

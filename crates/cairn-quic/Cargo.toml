@@ -1,0 +1,22 @@
+[package]
+name = "cairn-quic"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Cairn QUIC transport for swarm P2P (quinn, connection migration native)"
+
+[dependencies]
+cairn-core = { path = "../cairn-core" }
+quinn = { version = "0.11", features = ["rustls"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rcgen = "0.13"
+tokio = { workspace = true }
+bytes = "1"
+thiserror = "2"
+tracing = "0.1"
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true }

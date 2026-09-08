@@ -107,6 +107,19 @@
         <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="6.25"/><path d="M6.2 6.1c.3-1 1-1.6 1.9-1.6 1.1 0 1.9.7 1.9 1.6 0 1.3-1.9 1.5-1.9 2.8"/><circle cx="8" cy="11.3" r="0.2" fill="currentColor" stroke="none"/></svg>
         <span data-i18n="nav.howto">How to use</span>
       </button>
+      <div class="rail-sep" aria-hidden="true"></div>
+      <button type="button" class="rail-item" data-view="connect" id="nav-connect" title="Connect another computer (join code)">
+        <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="5"/><path d="M5.5 8h5M8 5.5v5"/></svg>
+        <span>Connect</span>
+      </button>
+      <button type="button" class="rail-item" data-view="review" id="nav-review" title="Client review links">
+        <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M2 3h12v7H6l-2 2v-2H2z"/></svg>
+        <span>Review</span>
+      </button>
+      <button type="button" class="rail-item" data-view="merge" id="nav-merge" title="Timeline merge">
+        <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M4 3v3a3 3 0 0 0 3 3h1a3 3 0 0 1 3 3v1"/><circle cx="4" cy="3" r="1.2" fill="currentColor" stroke="none"/><circle cx="12" cy="13" r="1.2" fill="currentColor" stroke="none"/><circle cx="4" cy="10" r="1.2" fill="currentColor" stroke="none"/></svg>
+        <span>Merge</span>
+      </button>
     </nav>
 
     <div class="rail-foot">
@@ -459,6 +472,98 @@
                 <li data-i18n="howto.faq.4"><b>Nothing syncing at all</b> - the green cairn icon in the system tray (near the clock) restarts everything. Right-click it for status.</li>
               </ul>
             </div>
+          </article>
+        </div>
+      </section>
+      <!-- ============ CONNECT: join code + P2P ============ -->
+      <section class="view" id="view-connect" aria-labelledby="connect-title">
+        <h2 class="view-title" id="connect-title">Connect</h2>
+        <p class="howto-lede">Before syncing, connect your team with a join code. Generate one below, share it, done.</p>
+        <div class="settings-col">
+          <article class="card">
+            <header class="card-head"><h3 class="card-title">Your join code</h3><span class="tag" id="connect-signal">checking</span></header>
+            <div class="card-body">
+              <p class="note">Click Generate, then share the code. Teammate pastes it under Join below (or runs the login command).</p>
+              <div class="join-code-row" style="display:flex;gap:8px;align-items:center;margin:12px 0">
+                <code class="join-code mono" id="connect-code" style="flex:1;padding:12px;background:var(--subtle);border-radius:8px;font-size:1.1em">-</code>
+                <button type="button" class="btn btn-ghost btn-sm" id="connect-copy" data-copy="">Copy</button>
+                <button type="button" class="btn btn-primary btn-sm" id="connect-regenerate">Generate code</button>
+              </div>
+              <p class="note" id="connect-hint">No code yet. Hit Generate code.</p>
+              <dl class="kv" style="margin-top:12px">
+                <div class="kv-row"><dt>Signal</dt><dd class="mono" id="connect-signal-addr">-</dd></div>
+                <div class="kv-row"><dt>Swarm</dt><dd class="mono" id="connect-swarm">-</dd></div>
+              </dl>
+              <p class="note mono" style="font-size:0.85em">Teammate terminal: cairn login --server &lt;server&gt; --code &lt;code&gt; --name theirbox</p>
+            </div>
+          </article>
+          <article class="card">
+            <header class="card-head"><h3 class="card-title">Join another workspace</h3></header>
+            <div class="card-body">
+              <div style="display:flex;gap:8px">
+                <input id="connect-input" class="input" placeholder="Paste join code (enr-...)" style="flex:1" autocomplete="off" spellcheck="false">
+                <button type="button" class="btn btn-primary" id="connect-join">Join</button>
+              </div>
+              <p class="note" id="connect-join-result" style="margin-top:8px"></p>
+            </div>
+          </article>
+          <article class="card">
+            <header class="card-head"><h3 class="card-title">How it connects</h3></header>
+            <div class="card-body">
+              <p class="note">Direct P2P first (STUN punch). Relay fallback when punching fails. Same network is minutes, not 5.5h SwissTransfer.</p>
+            </div>
+          </article>
+        </div>
+      </section>
+      <!-- ============ REVIEW: publish + guest links ============ -->
+      <section class="view" id="view-review" aria-labelledby="review-title">
+        <h2 class="view-title" id="review-title">Review</h2>
+        <p class="howto-lede">Publish a cut, generate a link, share it. Client opens in browser, leaves frame notes.</p>
+        <div class="settings-col">
+          <article class="card">
+            <header class="card-head"><h3 class="card-title">Versions</h3><button type="button" class="btn btn-primary btn-sm" id="review-publish">Publish first file as v-next</button></header>
+            <div class="card-body"><div id="review-list"><div class="skel-row"></div></div></div>
+          </article>
+          <article class="card">
+            <header class="card-head"><h3 class="card-title">Generate review link</h3></header>
+            <div class="card-body" style="display:flex;gap:8px;flex-wrap:wrap;align-items:end">
+              <label style="flex:1">Note<input id="review-link-note" class="input" placeholder="Client A" style="width:100%"></label>
+              <label>Role<select id="review-link-role" class="input"><option value="commenter">commenter</option><option value="viewer">viewer</option><option value="studio">studio</option></select></label>
+              <button type="button" class="btn btn-primary" id="review-link-create">Generate link</button>
+            </div>
+            <div id="review-link-result" style="margin-top:12px"></div>
+            <p class="note" style="margin-top:8px">Example: publish clip1.braw above, hit Generate link, copy the /r/&lt;token&gt; URL, open <span class="mono">http://127.0.0.1:17778/r/&lt;token&gt;</span> after starting <span class="mono">cairn daemon --review 0.0.0.0:17778</span>. No account needed.</p>
+          </article>
+          <article class="card">
+            <header class="card-head"><h3 class="card-title">Frame notes</h3><span class="tag" id="review-notes-count">0</span></header>
+            <div class="card-body"><div id="review-notes"><div class="skel-row"></div></div></div>
+          </article>
+        </div>
+      </section>
+      <!-- ============ MERGE: three-way ============ -->
+      <section class="view" id="view-merge" aria-labelledby="merge-title">
+        <h2 class="view-title" id="merge-title">Merge</h2>
+        <p class="howto-lede">Two editors, same timeline. Pick base/ours/theirs, preview the merge.</p>
+        <div class="settings-col">
+          <article class="card">
+            <header class="card-head"><h3 class="card-title">Three-way merge</h3><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="merge-semantic"> <span class="note" style="margin:0">Semantic</span></label></header>
+            <div class="card-body">
+              <div style="display:grid;gap:10px">
+                <label>Base<input type="file" id="merge-base" class="input" accept=".otio,.xml,.fcp*"></label>
+                <label>Ours<input type="file" id="merge-ours" class="input" accept=".otio,.xml,.fcp*"></label>
+                <label>Theirs<input type="file" id="merge-theirs" class="input" accept=".otio,.xml,.fcp*"></label>
+                <button type="button" class="btn btn-primary" id="merge-run">Merge preview</button>
+              </div>
+              <pre id="merge-output" class="mono" style="background:var(--subtle);padding:12px;border-radius:8px;margin-top:12px;overflow:auto;max-height:300px;white-space:pre-wrap">No merge yet.</pre>
+            </div>
+          </article>
+          <article class="card">
+            <header class="card-head"><h3 class="card-title">Search clips</h3></header>
+            <div class="card-body" style="display:flex;gap:8px">
+              <input id="merge-search" class="input" placeholder="worried closeup" style="flex:1">
+              <button type="button" class="btn btn-primary" id="merge-search-btn">Search</button>
+            </div>
+            <div id="merge-search-out" style="margin-top:12px"></div>
           </article>
         </div>
       </section>

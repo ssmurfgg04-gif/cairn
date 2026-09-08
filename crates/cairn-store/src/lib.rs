@@ -23,4 +23,4 @@ pub use cas::Cas;
 pub use db::FileRow;
 pub use db::Store;
 pub use headers::HeaderCache;
-pub use outbox::{Outbox, OutboxEntry};
+pub use outbox::{Outbox, OutboxEntry, OutboxTrait};
