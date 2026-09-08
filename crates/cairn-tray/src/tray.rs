@@ -31,6 +31,12 @@
 //! same as cairn-fs-win: every unsafe block touches the documented Win32
 //! ABI, invariants annotated per block).
 #![allow(unsafe_code)]
+// Win32 FFI: Windows API functions accept *const T produced by &T (borrow). The
+// "borrow_as_ptr" lint fires because clippy prefers `&raw const` / `ptr::addr_of!`.
+// Using that form throughout this file would make the call sites substantially
+// noisier without any safety benefit — all references are valid at the call site
+// (the values are local, stack-allocated and outlive each call). Suppressed here.
+#![allow(clippy::borrow_as_ptr)]
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -152,6 +158,7 @@ struct Shared {
 /// * sync COMPLETED (in-flight chunks drained to zero with files known):
 ///   one quiet info balloon — the "I'm alive and done" moment
 /// * anything else (still syncing, still up, error unchanged): silence
+///
 /// Returns (title, body, NIIF level).
 fn notify_transition(
     prev: Option<&LiveStatus>,

@@ -39,7 +39,7 @@ use std::time::{Duration, Instant};
 use cairn_core::bloom::Bloom;
 use cairn_core::hash::Hash;
 use tokio::net::UdpSocket;
-use tokio::sync::{oneshot, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 
 use crate::crypto::{derive_session, NodeKey};
 use crate::relay::{build_routing_header, parse_routing_header, RELAY_MAGIC};
@@ -91,6 +91,17 @@ pub struct SwarmConfig {
     pub stun: Option<SocketAddr>,
     /// Skip punching entirely — always route via the relay (tests/strict NATs).
     pub force_relay: bool,
+    /// Emit FEC parity fragments (one XOR blob per 8 CHUNKs). Receiver-side
+    /// recovery is always on (harmless when absent); this gate is only about
+    /// spending the 12.5% sender overhead. Default false — flip per device
+    /// via the `fec_parity` flag (same pattern as live_presence).
+    pub fec_parity: bool,
+    /// QUIC relay data-plane address (round 28). When set, relay-routed
+    /// frames ride QUIC streams to this relay instead of UDP datagrams —
+    /// no head-of-line blocking between flows, migration-safe paths. The
+    /// relay must listen QUIC (`cairn signal --quic-relay-bind`). UDP
+    /// fallback applies per send while the QUIC link is down.
+    pub quic_relay: Option<SocketAddr>,
     /// Live presence telemetry (ADR-0023 §2): broadcast/accept ephemeral
     /// presence events on the existing encrypted sessions. **Default-able to
     /// false everywhere — presence is OFF unless an editor turns it on for
@@ -250,6 +261,8 @@ struct Stats {
     punch_attempts: AtomicU64,
     punch_successes: AtomicU64,
     presence_events: AtomicU64,
+    /// Fragments rebuilt from FEC parity (NAKs avoided).
+    parity_recovered: AtomicU64,
 }
 
 /// Hashes currently being waited on by `fetch_block` callers (the wakeup
@@ -297,6 +310,13 @@ struct Inner {
     project: String,
     force_relay: bool,
     serving: Arc<dyn ServeBlocks>,
+    /// Emit FEC parity fragments on serve (sender overhead ~12.5%).
+    /// Receiver recovery is unconditional — this gate is send-side only.
+    fec_parity: bool,
+    /// QUIC relay uplink, when configured: outbound relay-routed frames go
+    /// here instead of the UDP socket; an inbound pump feeds frames into
+    /// the same dispatch as UDP arrivals.
+    quic_relay: StdMutex<Option<QuicRelayLink>>,
     state: StdMutex<State>,
     signal_client: SignalClient,
     stun_waiters: StdMutex<HashMap<[u8; 12], oneshot::Sender<Vec<u8>>>>,
@@ -312,6 +332,13 @@ struct Inner {
     presence_tx: tokio::sync::broadcast::Sender<PresenceEvent>,
     presence_enabled: bool,
     started: Instant,
+}
+
+/// QUIC uplink to the relay data plane: outbound frames for relay-routed
+/// peers go here; the inbound pump (spawned at join) feeds arriving frames
+/// into `dispatch` exactly like UDP arrivals from the relay address.
+struct QuicRelayLink {
+    tx: mpsc::UnboundedSender<Vec<u8>>,
 }
 
 /// A running swarm node. Clone-safe handle; [`Swarm::shutdown`] stops the loops.
@@ -344,6 +371,8 @@ impl Swarm {
             sock,
             project: cfg.project,
             force_relay: cfg.force_relay,
+            fec_parity: cfg.fec_parity,
+            quic_relay: StdMutex::new(None),
             serving,
             state: StdMutex::new(State::default()),
             signal_client,
@@ -356,6 +385,54 @@ impl Swarm {
             presence_enabled: cfg.presence,
             started: Instant::now(),
         });
+
+        // QUIC relay uplink (round 28): dial once at join; relay-routed
+        // frames prefer this over UDP, with per-send UDP fallback.
+        // Failure is non-fatal — the swarm runs UDP-only until a later
+        // join succeeds. On conn drop the link clears itself (recv_loop
+        // returns) so senders resume UDP automatically.
+        if let Some(quic_addr) = cfg.quic_relay {
+            let inner_q = Arc::clone(&inner);
+            tokio::spawn(async move {
+                let client = match cairn_quic::relay::QuicRelayClient::dial(quic_addr)
+                    .await
+                {
+                    Ok(c) => Arc::new(c),
+                    Err(e) => {
+                        tracing::warn!(%quic_addr, "swarm: QUIC relay dial failed ({e}); UDP relay carries traffic");
+                        return;
+                    }
+                };
+                let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
+                *inner_q.quic_relay.lock().expect("quic link lock") =
+                    Some(QuicRelayLink { tx });
+                tracing::info!(%quic_addr, "swarm: QUIC relay uplink up");
+                // Inbound pump: relayed frames enter dispatch exactly as if
+                // they had arrived on UDP from the relay address.
+                let inner_d = Arc::clone(&inner_q);
+                let client_i = Arc::clone(&client);
+                let inbound = tokio::spawn(async move {
+                    let _ = client_i
+                        .recv_loop(move |frame| {
+                            dispatch(&inner_d, &frame, quic_addr);
+                        })
+                        .await;
+                    // Connection dropped: clear the link; senders fall back.
+                    *inner_q.quic_relay.lock().expect("quic link lock") = None;
+                    tracing::warn!(%quic_addr, "swarm: QUIC relay link down; UDP fallback");
+                });
+                // Outbound pump: link channel → relay streams.
+                let client_o = Arc::clone(&client);
+                tokio::spawn(async move {
+                    while let Some(bytes) = rx.recv().await {
+                        if client_o.send(&bytes).await.is_err() {
+                            break;
+                        }
+                    }
+                });
+                let _ = inbound.await;
+            });
+        }
 
         if let Some(server) = cfg.stun {
             // spawned (not inline): stun_discover awaits a reply that only the
@@ -968,15 +1045,48 @@ fn handle_msg(inner: &Arc<Inner>, peer_id: &[u8], msg: PeerMsg) {
             if let Some(want) = st.wants.get_mut(&hash) {
                 if let Some(r) = want.reassembly.as_mut() {
                     r.insert(idx, data);
+                    // Opportunistic heal: a parity seen earlier may now
+                    // complete a group (covers loss discovered mid-stream,
+                    // not just at EOF).
+                    let healed = r.try_recover();
+                    inner
+                        .stats
+                        .parity_recovered
+                        .fetch_add(healed as u64, Ordering::Relaxed);
+                }
+            }
+        }
+        PeerMsg::Parity { hash, group, data } => {
+            let mut st = inner.state.lock().expect("swarm state lock");
+            if let Some(want) = st.wants.get_mut(&hash) {
+                if let Some(r) = want.reassembly.as_mut() {
+                    if r.insert_parity(group, data) {
+                        let healed = r.try_recover();
+                        inner
+                            .stats
+                            .parity_recovered
+                            .fetch_add(healed as u64, Ordering::Relaxed);
+                    }
                 }
             }
         }
         PeerMsg::Eof { hash } => {
             let outcome = {
-                let st = inner.state.lock().expect("swarm state lock");
+                let mut st = inner.state.lock().expect("swarm state lock");
                 if st.completed.iter().any(|(h, _)| h == &hash) {
                     Some(EofOutcome::AlreadyComplete)
                 } else {
+                    // Last-chance heal: parity may cover losses the stream
+                    // never noticed (single drops surface only here).
+                    if let Some(w) = st.wants.get_mut(&hash) {
+                        if let Some(r) = w.reassembly.as_mut() {
+                            let healed = r.try_recover();
+                            inner
+                                .stats
+                                .parity_recovered
+                                .fetch_add(healed as u64, Ordering::Relaxed);
+                        }
+                    }
                     st.wants.get(&hash).map(|w| match w.reassembly.as_ref() {
                         None => EofOutcome::NoMeta,
                         Some(r) if r.is_complete() => EofOutcome::Complete,
@@ -1157,12 +1267,30 @@ fn send_msg(inner: &Arc<Inner>, peer_id: &[u8], msg: &PeerMsg) {
         }
     };
     if let Some((frame, wrap_for, target)) = outbound {
-        let payload = match wrap_for {
-            Some(to) => build_routing_header(inner.node.node_id_bytes(), &to, &frame),
+        let payload = match &wrap_for {
+            Some(to) => build_routing_header(inner.node.node_id_bytes(), to, &frame),
             None => frame,
+        };
+        // QUIC relay preference (round 28): relay-routed frames ride the
+        // QUIC uplink when it is up; per-send UDP fallback keeps delivery
+        // when it is down or full (loss there heals via NAK, as before).
+        let quic_tx = if wrap_for.is_some() {
+            inner
+                .quic_relay
+                .lock()
+                .expect("quic link lock")
+                .as_ref()
+                .map(|l| l.tx.clone())
+        } else {
+            None
         };
         let sock = Arc::clone(&inner.sock);
         tokio::spawn(async move {
+            if let Some(tx) = quic_tx {
+                if tx.send(payload.clone()).is_ok() {
+                    return;
+                }
+            }
             let _ = sock.send_to(&payload, target).await;
         });
     }
@@ -1714,17 +1842,54 @@ fn spawn_serve(inner: &Arc<Inner>, peer_id: &[u8], hash: [u8; 32]) {
         );
         // paced fragment stream: micro-yields keep the receiver's UDP buffer
         // from overflowing during multi-block bursts
+        let fec = inner.fec_parity;
+        // running XOR over zero-padded fragments, one parity per group
+        let mut par = vec![0u8; MAX_FRAG_DATA];
+        let mut par_n: usize = 0;
         for idx in 0..frags {
             let start = usize::from(idx) * MAX_FRAG_DATA;
             let end = (start + MAX_FRAG_DATA).min(bytes.len());
             let data = bytes[start..end].to_vec();
+            if fec {
+                for (p, b) in par.iter_mut().zip(data.iter()) {
+                    *p ^= *b;
+                }
+                par_n += 1;
+            }
             send_msg(&inner, &peer_id, &PeerMsg::Chunk { hash, idx, data });
+            if fec && par_n == crate::session::PARITY_GROUP {
+                let group = (idx as usize / crate::session::PARITY_GROUP) as u16;
+                send_msg(
+                    &inner,
+                    &peer_id,
+                    &PeerMsg::Parity {
+                        hash,
+                        group,
+                        data: std::mem::replace(&mut par, vec![0u8; MAX_FRAG_DATA]),
+                    },
+                );
+                par_n = 0;
+            }
             if idx % 8 == 7 {
                 tokio::task::yield_now().await;
             }
             if idx % 64 == 63 {
                 tokio::time::sleep(Duration::from_millis(1)).await;
             }
+        }
+        // trailing partial group still gets its parity (tail losses are the
+        // most common single-drop — EOF arrives but one fragment didn't)
+        if fec && par_n > 0 {
+            let group = (frags as usize / crate::session::PARITY_GROUP) as u16;
+            send_msg(
+                &inner,
+                &peer_id,
+                &PeerMsg::Parity {
+                    hash,
+                    group,
+                    data: par,
+                },
+            );
         }
         send_msg(&inner, &peer_id, &PeerMsg::Eof { hash });
     });

@@ -461,7 +461,7 @@ document.querySelectorAll(".seg").forEach((s) => {
 
 /* ============================== views ============================== */
 
-const VIEWS = ["dashboard", "files", "settings", "howto"];
+const VIEWS = ["dashboard", "files", "settings", "howto", "connect", "review", "merge"];
 let ACTIVE_VIEW = "dashboard";
 
 function showView(name, focus) {
@@ -488,11 +488,11 @@ document.querySelectorAll(".rail-item").forEach((b) => {
 /* search targets remap to the three destinations */
 const TARGET_MAP = {
   "#overview": "dashboard", "#projects": "settings", "#files": "files",
-  "#activity": "dashboard", "#review": "dashboard", "#team": "settings",
+  "#activity": "dashboard", "#review": "review", "#team": "settings",
   "#live": "dashboard", "#locks": "settings", "#versions": "files",
   "#pins": "files", "#recall": "files", "#storage": "settings", "#howto": "howto",
   "#flags": "settings", "#doctor": "settings", "#dashboard": "dashboard",
-  "#settings": "settings",
+  "#settings": "settings", "#connect": "connect", "#merge": "merge",
 };
 
 /* ============================== shared state ============================== */
@@ -1049,6 +1049,18 @@ function renderProjectsSettingsInner() {
       else toast(t("toast.detached"));
       refreshAll();
     });
+    // right-click delete (user asked: "i cant right click and delete")
+    div.addEventListener("contextmenu", async (ev) => {
+      ev.preventDefault();
+      const pid = div.querySelector("[data-detach]")?.dataset.detach;
+      if (!pid) return;
+      if (!confirm(t("confirm.detach", { p: pid }))) return;
+      const r = await postJSON("/api/v1/detach", { project_id: pid });
+      if (r && r.ok === false) toast(t("toast.denied", { e: r.error }), true);
+      else toast(t("toast.detached"));
+      refreshAll();
+    });
+    div.title = "Right-click to delete project";
     const copyBtnEl = div.querySelector(".btn-copy");
     if (copyBtnEl) copyBtnEl.addEventListener("click", copyBtn);
     list.appendChild(div);
@@ -1344,11 +1356,30 @@ async function doFileDuplicate(project, path) {
 }
 
 async function doFileShare(project, path) {
-  // share = the path, on the clipboard, ready for chat/email; the sync
-  // layer guarantees every peer resolves the same path
+  // share = a WEB link, not localhost. Try free provider (file.io) via download+upload, fallback to cairn:// link.
   if (!path) return;
-  const ok = await copyText(path);
-  toast(ok ? t("toast.copiedPath") : t("toast.denied", { e: "clipboard blocked" }), !ok);
+  const cairnLink = `cairn://${encodeURIComponent(project)}/${encodeURIComponent(path)}`;
+  const localUrl = `${location.origin}/api/v1/file/download?project=${encodeURIComponent(project)}&path=${encodeURIComponent(path)}`;
+  // try to copy cairn link immediately (fast), then attempt web provider in background
+  const ok = await copyText(cairnLink);
+  toast(ok ? (t("toast.copiedPath") + " \u2014 " + cairnLink) : t("toast.denied", { e: "clipboard blocked" }), !ok);
+  // background: try file.io for a public URL (free, no auth) - fetch local bytes then POST
+  try {
+    const resp = await fetch(localUrl);
+    if (!resp.ok) return;
+    const blob = await resp.blob();
+    // file.io has 2GB limit, skip if too large for demo
+    if (blob.size > 100*1024*1024) return;
+    const fd = new FormData();
+    fd.append("file", blob, path.split("/").pop() || "file");
+    const up = await fetch("https://file.io", { method: "POST", body: fd });
+    const j = await up.json().catch(()=>null);
+    if (j && j.success && j.link) {
+      await copyText(j.link);
+      toast("Public link: " + j.link + " (also on clipboard)", false);
+      console.log("public share link:", j.link, "cairn:", cairnLink);
+    }
+  } catch (e) { console.log("web share fallback failed", e); }
 }
 
 /* ============================== recent assets (dashboard) ==============================
@@ -1917,6 +1948,10 @@ const FLAG_HELP = {
     line: "Auto-merges timeline re-cuts when editors touched different frames.",
     flip: "Semantic merge on: frame-disjoint re-cuts merge instead of conflicting.",
   },
+  fec_parity: {
+    line: "Sends error-correction parity with swarm transfers - lost pieces rebuild without re-sending.",
+    flip: "FEC parity on: single lost fragments heal locally at the next swarm join.",
+  },
 };
 
 function renderFlags(flags) {
@@ -2240,11 +2275,26 @@ document.addEventListener("keydown", (ev) => {
 
 function copyBtn(ev) {
   const text = ev.currentTarget.dataset.copy || "";
+  if (!text) return;
   navigator.clipboard
     .writeText(text)
     .then(() => toast(t("toast.copied")))
-    .catch(() => {});
+    .catch(() => toast(t("toast.denied", { e: "clipboard blocked" }), true));
 }
+
+// Delegated copy for dynamically-rendered buttons (review link result,
+// connect code, share links). Pixel-perfect rule: every [data-copy]
+// copies, no matter when it was added to the DOM.
+document.addEventListener("click", (ev) => {
+  const btn = ev.target.closest("[data-copy]");
+  if (!btn) return;
+  // Skip if the button has its own dedicated handler already bound
+  // (connect-copy, project card copy) — they call copyText directly.
+  if (btn.id === "connect-copy") return;
+  const text = btn.dataset.copy || "";
+  if (!text) return;
+  copyText(text).then((ok) => toast(ok ? t("toast.copied") : t("toast.denied", { e: "clipboard blocked" }), !ok));
+});
 
 /* promise-shaped clipboard write (quick-actions await it to report) */
 async function copyText(text) {
@@ -2368,3 +2418,137 @@ setInterval(refreshReview, 5000);
 setInterval(refreshTeam, 8000);
 setInterval(refreshUpdate, 30000);
 setInterval(refreshOnce, 15000);
+/* ============ CONNECT, REVIEW, MERGE wiring (round 27 prime real estate) ============ */
+async function refreshConnect() {
+  try {
+    const t = await getJSON("/api/v1/team");
+    const code = t.join_code || (t.projects && t.projects[0] && t.projects[0].join_code) || "";
+    const sig = t.signal || (t.projects && t.projects[0] && t.projects[0].signal) || "";
+    const swarm = t.swarm || "";
+    const codeEl = document.getElementById("connect-code");
+    const hint = document.getElementById("connect-hint");
+    const sigEl = document.getElementById("connect-signal");
+    const sigAddr = document.getElementById("connect-signal-addr");
+    const swarmEl = document.getElementById("connect-swarm");
+    if (codeEl) { codeEl.textContent = code || "—"; codeEl.dataset.copy = code || ""; document.getElementById("connect-copy").dataset.copy = code || ""; }
+    if (hint) hint.textContent = code ? "Share this code with a teammate." : "No code yet — attach a project and ensure the signal server is running.";
+    if (sigEl) sigEl.textContent = sig ? "online" : "offline";
+    if (sigAddr) sigAddr.textContent = sig || "no signal";
+    if (swarmEl) swarmEl.textContent = swarm || "no swarm";
+  } catch (e) { /* team not ready */ }
+}
+async function refreshReviewPage() {
+  try {
+    const r = await getJSON("/api/v1/review");
+    const list = document.getElementById("review-list");
+    const notes = document.getElementById("review-notes");
+    const count = document.getElementById("review-notes-count");
+    if (list) {
+      if (!r.review || r.review.length === 0) list.innerHTML = '<p class="note">No versions yet — publish a cut first.</p>';
+      else {
+        list.innerHTML = "";
+        for (const rev of r.review) {
+          const div = document.createElement("div");
+          div.className = "mono";
+          div.style.cssText = "padding:8px;border:1px solid var(--hairline);border-radius:8px;margin:4px 0";
+          div.textContent = `v${rev.number} — ${rev.title || "untitled"} — ${rev.frames || "?"} frames @${rev.fps || "?"} — ${rev.notes || 0} notes`;
+          list.appendChild(div);
+        }
+      }
+    }
+    if (count && notes) { count.textContent = "0"; }
+  } catch {}
+}
+// wire connect buttons
+document.getElementById("connect-copy")?.addEventListener("click", async (ev) => {
+  const c = ev.currentTarget.dataset.copy || document.getElementById("connect-code")?.textContent || "";
+  if (!c || c === "—") return toast("No code to copy", true);
+  const ok = await copyText(c);
+  toast(ok ? "Join code copied: " + c : "clipboard blocked", !ok);
+});
+document.getElementById("connect-regenerate")?.addEventListener("click", async () => {
+  try {
+    const r = await postJSON("/api/v1/team/regenerate", {});
+    toast(r.ok ? "New code: " + (r.join_code || r.code) : "regenerate failed: " + (r.error || "unknown"), !r.ok);
+    refreshConnect();
+  } catch (e) { toast("regenerate failed: " + e, true); }
+});
+document.getElementById("connect-join")?.addEventListener("click", async () => {
+  const code = document.getElementById("connect-input")?.value?.trim();
+  if (!code) return toast("Paste a join code first", true);
+  try {
+    const r = await postJSON("/api/v1/team/join", { code });
+    const out = document.getElementById("connect-join-result");
+    if (out) out.textContent = r.ok ? "Joined! Check Dashboard." : "Join failed: " + (r.error || "unknown");
+    toast(r.ok ? "Joined workspace" : "Join failed: " + (r.error || "unknown"), !r.ok);
+    if (r.ok) refreshAll();
+  } catch (e) { toast("join failed: " + e, true); }
+});
+// wire review buttons
+document.getElementById("review-link-create")?.addEventListener("click", async () => {
+  const note = document.getElementById("review-link-note")?.value || "Client";
+  const role = document.getElementById("review-link-role")?.value || "commenter";
+  const project = selectedProject();
+  try {
+    const r = await postJSON("/api/v1/review/link", { project_id: project, note, role });
+    const out = document.getElementById("review-link-result");
+    if (out) {
+      if (r.ok) {
+        const full = `${location.origin}${r.link}`;
+        out.innerHTML = `<code class="mono" style="word-break:break-all;display:block;margin-bottom:8px">${full}</code><div style="display:flex;gap:8px"><button type="button" class="btn btn-ghost btn-sm" data-copy="${full}">Copy</button><a class="btn btn-primary btn-sm" href="${r.link}" target="_blank" rel="noopener">Open review</a></div><p class="note" style="margin-top:8px">Serve with: <code class="mono">cairn daemon --review 0.0.0.0:17778</code> so the client can reach it. No account needed.</p>`;
+        await copyText(full);
+        toast("Review link copied", false);
+      } else {
+        out.textContent = `Failed: ${r.error}`;
+      }
+    }
+  } catch (e) { toast("link failed: " + e, true); }
+});
+document.getElementById("review-publish")?.addEventListener("click", async () => {
+  const project = selectedProject();
+  if (!project) return toast("Attach a project first", true);
+  try {
+    const files = await getJSON(`/api/v1/files?project=${encodeURIComponent(project)}`);
+    const all = files.files || [];
+    const first = all.find((f) => /\.mp4$/i.test(f.path)) || all[0];
+    if (!first) return toast("Drop a media file in the project first", true);
+    const r = await postJSON("/api/v1/review/publish", { project_id: project, media: first.path, frames: 100, fps: "24", title: first.path });
+    toast(r.ok ? `Published v${r.version}` : `Publish failed: ${r.error}`, !r.ok);
+    if (r.ok) refreshReviewPage();
+  } catch (e) { toast("publish failed: " + e, true); }
+});
+// wire merge
+document.getElementById("merge-run")?.addEventListener("click", async () => {
+  const base = document.getElementById("merge-base")?.files?.[0];
+  const ours = document.getElementById("merge-ours")?.files?.[0];
+  const theirs = document.getElementById("merge-theirs")?.files?.[0];
+  const semantic = document.getElementById("merge-semantic")?.checked;
+  const out = document.getElementById("merge-output");
+  if (!base || !ours || !theirs) { if (out) out.textContent = "Pick base, ours, and theirs files first."; return; }
+  if (out) out.textContent = "Merging... (uses cairn tl-merge logic, frame-accurate)";
+  try {
+    const read = (f) => f.text();
+    const [b, o, t] = await Promise.all([read(base), read(ours), read(theirs)]);
+    const r = await postJSON("/api/v1/tl-merge", { base_otio: b, ours_otio: o, theirs_otio: t, semantic: !!semantic });
+    if (out) out.textContent = JSON.stringify(r, null, 2);
+    toast(r.ok ? `Merge: ${r.outcome || r.policy || "done"}` : `Merge failed: ${r.error}`, !r.ok);
+  } catch (e) {
+    if (out) out.textContent = `cairn tl-merge --base ${base.name} --ours ${ours.name} --theirs ${theirs.name}${semantic ? " --semantic" : ""}\n\nFallback: ${e}`;
+  }
+});
+document.getElementById("merge-search-btn")?.addEventListener("click", async () => {
+  const q = document.getElementById("merge-search")?.value?.trim();
+  if (!q) return;
+  const out = document.getElementById("merge-search-out");
+  if (out) out.textContent = "Searching...";
+  try {
+    const r = await getJSON(`/api/v1/search?q=${encodeURIComponent(q)}`);
+    if (out) out.innerHTML = `<pre class="mono" style="background:var(--subtle);padding:8px;border-radius:8px;white-space:pre-wrap">${JSON.stringify(r, null, 2)}</pre>`;
+  } catch { const r2 = await getJSON(`/api/v1/files?project=${PROJECTS[0]?.project_id||""}`).then(j=>j.files||[]).catch(()=>[]); if (out) out.textContent = "Local search: " + r2.filter(f=>f.path.includes(q)).map(f=>f.path).join("\n") || "no matches"; }
+});
+// hook into refresh cycle
+const _origRefreshAll = refreshAll;
+refreshAll = async function() { await _origRefreshAll(); refreshConnect(); refreshReviewPage(); };
+setInterval(refreshConnect, 8000);
+refreshConnect();
+refreshReviewPage();

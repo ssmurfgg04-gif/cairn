@@ -9,6 +9,47 @@ use cairn_core::CairnError;
 use rusqlite::Connection;
 use std::sync::{Arc, Mutex};
 
+/// Trait for outbox operations - enables mocking and parallel worker abstraction
+pub trait OutboxTrait: Send + Sync {
+    fn enqueue(&self, entry: OutboxEntry) -> Result<(), CairnError>;
+    fn pending(&self, project_id: &str, limit: usize) -> Vec<OutboxEntry>;
+    fn mark_attempt(&self, request_id: &str, new_state: &str) -> Result<(), CairnError>;
+    fn ack(&self, request_id: &str) -> Result<(), CairnError>;
+    fn pending_count(&self, project_id: &str) -> u64;
+    fn pending_count_all(&self) -> u64;
+}
+
+impl OutboxTrait for Outbox {
+    fn enqueue(&self, entry: OutboxEntry) -> Result<(), CairnError> {
+        Outbox::enqueue(self, entry)
+    }
+
+    fn pending(&self, project_id: &str, limit: usize) -> Vec<OutboxEntry> {
+        Outbox::pending(self, project_id, limit)
+    }
+
+    fn mark_attempt(&self, request_id: &str, new_state: &str) -> Result<(), CairnError> {
+        Outbox::mark_attempt(self, request_id, new_state)
+    }
+
+    fn ack(&self, request_id: &str) -> Result<(), CairnError> {
+        Outbox::ack(self, request_id)
+    }
+
+    fn pending_count(&self, project_id: &str) -> u64 {
+        Outbox::pending_count(self, project_id)
+    }
+
+    fn pending_count_all(&self) -> u64 {
+        Outbox::pending_count_all(self)
+    }
+}
+
+/// Canonical outbox entry state: waiting to be uploaded.
+pub const OUTBOX_STATE_PENDING: &str = "pending";
+/// Canonical outbox entry state: sent to server, waiting for ack.
+pub const OUTBOX_STATE_SENT: &str = "sent";
+
 /// One pending journal append.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutboxEntry {
@@ -18,12 +59,26 @@ pub struct OutboxEntry {
     pub project_id: String,
     /// Serialized JournalOp (prost bytes).
     pub op: Vec<u8>,
-    /// 'pending' | 'sent' (sent until server ack)
+    /// `OUTBOX_STATE_PENDING` | `OUTBOX_STATE_SENT`
     pub state: String,
     /// Send attempts so far.
     pub attempts: u32,
     /// Creation timestamp (client, informational per I4).
     pub created_at: i64,
+}
+
+impl OutboxEntry {
+    /// Whether this entry is in the pending state.
+    #[must_use]
+    pub fn is_pending(&self) -> bool {
+        self.state == OUTBOX_STATE_PENDING
+    }
+
+    /// Whether this entry has been sent and is awaiting ack.
+    #[must_use]
+    pub fn is_sent(&self) -> bool {
+        self.state == OUTBOX_STATE_SENT
+    }
 }
 
 /// Outbox API over the client store's connection.

@@ -198,6 +198,16 @@ mod tests {
             eprintln!("skipping: no ffmpeg");
             return;
         }
+        let ffprobe_ok = Command::new("ffprobe")
+            .arg("-version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+        if !ffprobe_ok {
+            eprintln!("skipping: no ffprobe");
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         // odd-odd source: the worst case for even-dimension scaling
         let src = dir.path().join("odd.mov");

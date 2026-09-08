@@ -137,6 +137,8 @@ fn cfg(signal: SocketAddr, node: &str, presence: bool) -> SwarmConfig {
         stun: None,
         force_relay: false,
         presence,
+        fec_parity: false,
+        quic_relay: None,
     }
 }
 

@@ -27,7 +27,7 @@ fn main() {
     let mut head = Vec::with_capacity(HEAD);
     {
         use std::io::Read as _;
-        let mut chunk = [0u8; 65536];
+        let mut chunk = vec![0u8; 65536];
         loop {
             if head.len() >= HEAD {
                 break;

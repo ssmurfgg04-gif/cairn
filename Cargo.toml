@@ -18,6 +18,8 @@ members = [
     "crates/cairn-shell-ext",
     "crates/cairn-review",
     "crates/cairn-proxy",
+    "crates/cairn-quic",
+    "crates/cairn-fec",
 ]
 exclude = ["crates/cairn-x/fuzz", "crates/cairn-app"]
 

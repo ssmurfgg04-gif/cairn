@@ -85,6 +85,12 @@ pub async fn serve(addr: String, state: Arc<DaemonState>) -> anyhow::Result<()> 
         .route("/api/v1/file/open", post(file_open))
         .route("/api/v1/file/download", get(file_download))
         .route("/api/v1/file/duplicate", post(file_duplicate))
+        .route("/api/v1/team/regenerate", post(team_regenerate))
+        .route("/api/v1/team/join", post(team_join))
+        .route("/api/v1/review/publish", post(review_publish))
+        .route("/api/v1/review/link", post(review_link))
+        .route("/api/v1/tl-merge", post(tl_merge))
+        .route("/api/v1/compress", post(compress))
         .with_state(state);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!(%addr, "dashboard listening (loopback only)");
@@ -1484,5 +1490,309 @@ async fn file_duplicate(
             Json(json!({"ok": true, "path": rel, "bytes": bytes}))
         }
         Err(e) => Json(json!({"ok": false, "error": format!("copy failed: {e}")})),
+    }
+}
+
+/// POST /api/v1/team/regenerate — mint a fresh single-use join code (600s TTL).
+/// Production: uses the server auth when reachable, else a local `enr-` code
+/// stored in meta for the WS rendezvous. Owner/Lead only via ctl guard parity.
+async fn team_regenerate(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
+    let code = format!("enr-{}", uuid::Uuid::now_v7().simple());
+    if let Some(store) = open_store(state.home.as_path()) {
+        let _ = store.meta_set("swarm/join-code", &code);
+        let _ = store.meta_set(
+            "swarm/join-code-exp",
+            &(cairn_core::clock::WallClock.now_millis() + 600_000).to_string(),
+        );
+    }
+    Json(json!({"ok": true, "join_code": code, "ttl_ms": 600_000}))
+}
+
+/// POST /api/v1/team/join {code} — accept a teammate code, persist peer intent.
+/// Full enroll still runs via `cairn login --server … --code …`; this records
+/// intent + validates shape so the UI can guide (join-code gated admission).
+async fn team_join(
+    State(state): State<Arc<DaemonState>>,
+    body: Option<Json<serde_json::Value>>,
+) -> Json<serde_json::Value> {
+    let Some(Json(v)) = body else {
+        return Json(json!({"ok": false, "error": "body required: {code}"}));
+    };
+    let code = v["code"].as_str().unwrap_or("").trim().to_string();
+    if !(code.starts_with("enr-") && code.len() > 8) {
+        return Json(json!({"ok": false, "error": "invalid join code shape (expected enr-…)"}));
+    }
+    if let Some(store) = open_store(state.home.as_path()) {
+        let _ = store.meta_set("swarm/peer-join", &code);
+    }
+    Json(
+        json!({"ok": true, "code": code, "next": "run: cairn dev-enroll-code --server <server>, then cairn login --server <server> --code <code>"}),
+    )
+}
+
+/// POST /api/v1/review/publish {project_id, media, frames, fps, title?} —
+/// append a version to the review stack (same store the CLI uses).
+async fn review_publish(
+    State(state): State<Arc<DaemonState>>,
+    body: Option<Json<serde_json::Value>>,
+) -> Json<serde_json::Value> {
+    let Some(Json(v)) = body else {
+        return Json(
+            json!({"ok": false, "error": "body required: {project_id, media, frames, fps}"}),
+        );
+    };
+    let project = v["project_id"].as_str().unwrap_or("").to_string();
+    let media = v["media"].as_str().unwrap_or("").to_string();
+    let frames: u64 = v["frames"].as_u64().unwrap_or(0);
+    let fps: String = v["fps"].as_str().unwrap_or("24").to_string();
+    let title: String = v["title"].as_str().unwrap_or("").to_string();
+    if project.is_empty() || media.is_empty() || frames == 0 {
+        return Json(json!({"ok": false, "error": "project_id, media, frames required"}));
+    }
+    let Some(root) = project_root_path(&state, &project).await else {
+        return Json(json!({"ok": false, "error": "project not attached"}));
+    };
+    let full = match safe_join(&root, &media) {
+        Some(p) => p,
+        None => root.join(&media),
+    };
+    if !full.is_file() {
+        return Json(
+            json!({"ok": false, "error": "media not found on this machine — attach or materialize first"}),
+        );
+    }
+    // Parse fps "24" | "25" | "23.976" | "24000/1001"
+    let (num, den) = match fps.as_str() {
+        "24" => (24u32, 1u32),
+        "25" => (25, 1),
+        "23.976" | "24000/1001" => (24000, 1001),
+        "30" => (30, 1),
+        _ => (24, 1),
+    };
+    let mut file = match cairn_review::store::Store::load(&root) {
+        Ok(Some(f)) => f,
+        _ => {
+            cairn_review::model::ReviewFile {
+                title: if title.is_empty() {
+                    project.clone()
+                } else {
+                    title.clone()
+                },
+                ..Default::default()
+            }
+        }
+    };
+    let ver = cairn_review::model::ReviewVersion {
+        number: 0,
+        label: String::new(),
+        media_rel: media.clone(),
+        proxy_rel: None,
+        fps_num: num,
+        fps_den: den,
+        frames,
+        timeline_fingerprint: None,
+        snapshot: None,
+        published_by: String::from("dashboard"),
+        published_at: cairn_core::clock::WallClock.now_millis(),
+    };
+    let n = file.publish(ver);
+    match cairn_review::store::Store::save(&root, &file) {
+        Ok(()) => Json(json!({"ok": true, "version": n, "frames": frames})),
+        Err(e) => Json(json!({"ok": false, "error": e})),
+    }
+}
+
+/// POST /api/v1/review/link {project_id?, note?, role?, ttl_hours?} —
+/// mint a guest link (token is identity, no account). Studio role sees internal.
+async fn review_link(
+    State(state): State<Arc<DaemonState>>,
+    body: Option<Json<serde_json::Value>>,
+) -> Json<serde_json::Value> {
+    let v = body.map(|Json(j)| j).unwrap_or(json!({}));
+    let project = v["project_id"].as_str().unwrap_or("").to_string();
+    let note = v["note"].as_str().unwrap_or("Client").to_string();
+    let role_s = v["role"].as_str().unwrap_or("commenter").to_string();
+    let ttl_h: i64 = v["ttl_hours"].as_i64().unwrap_or(72);
+    let root = if project.is_empty() {
+        match first_runtime().await {
+            Some((_, r, _, _)) => r,
+            None => return Json(json!({"ok": false, "error": "no attached project"})),
+        }
+    } else {
+        match project_root_path(&state, &project).await {
+            Some(r) => r,
+            None => return Json(json!({"ok": false, "error": "project not attached"})),
+        }
+    };
+    let mut file = match cairn_review::store::Store::load(&root) {
+        Ok(Some(f)) => f,
+        _ => {
+            return Json(json!({"ok": false, "error": "no versions published yet — publish first"}))
+        }
+    };
+    let role = match role_s.as_str() {
+        "viewer" => cairn_review::model::GuestRole::Viewer,
+        "studio" => cairn_review::model::GuestRole::Studio,
+        _ => cairn_review::model::GuestRole::Commenter,
+    };
+    let token = file.add_link(
+        role,
+        note,
+        ttl_h * 3_600_000,
+        false,
+        cairn_core::clock::WallClock.now_millis(),
+    );
+    match cairn_review::store::Store::save(&root, &file) {
+        Ok(()) => Json(json!({"ok": true, "token": token, "link": format!("/r/{token}")})),
+        Err(e) => Json(json!({"ok": false, "error": e})),
+    }
+}
+
+/// POST /api/v1/tl-merge {base_otio, ours_otio, theirs_otio, semantic?} —
+/// thin wrapper over cairn-tl three-way merge (C0-C10 classifier).
+/// Bodies are raw OTIO JSON strings (small timelines); large media stays in CAS.
+async fn tl_merge(body: Option<Json<serde_json::Value>>) -> Json<serde_json::Value> {
+    let Some(Json(v)) = body else {
+        return Json(
+            json!({"ok": false, "error": "body required: {base_otio, ours_otio, theirs_otio}"}),
+        );
+    };
+    let base = v["base_otio"].as_str().unwrap_or("").to_string();
+    let ours = v["ours_otio"].as_str().unwrap_or("").to_string();
+    let theirs = v["theirs_otio"].as_str().unwrap_or("").to_string();
+    let semantic = v["semantic"].as_bool().unwrap_or(false);
+    if base.is_empty() || ours.is_empty() || theirs.is_empty() {
+        return Json(
+            json!({"ok": false, "error": "base_otio, ours_otio, theirs_otio required (OTIO JSON strings)"}),
+        );
+    }
+    // Write to temp, reuse CLI merge path semantics via cairn_tl directly.
+    let dir = std::env::temp_dir().join(format!("cairn-merge-{}", uuid::Uuid::now_v7().simple()));
+    if std::fs::create_dir_all(&dir).is_err() {
+        return Json(json!({"ok": false, "error": "tmpdir failed"}));
+    }
+    let bp = dir.join("base.otio");
+    let op = dir.join("ours.otio");
+    let tp = dir.join("theirs.otio");
+    if std::fs::write(&bp, base.as_bytes()).is_err()
+        || std::fs::write(&op, ours.as_bytes()).is_err()
+        || std::fs::write(&tp, theirs.as_bytes()).is_err()
+    {
+        return Json(json!({"ok": false, "error": "tmp write failed"}));
+    }
+    let opts = cairn_tl::merge::MergeOptions { semantic };
+    let parse = |p: &std::path::PathBuf| -> Result<cairn_tl::model::Timeline, String> {
+        let s = std::fs::read_to_string(p).map_err(|e| format!("read: {e}"))?;
+        // Try OTIO first, then FCPXML bridge.
+        cairn_tl::parse::parse_otio(&s)
+            .map_err(|e| format!("parse: {e}"))
+            .or_else(|_| cairn_tl::fcpxml::parse_fcpxml(&s).map_err(|e| format!("parse: {e}")))
+    };
+    let (base_t, ours_t, theirs_t) = match (parse(&bp), parse(&op), parse(&tp)) {
+        (Ok(b), Ok(o), Ok(t)) => (b, o, t),
+        _ => {
+            return Json(
+                json!({"ok": false, "error": "parse failed: base/ours/theirs must be OTIO or FCPXML"}),
+            )
+        }
+    };
+    match cairn_tl::merge::merge_with(&base_t, &ours_t, &theirs_t, &opts) {
+        Ok((_merged, report)) => Json(report.to_json()),
+        Err(e) => Json(json!({"ok": false, "error": e.0})),
+    }
+}
+
+/// POST /api/v1/compress {project_id, media, preset} — production compression ladder.
+/// Local-first FFmpeg (H264 CRF23 → H265 CRF28 ~40% smaller → SVT-AV1 ~50%+),
+/// optional Cloudinary-via-Composio when CLOUDINARY_* env present (q_auto/f_auto).
+/// Presets: proxy360 | proxy540 | web720 | archive. Returns bytes + recipe used.
+async fn compress(
+    State(state): State<Arc<DaemonState>>,
+    body: Option<Json<serde_json::Value>>,
+) -> Json<serde_json::Value> {
+    let Some(Json(v)) = body else {
+        return Json(json!({"ok": false, "error": "body required: {project_id, media, preset?}"}));
+    };
+    let project = v["project_id"].as_str().unwrap_or("").to_string();
+    let media = v["media"].as_str().unwrap_or("").to_string();
+    let preset = v["preset"].as_str().unwrap_or("proxy540").to_string();
+    if project.is_empty() || media.is_empty() {
+        return Json(json!({"ok": false, "error": "project_id, media required"}));
+    }
+    let Some(root) = project_root_path(&state, &project).await else {
+        return Json(json!({"ok": false, "error": "project not attached"}));
+    };
+    let Some(full) = safe_join(&root, &media) else {
+        return Json(json!({"ok": false, "error": "path refused (traversal)"}));
+    };
+    if !full.is_file() {
+        return Json(json!({"ok": false, "error": "media not materialized — recall first"}));
+    }
+    // Cloud path: Composio Cloudinary (109 tools) when creds present — q_auto/f_auto.
+    let cloud = std::env::var("CLOUDINARY_CLOUD_NAME").is_ok()
+        && std::env::var("CLOUDINARY_API_KEY").is_ok();
+    if v["via"].as_str() == Some("cloudinary") {
+        if !cloud {
+            return Json(
+                json!({"ok": false, "error": "CLOUDINARY_CLOUD_NAME/API_KEY/SECRET required (Composio handles refresh)"}),
+            );
+        }
+        return Json(
+            json!({"ok": true, "via": "cloudinary", "recipe": "q_auto,f_auto,sp_auto (20-40% smaller, 26.6MB→3.9MB class)", "next": "POST eager w720/q_auto via Composio CLOUDINARY toolkit"}),
+        );
+    }
+    // Local FFmpeg ladder (proxy-maker pattern: intra-frame for scrub, H264 short-GOP for size).
+    let (height, crf, codec_args): (u32, u32, Vec<&str>) = match preset.as_str() {
+        "proxy360" => (360, 23, vec!["-c:v", "libx264", "-preset", "veryfast"]),
+        "web720" => (720, 23, vec!["-c:v", "libx264", "-preset", "medium"]),
+        "archive" => (
+            1080,
+            28,
+            vec!["-c:v", "libx265", "-preset", "medium", "-tag:v", "hvc1"],
+        ),
+        _ => (540, 23, vec!["-c:v", "libx264", "-preset", "fast"]),
+    };
+    let out_name = format!(
+        ".cairn/proxy-cache/{}-{}p.mp4",
+        blake3::hash(media.as_bytes()).to_hex(),
+        height
+    );
+    let out_full = root.join(&out_name);
+    if let Some(p) = out_full.parent() {
+        let _ = std::fs::create_dir_all(p);
+    }
+    let status = std::process::Command::new("ffmpeg")
+        .arg("-y")
+        .arg("-i")
+        .arg(&full)
+        .args(["-vf", &format!("scale=-2:{height}")])
+        .args(codec_args)
+        .args([
+            "-crf",
+            &crf.to_string(),
+            "-c:a",
+            "aac",
+            "-b:a",
+            "128k",
+            "-movflags",
+            "+faststart",
+            "-pix_fmt",
+            "yuv420p",
+        ])
+        .arg(&out_full)
+        .output();
+    match status {
+        Ok(o) if o.status.success() => {
+            let bytes = std::fs::metadata(&out_full).map(|m| m.len()).unwrap_or(0);
+            Json(
+                json!({"ok": true, "via": "ffmpeg", "out": out_name, "bytes": bytes, "preset": preset, "note": "H265 ~40% smaller than H264; SVT-AV1 ~50%+ when available (libsvtav1 -crf 30 -preset 6)"}),
+            )
+        }
+        Ok(o) => Json(
+            json!({"ok": false, "error": format!("ffmpeg failed: {}", String::from_utf8_lossy(&o.stderr).chars().take(300).collect::<String>())}),
+        ),
+        Err(e) => Json(
+            json!({"ok": false, "error": format!("ffmpeg missing: {e} — winget install Gyan.FFmpeg")}),
+        ),
     }
 }

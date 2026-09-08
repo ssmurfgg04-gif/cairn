@@ -460,8 +460,14 @@ mod tests {
             .arg(&src)
             .output()
             .is_ok_and(|o| o.status.success());
-        if !ok {
-            eprintln!("skipping: no ffmpeg");
+        let ffprobe_ok = std::process::Command::new("ffprobe")
+            .arg("-version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|s| s.success());
+        if !ok || !ffprobe_ok {
+            eprintln!("skipping: no ffmpeg or ffprobe");
             return;
         }
         let (n, d, frames) = probe_media(&src).expect("probe must succeed on real media");

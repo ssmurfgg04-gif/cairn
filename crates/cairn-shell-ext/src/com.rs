@@ -520,12 +520,14 @@ unsafe fn run_cairn(action: &MenuAction) {
     let verb_w = wide("open");
     let file_w = wide("cairn.exe");
     let params_w = wide(&params);
-    let mut sei = SHELLEXECUTEINFOW::default();
-    sei.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
-    sei.lpVerb = PCWSTR(verb_w.as_ptr());
-    sei.lpFile = PCWSTR(file_w.as_ptr());
-    sei.lpParameters = PCWSTR(params_w.as_ptr());
-    sei.nShow = 0; // SW_HIDE: the CLI is quiet on success
+    let mut sei = SHELLEXECUTEINFOW {
+        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+        lpVerb: PCWSTR(verb_w.as_ptr()),
+        lpFile: PCWSTR(file_w.as_ptr()),
+        lpParameters: PCWSTR(params_w.as_ptr()),
+        nShow: 0, // SW_HIDE: the CLI is quiet on success
+        ..Default::default()
+    };
     let _ = ShellExecuteExW(&mut sei);
 }
 
@@ -536,11 +538,13 @@ unsafe fn run_cairn(action: &MenuAction) {
 unsafe fn open_file_default(path: &Path) {
     let verb_w = wide("open");
     let file_w: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
-    let mut sei = SHELLEXECUTEINFOW::default();
-    sei.cbSize = std::mem::size_of::<SHELLEXECUTEINFOW>() as u32;
-    sei.lpVerb = PCWSTR(verb_w.as_ptr());
-    sei.lpFile = PCWSTR(file_w.as_ptr());
-    sei.nShow = 5; // SW_SHOW: the editor should actually appear
+    let mut sei = SHELLEXECUTEINFOW {
+        cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+        lpVerb: PCWSTR(verb_w.as_ptr()),
+        lpFile: PCWSTR(file_w.as_ptr()),
+        nShow: 5, // SW_SHOW: the editor should actually appear
+        ..Default::default()
+    };
     let _ = ShellExecuteExW(&mut sei);
 }
 

@@ -29,6 +29,11 @@
 // compiled on the real windows target; the linux build never sees the
 // cfg(windows) FFI, so only windows CI caught it.)
 #![allow(unsafe_code)]
+// Win32 / CfAPI FFI: references passed as raw pointers and HRESULT i32 casts are
+// idiomatic for this layer. Suppressed module-wide rather than littering #[allow]
+// on every call site.
+#![allow(clippy::borrow_as_ptr)]
+#![allow(clippy::unnecessary_cast)]
 
 use std::fmt;
 
@@ -235,7 +240,7 @@ pub mod ffi {
         // synchronous and takes no pointers we own.
         unsafe {
             CfUpdateSyncProviderStatus(conn.connection.key(), status.cf_code())
-                .map_err(|e| e.code().0 as i32)
+                .map_err(|e| e.code().0)
         }
     }
 
@@ -263,9 +268,9 @@ pub mod ffi {
         unsafe {
             CfReportSyncStatus(
                 PCWSTR(conn.root_utf16.as_ptr()),
-                Some(&status as *const CF_SYNC_STATUS),
+                Some(&raw const status),
             )
-            .map_err(|e| e.code().0 as i32)
+            .map_err(|e| e.code().0)
         }
     }
 
@@ -274,7 +279,7 @@ pub mod ffi {
         // SAFETY: same as report_root_error with the null status.
         unsafe {
             CfReportSyncStatus(PCWSTR(conn.root_utf16.as_ptr()), None)
-                .map_err(|e| e.code().0 as i32)
+                .map_err(|e| e.code().0)
         }
     }
 }
