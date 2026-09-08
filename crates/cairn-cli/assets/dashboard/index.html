@@ -43,15 +43,12 @@
       </svg>
     </span>
     <h1 class="ob-title" id="ob-title" data-i18n="ob.title">Welcome to Cairn</h1>
-    <p class="ob-sub" id="ob-sub" data-i18n="ob.sub">Choose a project folder to attach.</p>
+    <p class="ob-sub" id="ob-sub" data-i18n="ob.sub">One folder — Premiere and DaVinci see the same files. Pick it to link.</p>
 
-    <!-- progressive disclosure: first Continue reveals the attach scene -->
-    <button type="button" class="btn btn-primary ob-continue" id="ob-continue" data-i18n="ob.continue">Continue</button>
-
+    <!-- single-button onboard: no Continue → Browse two-step, one click does it -->
+    <button type="button" class="btn btn-primary ob-browse" id="ob-browse" data-i18n="btn.browse">Browse for folder...</button>
+    <p class="ob-hint" style="margin-top:10px;font-size:13px;opacity:.7" data-i18n="ob.hint">Heavy BRAW stays as lightweight proxy on laptop (GPU-made) — no 5-hour export.</p>
     <div class="ob-scene" id="ob-attach" hidden>
-      <!-- first instinct is a CLICK: the picker leads, the typed path
-           follows for hosts without a session dialog -->
-      <button type="button" class="btn btn-primary ob-browse" id="ob-browse" data-i18n="btn.browse">Browse for folder...</button>
       <input id="ob-root" class="input" type="text" spellcheck="false" autocomplete="off"
              data-i18n-attr="placeholder:attach.root" placeholder="/path/to/workspace"
              aria-label="project folder path">
@@ -178,10 +175,10 @@
       <section class="view is-active" id="view-dashboard" aria-labelledby="dash-title">
         <div class="hero">
           <div class="hero-head">
-            <h2 class="hero-title" id="dash-title" data-i18n="dash.title">Creative Workflow Overview</h2>
+            <h2 class="hero-title" id="dash-title" data-i18n="dash.title">Premiere ↔ DaVinci Sync</h2>
             <button type="button" class="btn btn-primary btn-add-ws" id="btn-add-ws">
               <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
-              <span data-i18n="btn.addWs">Add to Workspace</span>
+              <span data-i18n="btn.addWs">Add folder</span>
             </button>
           </div>
           <p class="hero-sub" id="hero-sub"></p>
