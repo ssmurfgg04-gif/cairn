@@ -653,7 +653,7 @@ impl CairnFs {
         if !w.seeded && !w.no_seed && offset > 0 {
             self.seed_range_locked(w, 0, offset)?;
         }
-        w.temp.write_all_at(data, offset).map_err(|e| {
+        FileExtWriteAt::write_all_at(&w.temp, data, offset).map_err(|e| {
             eprintln!("cairn-fs-linux: spool write fh {fh} @ {offset} failed: {e}");
             libc::EIO
         })?;
@@ -685,7 +685,7 @@ impl CairnFs {
                 eprintln!("cairn-fs-linux: ranged read {mh} @ {copied} failed: {e:?}");
                 libc::EIO
             })?;
-            w.temp.write_all_at(&chunk, copied).map_err(|e| {
+            FileExtWriteAt::write_all_at(&w.temp, &chunk, copied).map_err(|e| {
                 eprintln!("cairn-fs-linux: seed write {copied} failed: {e}");
                 libc::EIO
             })?;
@@ -900,7 +900,7 @@ impl CairnFs {
                     let chunk = self
                         .read_ranged_verified(mh, copied, want)
                         .map_err(|_| libc::EIO)?;
-                    w.temp.write_all_at(&chunk, copied).map_err(|_| libc::EIO)?;
+                    FileExtWriteAt::write_all_at(&w.temp, &chunk, copied).map_err(|_| libc::EIO)?;
                     copied += chunk.len() as u64;
                 }
                 w.seeded = true;
