@@ -68,7 +68,10 @@ pub struct RelayServer {
 #[derive(Clone, Debug)]
 enum Side {
     Udp(SocketAddr),
-    Quic { conn_id: u64, tx: mpsc::UnboundedSender<Vec<u8>> },
+    Quic {
+        conn_id: u64,
+        tx: mpsc::UnboundedSender<Vec<u8>>,
+    },
 }
 
 impl Side {
@@ -102,7 +105,10 @@ type RouteTable = Arc<Mutex<HashMap<(Vec<u8>, Vec<u8>), Mapping>>>;
 #[derive(Clone)]
 enum RouteFrom {
     Udp(SocketAddr),
-    Quic { conn_id: u64, tx: mpsc::UnboundedSender<Vec<u8>> },
+    Quic {
+        conn_id: u64,
+        tx: mpsc::UnboundedSender<Vec<u8>>,
+    },
 }
 
 /// Where to forward a routed datagram.
@@ -218,8 +224,7 @@ impl RelayServer {
                                 Ok(s) => s,
                                 Err(_) => break,
                             };
-                            if s
-                                .write_all(&(bytes.len() as u32).to_be_bytes())
+                            if s.write_all(&(bytes.len() as u32).to_be_bytes())
                                 .await
                                 .is_err()
                             {
@@ -330,7 +335,9 @@ fn reap(maps: &RouteTable, stats: &RelayStats, epoch0: Instant) {
     if reaped > 0 {
         stats.reaped.fetch_add(reaped, Ordering::Relaxed);
     }
-    stats.active_mappings.store(m.len() as u64, Ordering::Relaxed);
+    stats
+        .active_mappings
+        .store(m.len() as u64, Ordering::Relaxed);
 }
 
 /// One routing step: pure mapping logic, returns where to forward to
@@ -532,7 +539,10 @@ mod tests {
             &maps,
             &stats,
             &d2,
-            RouteFrom::Quic { conn_id: 7, tx: txb },
+            RouteFrom::Quic {
+                conn_id: 7,
+                tx: txb,
+            },
             epoch,
         );
         // b→a forwards to a's UDP endpoint (cross-transport delivery).

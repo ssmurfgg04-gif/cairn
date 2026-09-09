@@ -266,11 +266,8 @@ pub mod ffi {
         // SAFETY: root_utf16 is NUL-terminated by construction; the status
         // blob is fully owned by this frame for the duration of the call.
         unsafe {
-            CfReportSyncStatus(
-                PCWSTR(conn.root_utf16.as_ptr()),
-                Some(&raw const status),
-            )
-            .map_err(|e| e.code().0)
+            CfReportSyncStatus(PCWSTR(conn.root_utf16.as_ptr()), Some(&raw const status))
+                .map_err(|e| e.code().0)
         }
     }
 
@@ -278,8 +275,7 @@ pub mod ffi {
     pub fn clear_root_error(conn: &BadgeConnection<'_>) -> Result<(), i32> {
         // SAFETY: same as report_root_error with the null status.
         unsafe {
-            CfReportSyncStatus(PCWSTR(conn.root_utf16.as_ptr()), None)
-                .map_err(|e| e.code().0)
+            CfReportSyncStatus(PCWSTR(conn.root_utf16.as_ptr()), None).map_err(|e| e.code().0)
         }
     }
 }

@@ -359,7 +359,12 @@ mod tests {
         // outside any root → None
         let other = tempfile::tempdir().unwrap();
         let target = other.path().join("nope.txt");
-        let (found_other, _) = resolve_root(&target).unwrap_or((PathBuf::new(), RootInfo { project_id: String::new() }));
+        let (found_other, _) = resolve_root(&target).unwrap_or((
+            PathBuf::new(),
+            RootInfo {
+                project_id: String::new(),
+            },
+        ));
         assert_ne!(found_other, other.path());
     }
 }

@@ -784,10 +784,7 @@ async fn presence_flood_stays_bounded() {
     for _ in 0..2000 {
         reached_total += a.broadcast_presence(payload);
     }
-    assert!(
-        reached_total > 0,
-        "broadcasts reached the session peer"
-    );
+    assert!(reached_total > 0, "broadcasts reached the session peer");
 
     // b's inbound counter recorded the flood (or its lagged remainder) —
     // the guarantee is: NO crash, NO unbounded growth, ONE snapshot entry

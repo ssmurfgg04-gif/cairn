@@ -101,7 +101,9 @@ fn reap(table: &RouteTable, stats: &RelayStats) {
         let alive = |s: &Option<Side>| s.as_ref().is_some_and(|s| !s.tx.is_closed());
         alive(&e.a) || alive(&e.b)
     });
-    stats.active_mappings.store(m.len() as u64, Ordering::Relaxed);
+    stats
+        .active_mappings
+        .store(m.len() as u64, Ordering::Relaxed);
 }
 
 /// A spawned QUIC relay server. Abort `task` to stop it.
@@ -214,7 +216,10 @@ impl QuicRelayClient {
 
     /// Receive loop: invokes `on_frame` per inbound datagram until the
     /// connection drops. Returns when the connection drops.
-    pub async fn recv_loop(&self, on_frame: impl Fn(Vec<u8>) + Send + 'static) -> Result<(), CairnError> {
+    pub async fn recv_loop(
+        &self,
+        on_frame: impl Fn(Vec<u8>) + Send + 'static,
+    ) -> Result<(), CairnError> {
         loop {
             let frame = self.transport.recv_frame().await?;
             on_frame(frame.data.to_vec());
@@ -240,11 +245,13 @@ pub fn build_datagram(from: &[u8], to: &[u8], inner: &[u8]) -> Vec<u8> {
 mod tests {
     use super::*;
     use std::sync::Arc;
-    use tokio::sync::mpsc as chan;
     use std::time::Duration;
+    use tokio::sync::mpsc as chan;
 
+    /// CI runners can take several seconds for the QUIC handshakes plus cert
+    /// generation before the first datagram lands, so keep this generous.
     async fn recv_one(rx: &mut chan::UnboundedReceiver<Vec<u8>>) -> Vec<u8> {
-        tokio::time::timeout(Duration::from_secs(2), rx.recv())
+        tokio::time::timeout(Duration::from_secs(15), rx.recv())
             .await
             .expect("timeout waiting for msg")
             .expect("channel closed")
@@ -252,36 +259,76 @@ mod tests {
 
     #[tokio::test]
     async fn quic_relay_forwards_pair_both_ways() {
-        let server = QuicRelayServer::spawn("127.0.0.1:0".parse().unwrap())
-            .expect("relay bind");
+        let server = QuicRelayServer::spawn("127.0.0.1:0".parse().unwrap()).expect("relay bind");
         let (txa, mut rxa) = chan::unbounded_channel::<Vec<u8>>();
         let (txb, mut rxb) = chan::unbounded_channel::<Vec<u8>>();
 
-        let a = Arc::new(QuicRelayClient::dial(server.local_addr).await.expect("dial a"));
-        let b = Arc::new(QuicRelayClient::dial(server.local_addr).await.expect("dial b"));
+        let a = Arc::new(
+            QuicRelayClient::dial(server.local_addr)
+                .await
+                .expect("dial a"),
+        );
+        let b = Arc::new(
+            QuicRelayClient::dial(server.local_addr)
+                .await
+                .expect("dial b"),
+        );
         let a_recv = Arc::clone(&a);
         let b_recv = Arc::clone(&b);
         let txa_clone = txa.clone();
         let txb_clone = txb.clone();
         let a_recv_handle = tokio::spawn(async move {
-            let _ = a_recv.recv_loop(move |f| {
-                let _ = txa_clone.send(f);
-            }).await;
+            let _ = a_recv
+                .recv_loop(move |f| {
+                    let _ = txa_clone.send(f);
+                })
+                .await;
         });
         let b_recv_handle = tokio::spawn(async move {
-            let _ = b_recv.recv_loop(move |f| {
-                let _ = txb_clone.send(f);
-            }).await;
+            let _ = b_recv
+                .recv_loop(move |f| {
+                    let _ = txb_clone.send(f);
+                })
+                .await;
         });
-        // Learning drops: first datagram of the pair is dropped by design.
-        a.send(&build_datagram(b"a", b"b", b"hello-a")).await.unwrap();
-        // B's first completes the pair AND is forwarded to A immediately.
-        b.send(&build_datagram(b"b", b"a", b"hello-b")).await.unwrap();
-        assert_eq!(recv_one(&mut rxa).await, build_datagram(b"b", b"a", b"hello-b"));
 
-        // Now established both ways.
-        a.send(&build_datagram(b"a", b"b", b"hello-a2")).await.unwrap();
-        assert_eq!(recv_one(&mut rxb).await, build_datagram(b"a", b"b", b"hello-a2"));
+        // The two peers dial independent connections, so the server's arrival
+        // order for these first two datagrams is not deterministic. Exactly
+        // one of them is dropped as the learning side and the other one
+        // completes the pair and is forwarded to the peer that registered
+        // first. Accept either order, but check the payload matches whoever
+        // actually sent it.
+        a.send(&build_datagram(b"a", b"b", b"hello-a"))
+            .await
+            .unwrap();
+        b.send(&build_datagram(b"b", b"a", b"hello-b"))
+            .await
+            .unwrap();
+        tokio::select! {
+            f = recv_one(&mut rxa) => {
+                assert_eq!(f, build_datagram(b"b", b"a", b"hello-b"), "A must receive B's datagram");
+            }
+            f = recv_one(&mut rxb) => {
+                assert_eq!(f, build_datagram(b"a", b"b", b"hello-a"), "B must receive A's datagram");
+            }
+        }
+
+        // Pair is now registered on both sides: forwarding works both ways
+        // deterministically.
+        a.send(&build_datagram(b"a", b"b", b"hello-a2"))
+            .await
+            .unwrap();
+        assert_eq!(
+            recv_one(&mut rxb).await,
+            build_datagram(b"a", b"b", b"hello-a2")
+        );
+        b.send(&build_datagram(b"b", b"a", b"hello-b2"))
+            .await
+            .unwrap();
+        assert_eq!(
+            recv_one(&mut rxa).await,
+            build_datagram(b"b", b"a", b"hello-b2")
+        );
 
         assert!(server.stats.forwarded.load(Ordering::Relaxed) >= 2);
         assert!(server.stats.dropped_learning.load(Ordering::Relaxed) >= 1);
@@ -292,24 +339,66 @@ mod tests {
 
     #[tokio::test]
     async fn quic_relay_isolates_pairs() {
-        let server = QuicRelayServer::spawn("127.0.0.1:0".parse().unwrap())
-            .expect("relay bind");
+        let server = QuicRelayServer::spawn("127.0.0.1:0".parse().unwrap()).expect("relay bind");
         let (txc, mut rxc) = chan::unbounded_channel::<Vec<u8>>();
+        let (txd, mut rxd) = chan::unbounded_channel::<Vec<u8>>();
 
-        let c = Arc::new(QuicRelayClient::dial(server.local_addr).await.expect("dial c"));
-        let d = Arc::new(QuicRelayClient::dial(server.local_addr).await.expect("dial d"));
+        let c = Arc::new(
+            QuicRelayClient::dial(server.local_addr)
+                .await
+                .expect("dial c"),
+        );
+        let d = Arc::new(
+            QuicRelayClient::dial(server.local_addr)
+                .await
+                .expect("dial d"),
+        );
         let c_recv = Arc::clone(&c);
+        let d_recv = Arc::clone(&d);
         let txc_clone = txc.clone();
+        let txd_clone = txd.clone();
         let tc = tokio::spawn(async move {
-            let _ = c_recv.recv_loop(move |f| {
-                let _ = txc_clone.send(f);
-            }).await;
+            let _ = c_recv
+                .recv_loop(move |f| {
+                    let _ = txc_clone.send(f);
+                })
+                .await;
         });
-        // C→D pair completes without any A/B traffic present.
+        let td = tokio::spawn(async move {
+            let _ = d_recv
+                .recv_loop(move |f| {
+                    let _ = txd_clone.send(f);
+                })
+                .await;
+        });
+
+        // C and D complete a pair with no A/B traffic present. As above, the
+        // arrival order between their two independent connections decides
+        // which learning datagram is dropped; accept either, then prove the
+        // established pair forwards both ways inside its own mapping.
         c.send(&build_datagram(b"c", b"d", b"one")).await.unwrap();
         d.send(&build_datagram(b"d", b"c", b"two")).await.unwrap();
-        assert_eq!(recv_one(&mut rxc).await, build_datagram(b"d", b"c", b"two"));
+        tokio::select! {
+            f = recv_one(&mut rxc) => {
+                assert_eq!(f, build_datagram(b"d", b"c", b"two"), "C must receive D's datagram");
+            }
+            f = recv_one(&mut rxd) => {
+                assert_eq!(f, build_datagram(b"c", b"d", b"one"), "D must receive C's datagram");
+            }
+        }
+        c.send(&build_datagram(b"c", b"d", b"three")).await.unwrap();
+        assert_eq!(
+            recv_one(&mut rxd).await,
+            build_datagram(b"c", b"d", b"three")
+        );
+        d.send(&build_datagram(b"d", b"c", b"four")).await.unwrap();
+        assert_eq!(
+            recv_one(&mut rxc).await,
+            build_datagram(b"d", b"c", b"four")
+        );
+
         tc.abort();
+        td.abort();
         server.task.abort();
     }
 }

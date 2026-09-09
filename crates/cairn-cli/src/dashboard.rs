@@ -1571,16 +1571,14 @@ async fn review_publish(
     };
     let mut file = match cairn_review::store::Store::load(&root) {
         Ok(Some(f)) => f,
-        _ => {
-            cairn_review::model::ReviewFile {
-                title: if title.is_empty() {
-                    project.clone()
-                } else {
-                    title.clone()
-                },
-                ..Default::default()
-            }
-        }
+        _ => cairn_review::model::ReviewFile {
+            title: if title.is_empty() {
+                project.clone()
+            } else {
+                title.clone()
+            },
+            ..Default::default()
+        },
     };
     let ver = cairn_review::model::ReviewVersion {
         number: 0,
