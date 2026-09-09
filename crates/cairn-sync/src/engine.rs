@@ -489,9 +489,11 @@ impl Engine {
         let sem = Arc::new(tokio::sync::Semaphore::new(4));
         let mut set = tokio::task::JoinSet::new();
         for (_path, group) in groups {
-            let permit = sem.clone().acquire_owned().await.map_err(|e| {
-                CairnError::new(ErrorKind::Io, format!("flush semaphore: {e}"))
-            })?;
+            let permit = sem
+                .clone()
+                .acquire_owned()
+                .await
+                .map_err(|e| CairnError::new(ErrorKind::Io, format!("flush semaphore: {e}")))?;
             let tenant = self.tenant_id.clone();
             let project = self.project_id.clone();
             let author = self.author_id.clone();
@@ -532,8 +534,7 @@ impl Engine {
                             // state so self-pull never mistakes our own
                             // entry for a remote update.
                             if let Some(mh) = job.manifest.clone() {
-                                let full =
-                                    workspace_dir(&store, &local_ns).join(&job.path);
+                                let full = workspace_dir(&store, &local_ns).join(&job.path);
                                 match std::fs::metadata(&full) {
                                     Ok(m) => {
                                         if let Err(e) = store.mark_synced_with_stat(
@@ -549,8 +550,7 @@ impl Engine {
                                         }
                                     }
                                     Err(_) => {
-                                        if let Err(e) =
-                                            store.mark_synced(&local_ns, &job.path, &mh)
+                                        if let Err(e) = store.mark_synced(&local_ns, &job.path, &mh)
                                         {
                                             first_err = Some(e);
                                             retry.push(job);
@@ -574,9 +574,8 @@ impl Engine {
         // 3. Join; sum fast-path appends; collect sequential retries.
         let mut retry_jobs: Vec<Job> = Vec::new();
         while let Some(res) = set.join_next().await {
-            let (appended, mut retry, first_err) = res.map_err(|e| {
-                CairnError::new(ErrorKind::Internal, format!("flush task: {e}"))
-            })?;
+            let (appended, mut retry, first_err) =
+                res.map_err(|e| CairnError::new(ErrorKind::Internal, format!("flush task: {e}")))?;
             stats.appended += appended as u32;
             if let Some(e) = first_err {
                 return Err(e);

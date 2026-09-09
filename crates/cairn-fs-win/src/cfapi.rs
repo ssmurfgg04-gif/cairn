@@ -1345,8 +1345,7 @@ pub fn create_placeholders_batch(root: &str, entries: &[BulkEntry]) -> Result<us
         // caught this on the attach-style 3-file subtree). Attach semantics imply the
         // subtree materializes with the placeholders, so create the parents here.
         if !parent.is_empty() {
-            std::fs::create_dir_all(&base)
-                .map_err(|e| (0, e.raw_os_error().unwrap_or(2)))?;
+            std::fs::create_dir_all(&base).map_err(|e| (0, e.raw_os_error().unwrap_or(2)))?;
         }
         let base_w = wide(&base);
         // per-batch buffers must outlive the call

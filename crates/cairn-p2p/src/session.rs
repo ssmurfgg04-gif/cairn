@@ -480,9 +480,7 @@ impl Reassembly {
             }
             let start = g * PARITY_GROUP;
             let end = (start + PARITY_GROUP).min(n);
-            let missing: Vec<usize> = (start..end)
-                .filter(|&i| self.got[i].is_none())
-                .collect();
+            let missing: Vec<usize> = (start..end).filter(|&i| self.got[i].is_none()).collect();
             if missing.len() != 1 {
                 continue;
             }
@@ -632,7 +630,7 @@ mod tests {
             r.insert(idx as u16, full[s..e].to_vec());
         }
         // parity per group over padded fragments
-        for g in 0..frags as usize / PARITY_GROUP + 1 {
+        for g in 0..=(frags as usize / PARITY_GROUP) {
             let start = g * PARITY_GROUP;
             let end = (start + PARITY_GROUP).min(frags as usize);
             if start >= end {
@@ -662,8 +660,9 @@ mod tests {
         assert!(r.missing().is_empty());
         assert_eq!(r.fec_recovered, 1);
         let out = r.assemble().unwrap();
-        let expect: Vec<u8> =
-            (0..20 * MAX_FRAG_DATA as u64).map(|i| (i % 251) as u8).collect();
+        let expect: Vec<u8> = (0..20 * MAX_FRAG_DATA as u64)
+            .map(|i| (i % 251) as u8)
+            .collect();
         assert_eq!(out, expect);
     }
 

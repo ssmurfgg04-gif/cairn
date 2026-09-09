@@ -171,7 +171,10 @@ impl OutboxWorker {
                     if let Err(e) = outbox.mark_attempt(&request_id, "sent") {
                         tracing::warn!(request_id = %request_id, "mark attempt failed: {e}");
                     }
-                    match uploader.upload_chunk(&entry, &tenant, &device, lease_token).await {
+                    match uploader
+                        .upload_chunk(&entry, &tenant, &device, lease_token)
+                        .await
+                    {
                         Ok(()) => {
                             if let Err(e) = outbox.ack(&request_id) {
                                 tracing::error!(request_id = %request_id, "ack failed: {e}");

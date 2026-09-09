@@ -58,7 +58,13 @@ async fn read_frame(conn: &quinn::Connection) -> Result<ChunkFrame, CairnError> 
         .map_err(|e| io_err("read", e))?;
     let data_len = u64::from_be_bytes(dlen) as usize;
     if data_len > cairn_core::CHUNK_MAX {
-        return Err(CairnError::new(ErrorKind::Internal, format!("chunk too large ({data_len} > CHUNK_MAX {})", cairn_core::CHUNK_MAX)));
+        return Err(CairnError::new(
+            ErrorKind::Internal,
+            format!(
+                "chunk too large ({data_len} > CHUNK_MAX {})",
+                cairn_core::CHUNK_MAX
+            ),
+        ));
     }
     let mut data = vec![0u8; data_len];
     recv.read_exact(&mut data)
@@ -176,10 +182,9 @@ mod tests {
         let rustls_cfg = rustls::ClientConfig::builder()
             .with_root_certificates(roots)
             .with_no_client_auth();
-        let quic_cfg = quinn::crypto::rustls::QuicClientConfig::try_from(
-            std::sync::Arc::new(rustls_cfg),
-        )
-        .expect("tls config");
+        let quic_cfg =
+            quinn::crypto::rustls::QuicClientConfig::try_from(std::sync::Arc::new(rustls_cfg))
+                .expect("tls config");
         let mut client_config = quinn::ClientConfig::new(std::sync::Arc::new(quic_cfg));
         client_config.transport_config(crate::endpoint::transport_config());
         let mut client_raw =
@@ -233,7 +238,18 @@ mod tests {
 
     #[test]
     fn frame_size_bounds_are_sane() {
-        assert!(512 < 1024);
-        assert_eq!((4usize).div_ceil(2), 2);
+        // The reader caps ids at 512 bytes and payloads at CHUNK_MAX. Both
+        // limits must stay expressible by the length prefixes the encoder
+        // actually writes (u16 for ids, u64 for payloads).
+        let id_cap: usize = "x".repeat(512).len();
+        let chunk_max: usize = cairn_core::CHUNK_MAX;
+        assert!(
+            u16::try_from(id_cap).is_ok(),
+            "u16 id prefix covers the id cap"
+        );
+        assert!(
+            u64::try_from(chunk_max).is_ok(),
+            "u64 data prefix covers CHUNK_MAX"
+        );
     }
 }

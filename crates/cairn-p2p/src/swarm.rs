@@ -394,9 +394,7 @@ impl Swarm {
         if let Some(quic_addr) = cfg.quic_relay {
             let inner_q = Arc::clone(&inner);
             tokio::spawn(async move {
-                let client = match cairn_quic::relay::QuicRelayClient::dial(quic_addr)
-                    .await
-                {
+                let client = match cairn_quic::relay::QuicRelayClient::dial(quic_addr).await {
                     Ok(c) => Arc::new(c),
                     Err(e) => {
                         tracing::warn!(%quic_addr, "swarm: QUIC relay dial failed ({e}); UDP relay carries traffic");
@@ -404,8 +402,7 @@ impl Swarm {
                     }
                 };
                 let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
-                *inner_q.quic_relay.lock().expect("quic link lock") =
-                    Some(QuicRelayLink { tx });
+                *inner_q.quic_relay.lock().expect("quic link lock") = Some(QuicRelayLink { tx });
                 tracing::info!(%quic_addr, "swarm: QUIC relay uplink up");
                 // Inbound pump: relayed frames enter dispatch exactly as if
                 // they had arrived on UDP from the relay address.
