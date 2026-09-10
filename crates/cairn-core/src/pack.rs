@@ -38,7 +38,14 @@ pub fn parse_pack(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, CairnError> {
     }
     let n = u32::from_le_bytes([bytes[5], bytes[6], bytes[7], bytes[8]]) as usize;
     let mut pos = 9;
-    let mut out = Vec::with_capacity(n);
+    // Each entry consumes at least 36 bytes of input (4 len + 32 hash), so a
+    // valid pack of this size cannot hold more entries than the input admits.
+    // Cap the pre-allocation at that input-derived bound — the raw count is
+    // untrusted, and previously drove Vec::with_capacity to a ~30GB request
+    // on a 9-byte input (pack_index_parse fuzz target, run #152: count
+    // 0x2824bf00 = 673M entries x 48B tuple = ASan OOM abort).
+    let cap = n.min(bytes.len().saturating_sub(pos) / 36);
+    let mut out = Vec::with_capacity(cap);
     for _ in 0..n {
         if pos + 36 > bytes.len() {
             return Err(err());
@@ -72,5 +79,24 @@ mod tests {
         assert!(parse_pack(&pack[..8]).is_err());
         // truncated body → bounds-checked
         assert!(parse_pack(&pack[..pack.len() - 1]).is_err());
+    }
+
+    #[test]
+    fn parse_huge_count_does_not_oom() {
+        // Regression (pack_index_parse fuzz target, run #152): a 9-byte
+        // input "CPCK v1 count=0x2824bf00" made Vec::with_capacity(count)
+        // request ~30GB (673M entries x 48B tuple) and ASan aborted with
+        // out-of-memory. The count must be capped at the input-derived
+        // bound; the parse itself has to return Err.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(PACK_MAGIC);
+        bytes.push(PACK_VERSION);
+        bytes.extend_from_slice(&0x2824bf00u32.to_le_bytes());
+        assert_eq!(bytes.len(), 9);
+        // no entries at all — must Err, never pre-allocate 673M slots
+        assert!(parse_pack(&bytes).is_err());
+        // same for a truncated single-entry pack with a huge count
+        bytes.extend_from_slice(&[0u8; 8]);
+        assert!(parse_pack(&bytes).is_err());
     }
 }
