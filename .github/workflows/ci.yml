@@ -341,6 +341,15 @@ jobs:
     # be triggered by hand to verify fuzz infra changes.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    env:
+      # rust-toolchain.toml pins 1.98.0 (stable) for the whole repo, and
+      # rustup honors the toolchain file over the default for every
+      # invocation from inside the tree — silently downgrading this job's
+      # nightly toolchain and making cargo-fuzz's -Zsanitizer flags fail
+      # ("the option `Z` is only accepted on the nightly compiler"; run #149
+      # used toolchains/1.98.0-*/bin/rustc). RUSTUP_TOOLCHAIN has the
+      # highest rustup precedence and beats the toolchain file.
+      RUSTUP_TOOLCHAIN: nightly
     defaults:
       run:
         working-directory: crates/cairn-x
