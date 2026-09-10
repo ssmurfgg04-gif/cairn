@@ -347,6 +347,13 @@ impl Manifest {
         };
         // v2 carries the container transform; v1 implies None
         let transform = if bytes[4] >= 2 {
+            // Regression (manifest_parse fuzz target, nightly run #150): a
+            // 7-byte header (magic + version + compression + has_dict=0)
+            // reached this read with pos == len — "index out of bounds: the
+            // len is 7 but the index is 7". Truncations must be Err, not panic.
+            if bytes.len() < pos + 1 {
+                return Err(err());
+            }
             let t = Transform::from_tag(bytes[pos]).ok_or_else(err)?;
             pos += 1;
             t
@@ -542,6 +549,43 @@ mod tests {
         let parsed = Manifest::parse(&bytes).unwrap();
         assert_eq!(parsed, m);
         assert_eq!(Hash::of(&bytes), h);
+    }
+
+    #[test]
+    fn parse_truncated_header_returns_err_not_panic() {
+        // Regression (manifest_parse fuzz target, nightly run #150): a
+        // 7-byte v2 header (magic + version + compression + has_dict=0)
+        // reached the transform-tag read with pos == len —
+        // "index out of bounds: the len is 7 but the index is 7".
+        // Every truncation of a manifest must be Err, never a panic.
+        for magic in [b"CMAN".as_slice(), b"CMND".as_slice()] {
+            for has_dict in [0u8, 1] {
+                let mut bytes = Vec::with_capacity(7);
+                bytes.extend_from_slice(magic);
+                bytes.push(crate::MANIFEST_FORMAT_VERSION);
+                bytes.push(Compression::None.tag());
+                bytes.push(has_dict);
+                assert_eq!(bytes.len(), 7);
+                assert!(Manifest::parse(&bytes).is_err());
+                for cut in 0..bytes.len() {
+                    assert!(Manifest::parse(&bytes[..cut]).is_err());
+                }
+            }
+        }
+        // and every strict truncation of a real serialization, for both shapes
+        let leaf = Manifest::build(
+            vec![ManifestEntry {
+                offset: 0,
+                len: 4,
+                chunk_hash: Hash::of(b"abcd"),
+            }],
+            Compression::None,
+            None,
+        );
+        let (_, lbytes) = leaf.serialize();
+        for cut in 0..lbytes.len() {
+            assert!(Manifest::parse(&lbytes[..cut]).is_err());
+        }
     }
 
     #[test]
