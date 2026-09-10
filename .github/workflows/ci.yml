@@ -333,8 +333,17 @@ jobs:
       - run: cargo llvm-cov --lcov --output-path lcov.info --fail-under-lines 73 -p cairn-core -p cairn-sync  # RATCHET (WO6-7): baseline = MEASURED 73.71% (2026-09-01); +1 per round as coverage grows, cap 80, never lower. WO6-4's measure_cold_fetch is covered by crates/cairn-server/tests/cold_fetch.rs (runs in the `test` job — outside this -p filter).
 
   fuzz-nightly:
-    if: github.event_name == 'schedule'
+    # fuzz targets live in crates/cairn-x/fuzz (a standalone workspace, excluded
+    # from the root one). cargo-fuzz resolves the fuzz project from the CWD, so
+    # every cargo fuzz invocation must run from crates/cairn-x — the repo root
+    # has no fuzz/Cargo.toml (run #147 failed with "could not read the manifest
+    # file: .../fuzz/Cargo.toml"). workflow_dispatch is allowed so the job can
+    # be triggered by hand to verify fuzz infra changes.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: crates/cairn-x
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
