@@ -60,6 +60,14 @@ pub fn parse_pack(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>, CairnError> {
         out.push((hash.hex(), bytes[pos..pos + len].to_vec()));
         pos += len;
     }
+    // A valid pack is exactly header + entries — no trailing bytes. The
+    // round-trip contract (build_pack(parse_pack(data)) == data, asserted by
+    // the pack_index_parse fuzz target) requires rejecting non-canonical
+    // input: accepting trailing garbage let a count=0 pack + 29 junk bytes
+    // parse as an empty pack and fail the round-trip assert (run #153).
+    if pos != bytes.len() {
+        return Err(err());
+    }
     Ok(out)
 }
 
@@ -79,6 +87,25 @@ mod tests {
         assert!(parse_pack(&pack[..8]).is_err());
         // truncated body → bounds-checked
         assert!(parse_pack(&pack[..pack.len() - 1]).is_err());
+    }
+
+    #[test]
+    fn parse_rejects_trailing_garbage() {
+        // Regression (pack_index_parse fuzz target, run #153): a count=0
+        // pack followed by arbitrary bytes parsed as an empty pack (the
+        // trailing bytes were silently ignored), breaking the canonical
+        // round-trip contract. Truncations and extensions must both Err.
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(PACK_MAGIC);
+        bytes.push(PACK_VERSION);
+        bytes.extend_from_slice(&0u32.to_le_bytes());
+        bytes.extend_from_slice(b"CPCK trailing garbage");
+        assert!(parse_pack(&bytes).is_err());
+        // the canonical empty pack itself round-trips
+        let empty: Vec<(String, Vec<u8>)> = Vec::new();
+        let canon = build_pack(&empty);
+        assert_eq!(parse_pack(&canon).unwrap(), empty);
+        assert_eq!(build_pack(&parse_pack(&canon).unwrap()), canon);
     }
 
     #[test]
