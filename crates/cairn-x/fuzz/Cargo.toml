@@ -1,0 +1,44 @@
+[package]
+name = "cairn-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+prost = "0.13"
+
+[dependencies.cairn-core]
+path = "../../cairn-core"
+
+[dependencies.cairn-proto]
+path = "../../cairn-proto"
+
+[[bin]]
+name = "manifest_parse"
+path = "fuzz_targets/manifest_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pack_index_parse"
+path = "fuzz_targets/pack_index_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "journal_op_parse"
+path = "fuzz_targets/journal_op_parse.rs"
+test = false
+doc = false
+bench = false
+
+# The workspace root already excludes this directory; this empty [workspace]
+# table keeps the fuzz project its own workspace root regardless, so that
+# cargo-fuzz's sanitizer-oriented build settings stay local to it.
+[workspace]
