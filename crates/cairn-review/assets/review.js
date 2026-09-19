@@ -424,6 +424,16 @@
   const WAVE_BUDGET = 40 * 1024 * 1024; // only analyze small/proxy media
   const waveCache = new Map();          // version:full -> Float32Array | null
   let waveFor = null;                   // version the canvas currently shows
+  let sharedCtx = null;                 // P2 perf triage #8: one AudioContext,
+                                        // not one per waveform (contexts hold
+                                        // hardware-adjacent resources)
+  function audioCtx() {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return null;
+    if (!sharedCtx || sharedCtx.state === "closed") sharedCtx = new Ctx();
+    if (sharedCtx.state === "suspended") sharedCtx.resume().catch(() => {});
+    return sharedCtx;
+  }
 
   async function loadWave(v) {
     const key = v.number + ":" + (state.useFull ? "full" : "proxy");
@@ -435,12 +445,10 @@
         const len = Number(head.headers.get("Content-Length"));
         if (Number.isFinite(len) && len > 0 && len <= WAVE_BUDGET) {
           const buf = await (await fetch(mediaUrl(v))).arrayBuffer();
-          const Ctx = window.AudioContext || window.webkitAudioContext;
-          if (Ctx) {
-            const actx = new Ctx();
+          const actx = audioCtx();
+          if (actx) {
             const audio = await actx.decodeAudioData(buf);
             peaks = computePeaks(audio, 700);
-            actx.close();
           }
         }
       } catch { peaks = null; }

@@ -81,6 +81,13 @@ pub struct ProxyEntry {
     pub generated_at_ms: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
+    /// Source file length at generation time (fast-path staleness check).
+    /// `None` = written before stat tracking; treat as unknown (verify by hash).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_len: Option<u64>,
+    /// Source mtime at generation time (millis since UNIX epoch).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_mtime_ms: Option<i64>,
 }
 
 impl ProxyEntry {
@@ -149,6 +156,8 @@ mod tests {
             bytes: 1000,
             generated_at_ms: ms,
             last_error: None,
+            source_len: None,
+            source_mtime_ms: None,
         }
     }
 

@@ -75,20 +75,32 @@ impl ElementKey {
 }
 
 /// Flatten a timeline into the merge coordinate system.
+///
+/// P2 perf triage #9: `TrackFlat.element` used to carry its full `children`
+/// subtree AND `items` carried the same children again — every clip's
+/// metadata cloned twice before comparison even started. The element keeps
+/// its identity payload (uuid, name, kind, markers, ranges) with an emptied
+/// child list; nothing in the workspace reads `TrackFlat.element.children`
+/// (items are the traversal side). Halves flatten-time allocation, zero API
+/// change.
 pub fn flatten(tl: &Timeline) -> Flat {
     let mut tracks = Vec::new();
     for child in &tl.tracks.children {
         match &child.kind {
-            Kind::Track(_) => tracks.push(TrackFlat {
-                element: child.clone(),
-                items: child.children.clone(),
-            }),
+            Kind::Track(_) => {
+                let mut element = child.clone();
+                element.children.clear();
+                tracks.push(TrackFlat {
+                    element,
+                    items: child.children.clone(),
+                });
+            }
             _ => {
                 // non-track at stack level (rare): wrap as a single-item
                 // pseudo-track so nothing is silently dropped
                 let mut pseudo = Element::leaf(Kind::Track(TrackKind::Video), "stack-attic");
                 pseudo.metadata = child.metadata.clone();
-                pseudo.children = vec![child.clone()];
+                pseudo.children = Vec::new();
                 tracks.push(TrackFlat {
                     element: pseudo,
                     items: vec![child.clone()],
@@ -528,5 +540,23 @@ mod tests {
         assert_eq!(f.tracks[0].items.len(), 3);
         assert_eq!(f.tracks[1].items.len(), 1);
         assert_eq!(f.tracks[0].element.name, "V1");
+    }
+
+    #[test]
+    fn flatten_does_not_duplicate_children_in_element() {
+        let tl = parse_otio(include_str!("../fixtures/roundtrip_base.otio")).unwrap();
+        let f = flatten(&tl);
+        // items carry the traversal side; element keeps identity only
+        for t in &f.tracks {
+            assert!(
+                t.element.children.is_empty(),
+                "track element must not duplicate its items subtree"
+            );
+            assert!(!t.items.is_empty());
+        }
+        // identity still resolves through the stripped view
+        let (m, ins, rem) = match_docs(&f, &f);
+        assert!(ins.is_empty() && rem.is_empty());
+        assert_eq!(m.len(), 4);
     }
 }

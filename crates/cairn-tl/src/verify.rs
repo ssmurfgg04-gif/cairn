@@ -77,17 +77,28 @@ struct FlatClip {
     /// duration in frames at the clip's own rate (exact), when known.
     duration: Option<(Rational, Rational)>,
     effects: Vec<String>,
-    effect_params: Vec<String>,
+    effect_params: Vec<EffectParam>,
     marker_names: Vec<String>,
     has_audio_media: bool,
 }
 
-fn walk(el: &Element, out: &mut Vec<FlatClip>, path: &mut Vec<String>) {
-    path.push(el.name.clone());
+/// One effect's parameter identity. Compared structurally (P2 perf triage
+/// #9): the old code ran `serde_json::to_string` on every effect's metadata
+/// for every clip — an escaping allocator pass whose only consumer counts
+/// mismatches. `BTreeMap` equality is the same relation (both sides used the
+/// same deterministic serializer) without the string round-trip.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct EffectParam {
+    effect: String,
+    name: String,
+    metadata: super::model::JsonMap,
+}
+
+fn walk(el: &Element, out: &mut Vec<FlatClip>) {
     match el.kind {
         Kind::Stack | Kind::Track(_) => {
             for child in &el.children {
-                walk(child, out, path);
+                walk(child, out);
             }
         }
         _ => {
@@ -119,13 +130,10 @@ fn walk(el: &Element, out: &mut Vec<FlatClip>, path: &mut Vec<String>) {
                 effect_params: el
                     .effects
                     .iter()
-                    .map(|e| {
-                        format!(
-                            "{}:{}:{}",
-                            e.effect_name,
-                            e.name,
-                            serde_json::to_string(&e.metadata).unwrap_or_default()
-                        )
+                    .map(|e| EffectParam {
+                        effect: e.effect_name.clone(),
+                        name: e.name.clone(),
+                        metadata: e.metadata.clone(),
                     })
                     .collect(),
                 marker_names: el.markers.iter().map(|m| m.name.clone()).collect(),
@@ -133,14 +141,12 @@ fn walk(el: &Element, out: &mut Vec<FlatClip>, path: &mut Vec<String>) {
             });
         }
     }
-    path.pop();
 }
 
 /// Flatten a timeline's leaves (clips, gaps, transitions).
 fn flatten(tl: &Timeline) -> Vec<FlatClip> {
     let mut out = Vec::new();
-    let mut path = Vec::new();
-    walk(&tl.tracks, &mut out, &mut path);
+    walk(&tl.tracks, &mut out);
     out
 }
 
@@ -328,7 +334,7 @@ pub fn verify_roundtrip(source: &Timeline, rt: &Timeline) -> VerifyReport {
                         ),
                     });
                 }
-                let changed_params: Vec<&String> = s
+                let changed_params: Vec<&EffectParam> = s
                     .effect_params
                     .iter()
                     .filter(|p| !d.effect_params.contains(p))

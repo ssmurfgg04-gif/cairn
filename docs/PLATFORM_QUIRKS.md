@@ -147,6 +147,16 @@ dedups; a re-save (new mtime/manifest) is a new, legitimate entry, so
 A→B→A undo arcs stay correct. A pure content hash (no mtime) would have
 collapsed the A→B→A arc into two entries and broken replay.
 
+### D3. SQLite WAL on SMB/NFS shares is unsafe — tripwire + doctor gate
+WAL's `-shm` coordination assumes local mmap + locking; network
+filesystems violate both (SQLITE_PROTOCOL, torn WAL, silent corruption).
+This is not theoretical — it is the standard SQLite-on-NAS failure.
+**Fix:** `cairn_store::db::root_on_network_mount` detects UNC roots,
+`Store::open` warns loudly, `cairn doctor` fails `local_volume` on
+shares. Detection is prefix-based (mapped drives / unix mounts are NOT
+caught — a tripwire, not a guarantee). Rule: project workspace may live
+anywhere, but the Cairn home (db.sqlite) lives on a local disk, always.
+
 ## CI methodology
 
 ### C1. Compile-error cascades mask whole layers

@@ -28,5 +28,5 @@ pub mod pipeline;
 pub mod transcode;
 
 pub use model::{ProxyEntry, ProxyIndex, ProxyProfile, ProxyStatus};
-pub use pipeline::{generate, proxy_rel_for, status_of};
+pub use pipeline::{generate, proxy_rel_for, source_fingerprint, status_of, status_of_fast};
 pub use transcode::{CopyTranscoder, FfmpegTranscoder, Transcoder};

@@ -1,15 +1,20 @@
-//! Minimal HTTP/1.1 client for the data plane (dev-grade, fixed-length bodies only).
+//! Data-plane HTTP client (pooled, keep-alive).
 //!
 //! Production hardening note (docs/STATUS.md): the client ships behind the store abstraction;
 //! the hardened transfer path (TLS, proxies, HTTP/2) is provided by the deployment's bucket
 //! SDK gateway. This client implements exactly the semantics the engine needs:
 //! presigned PUT with `x-amz-checksum-sha256`, presigned GET with Range + 403 renewal, and
 //! strict status-code handling.
+//!
+//! Performance note (P0 fix): requests previously opened a fresh `TcpStream`
+//! per call with `Connection: close` and buffered responses via `read_to_end`
+//! to EOF. This module now uses a shared `reqwest::Client` with connection
+//! pooling + keep-alive, bounded bodies, and header-driven framing instead of
+//! EOF. Callers keep the same `put_object` / `get_object` signatures.
 
 #![allow(dead_code)] // full client surface kept for the harness; not all paths exercised
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpStream;
+use std::sync::OnceLock;
 
 /// HTTP response (status, headers lowercased, body).
 pub struct Response {
@@ -28,11 +33,27 @@ impl Response {
     }
 }
 
-/// Parse `http://host:port/path?query` into (host:port, path?query).
-fn split_url(url: &str) -> (String, String) {
-    let rest = url.strip_prefix("http://").unwrap_or(url);
-    let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
-    (authority.to_string(), format!("/{path}"))
+/// Upper bound for a single response/request body through this client.
+/// Chunk traffic is MiB-scale; the cap is a fail-closed guard against a
+/// misbehaving endpoint turning a download into an unbounded allocation.
+pub const MAX_BODY_BYTES: usize = 512 * 1024 * 1024;
+
+fn client() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .pool_max_idle_per_host(32)
+            .pool_idle_timeout(std::time::Duration::from_secs(90))
+            .tcp_keepalive(std::time::Duration::from_secs(60))
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(300))
+            .build()
+            .expect("reqwest pooled client builds")
+    })
+}
+
+fn io_err(e: impl std::fmt::Display) -> std::io::Error {
+    std::io::Error::other(e.to_string())
 }
 
 async fn request(
@@ -41,53 +62,52 @@ async fn request(
     headers: &[(String, String)],
     body: &[u8],
 ) -> std::io::Result<Response> {
-    let (authority, target) = split_url(url);
-    let mut stream = TcpStream::connect(&authority).await?;
-    let mut req =
-        format!("{method} {target} HTTP/1.1\r\nHost: {authority}\r\nConnection: close\r\n");
+    if body.len() > MAX_BODY_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "request body exceeds MAX_BODY_BYTES",
+        ));
+    }
+    let is_put = method == "PUT";
+    let method = reqwest::Method::from_bytes(method.as_bytes()).map_err(io_err)?;
+    let mut req = client().request(method, url);
     for (n, v) in headers {
-        req.push_str(&format!("{n}: {v}\r\n"));
+        req = req.header(n.as_str(), v.as_str());
     }
-    if !body.is_empty() || method == "PUT" {
-        req.push_str(&format!("Content-Length: {}\r\n", body.len()));
-    }
-    req.push_str("\r\n");
-    stream.write_all(req.as_bytes()).await?;
     if !body.is_empty() {
-        stream.write_all(body).await?;
+        req = req.body(body.to_vec());
+    } else if is_put {
+        req = req.body(Vec::new());
     }
-    stream.flush().await?;
-
-    // read full response (Connection: close ⇒ read to EOF)
-    let mut buf = Vec::new();
-    stream.read_to_end(&mut buf).await?;
-
-    let header_end = find_header_end(&buf)
-        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::InvalidData, "bad http response"))?;
-    let head = String::from_utf8_lossy(&buf[..header_end]).into_owned();
-    let mut lines = head.lines();
-    let status_line = lines.next().unwrap_or_default();
-    let status: u16 = status_line
-        .split_whitespace()
-        .nth(1)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0);
+    let resp = req.send().await.map_err(io_err)?;
+    let status = resp.status().as_u16();
     let mut resp_headers = Vec::new();
-    for line in lines {
-        if let Some((n, v)) = line.split_once(':') {
-            resp_headers.push((n.trim().to_lowercase(), v.trim().to_string()));
+    for (n, v) in resp.headers().iter() {
+        resp_headers.push((
+            n.as_str().to_lowercase(),
+            v.to_str().unwrap_or_default().to_string(),
+        ));
+    }
+    if let Some(len) = resp.content_length() {
+        if len > MAX_BODY_BYTES as u64 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "response body exceeds MAX_BODY_BYTES",
+            ));
         }
     }
-    let body_start = header_end + 4;
+    let bytes = resp.bytes().await.map_err(io_err)?;
+    if bytes.len() > MAX_BODY_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "response body exceeds MAX_BODY_BYTES",
+        ));
+    }
     Ok(Response {
         status,
         headers: resp_headers,
-        body: buf[body_start.min(buf.len())..].to_vec(),
+        body: bytes.to_vec(),
     })
-}
-
-fn find_header_end(buf: &[u8]) -> Option<usize> {
-    buf.windows(4).position(|w| w == b"\r\n\r\n")
 }
 
 /// Presigned PUT with checksum (bucket-rejects-corrupt semantics).

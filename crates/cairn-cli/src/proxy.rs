@@ -56,8 +56,12 @@ pub fn cmd_generate(
 }
 
 /// `cairn proxy list` — every indexed proxy with its status.
+///
+/// Default is stat-fast (no rehash): entries whose stored (len, mtime)
+/// match the current file are shown READY without reading media bytes.
+/// Pass `verify=true` (`--verify`) to force a full blake3 rehash.
 #[allow(clippy::unnecessary_wraps)] // symmetric with cmd_generate/cmd_status
-pub fn cmd_list(root: &Path) -> anyhow::Result<()> {
+pub fn cmd_list(root: &Path, verify: bool) -> anyhow::Result<()> {
     let idx = std::fs::read(cairn_proxy::pipeline::index_path(root))
         .map_err(anyhow::Error::msg)
         .and_then(|b| cairn_proxy::model::ProxyIndex::from_json(&b).map_err(anyhow::Error::msg))
@@ -70,14 +74,17 @@ pub fn cmd_list(root: &Path) -> anyhow::Result<()> {
         return Ok(());
     }
     for e in idx.proxies.values() {
-        let digest_now = std::fs::metadata(root.join(&e.media_rel))
-            .ok()
-            .filter(|m| m.is_file())
-            .and_then(|_| cairn_proxy::pipeline::digest_file(&root.join(&e.media_rel)).ok());
-        let state = match (&digest_now, &e.last_error) {
-            (Some(d), None) => e.status(d).as_str(),
-            (None, None) => "STALE?",
-            (_, Some(_)) => "FAILED",
+        let state = if e.last_error.is_some() {
+            "FAILED"
+        } else {
+            match cairn_proxy::pipeline::status_of_fast(root, &e.media_rel, verify)
+                .map_err(anyhow::Error::msg)?
+            {
+                Some((latest, st)) if latest.source_digest == e.source_digest => st.as_str(),
+                // entry is superseded by a newer generation for the same media
+                Some(_) => "OLD",
+                None => "STALE?",
+            }
         };
         println!(
             "{:<10} {:<28} -> {}",

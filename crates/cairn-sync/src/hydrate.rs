@@ -4,6 +4,8 @@
 
 use std::collections::HashMap;
 
+use rand::SeedableRng as _;
+
 use cairn_core::compress::decompress_chunk;
 use cairn_core::hash::Hash;
 use cairn_core::manifest::{assemble_file_into, Manifest};
@@ -15,6 +17,10 @@ use crate::peer::PeerSource;
 use crate::plane::Plane;
 use crate::workspace::workspace_dir;
 use cairn_core::normalize::Transform;
+
+/// Bound for concurrent chunk/manifest fetches (matches the AIMD start
+/// window; plane GETs are idempotent, verification is unchanged).
+const FETCH_CONCURRENCY: usize = 8;
 
 /// Hydration counters (doctor/status surface). Peer-sourced block counts are
 /// surfaced by the swarm stats (blocks_fetched) — the daemon reports both.
@@ -44,7 +50,16 @@ pub async fn materialize_missing(
     let root = workspace_dir(store, project_id);
     let mut manifest_cache: HashMap<String, Manifest> = HashMap::new();
 
-    for row in store.list_files(project_id) {
+    // Same pushdown: hydration only ever touches synced/clean/placeholder
+    // rows, so don't decode the dirty/conflict/outbox rows to skip them.
+    for row in store.list_files_in_states(
+        project_id,
+        &[
+            LocalState::Synced.as_str(),
+            LocalState::Clean.as_str(),
+            LocalState::Placeholder.as_str(),
+        ],
+    ) {
         if row.mode != "file" {
             continue;
         }
@@ -198,7 +213,25 @@ pub async fn hydrate_one_into<W: std::io::Write>(
         let bytes = match cas.get_async(&hash).await {
             Ok(b) => b,
             Err(_) => {
-                let fetched = plane.get_manifest(tenant, manifest_hash_hex).await?;
+                // Same per-call retry as chunk GETs: manifests are few, but a
+                // single loss here fails the whole file the same way.
+                let mut rng = rand::rngs::StdRng::seed_from_u64(0x9AFE057u64);
+                let mut attempts = 0u32;
+                let fetched = loop {
+                    match plane.get_manifest(tenant, manifest_hash_hex).await {
+                        Ok(b) => break b,
+                        Err(e) => {
+                            attempts += 1;
+                            if !crate::retry::should_retry(e.retry_class(), attempts - 1) {
+                                return Err(e);
+                            }
+                            tokio::time::sleep(std::time::Duration::from_millis(
+                                crate::retry::backoff_millis(attempts, &mut rng),
+                            ))
+                            .await;
+                        }
+                    }
+                };
                 // cache locally (hash-verified put): the reconcile sweep and offline
                 // re-materialization need manifests in the local CAS — a hydrated device
                 // whose CAS lacks the manifest silently skips rehash reconciliation.
@@ -266,27 +299,63 @@ pub async fn hydrate_one_into<W: std::io::Write>(
             peer.warm_blocks(&missing).await;
         }
     }
-    for e in &entries {
-        let h = e.chunk_hash;
-        if cas.contains(&h) {
-            continue;
-        }
-        let mut from_peer = false;
-        if let Some(peer) = peer {
-            if peer.peer_may_have(&h) {
-                if let Some(raw) = peer.fetch_peer_block(&h).await {
-                    // hash-verified by the swarm AND by the CAS put (I2 twice —
-                    // the peer is outside every trust boundary)
-                    cas.put(&h, &raw)?;
-                    from_peer = true;
+    // Bounded-parallel fetch (was strictly serial: one awaited round trip
+    // per missing chunk). Peer-then-plane order per chunk is preserved;
+    // verification (peer double-check + CAS put) is unchanged. Missing
+    // hashes are deduped first: a repeated chunk previously downloaded
+    // once per occurrence.
+    // Bound matches the AIMD start window; GETs are idempotent.
+    use futures::StreamExt as _;
+    let mut seen: std::collections::HashSet<Hash> = std::collections::HashSet::new();
+    let missing: Vec<Hash> = entries
+        .iter()
+        .map(|e| e.chunk_hash)
+        .filter(|h| !cas.contains(h) && seen.insert(*h))
+        .collect();
+    let fetched: Vec<Result<Hash, CairnError>> = futures::stream::iter(missing)
+        .map(|h| async move {
+            if let Some(peer) = peer {
+                if peer.peer_may_have(&h) {
+                    if let Some(raw) = peer.fetch_peer_block(&h).await {
+                        // hash-verified by the swarm AND by the CAS put (I2 twice —
+                        // the peer is outside every trust boundary)
+                        cas.put(&h, &raw)?;
+                        return Ok(h);
+                    }
                 }
             }
-        }
-        if !from_peer {
-            let stored = plane.fetch_object(tenant, &h.hex()).await?;
+            // Per-call retry (was single-shot: one lost packet failed the
+            // whole materialize). Auto-class only, capped, full-jitter —
+            // same discipline as the upload path; the GET is idempotent.
+            // Deterministic rng per chunk keeps sim schedules reproducible.
+            let mut rng = rand::rngs::StdRng::seed_from_u64(
+                u64::from_le_bytes(h.0[..8].try_into().unwrap_or([0xF1; 8])),
+            );
+            let mut attempts = 0u32;
+            let stored = loop {
+                match plane.fetch_object(tenant, &h.hex()).await {
+                    Ok(b) => break b,
+                    Err(e) => {
+                        attempts += 1;
+                        if !crate::retry::should_retry(e.retry_class(), attempts - 1) {
+                            return Err(e);
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            crate::retry::backoff_millis(attempts, &mut rng),
+                        ))
+                        .await;
+                    }
+                }
+            };
             let raw = decompress_chunk(&stored, policy, None)?;
             cas.put(&h, &raw)?; // BLAKE3-verified before landing (I2)
-        }
+            Ok(h)
+        })
+        .buffered(FETCH_CONCURRENCY)
+        .collect()
+        .await;
+    for r in fetched {
+        r?;
     }
 
     // Stream assembly. The resolver hands serialized manifest bytes to
@@ -322,17 +391,32 @@ async fn collect_entries_recursive(
     let Manifest::Node { children, .. } = manifest else {
         return Ok(()); // leaf: entries are already in hand
     };
-    for c in children {
-        if cache.contains_key(&c.hash.hex()) {
-            continue;
-        }
-        let bytes = match cas.get_async(&c.hash).await {
-            Ok(b) => b,
-            Err(_) => plane.get_manifest(tenant, &c.hash.hex()).await?,
-        };
+    // Fetch uncached children concurrently (was serial per child); parse
+    // + recurse sequentially afterwards since the cache is `&mut`.
+    // Depth stays tiny in practice (each fanout level covers ≥8192× more
+    // chunks), so sequential recursion costs nothing measurable.
+    use futures::StreamExt as _;
+    let missing: Vec<Hash> = children
+        .iter()
+        .map(|c| c.hash)
+        .filter(|h| !cache.contains_key(&h.hex()))
+        .collect();
+    let fetched: Vec<Result<(Hash, Vec<u8>), CairnError>> = futures::stream::iter(missing)
+        .map(|h| async move {
+            let bytes = match cas.get_async(&h).await {
+                Ok(b) => b,
+                Err(_) => plane.get_manifest(tenant, &h.hex()).await?,
+            };
+            Ok((h, bytes))
+        })
+        .buffered(FETCH_CONCURRENCY)
+        .collect()
+        .await;
+    for item in fetched {
+        let (h, bytes) = item?;
         let child = Manifest::parse(&bytes)?;
         Box::pin(collect_entries_recursive(&child, cas, plane, tenant, cache)).await?;
-        cache.insert(c.hash.hex(), child);
+        cache.insert(h.hex(), child);
     }
     Ok(())
 }

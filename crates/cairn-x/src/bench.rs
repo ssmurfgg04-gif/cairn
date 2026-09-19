@@ -92,6 +92,8 @@ pub fn run(iters: usize) -> anyhow::Result<()> {
     // ---- 3. End-to-end client ingest pipeline ---------------------------
     //    chunk -> per-chunk BLAKE3 -> zstd compress -> verified CAS put
     //    (the exact client hot path for a media file save)
+    //    P1 measurement (perf triage #3): stage-split medians so the next
+    //    profiling run attributes cut vs hash vs put instead of guessing.
     let cas_dir = tempfile::tempdir()?;
     let db_dir = tempfile::tempdir()?;
     let store = cairn_store::Store::open(db_dir.path(), Arc::new(WallClock))?;
@@ -101,20 +103,39 @@ pub fn run(iters: usize) -> anyhow::Result<()> {
     {
         let buf = prng_buffer(128 * 1024 * 1024, 0x1A);
         let mut vals = Vec::new();
+        let mut cut_ms = Vec::new();
+        let mut hash_ms = Vec::new();
+        let mut put_ms = Vec::new();
         for _ in 0..iters {
             let t0 = Instant::now();
             let spans = FastCdc::cut(&buf);
+            cut_ms.push(t0.elapsed().as_secs_f64() * 1000.0);
+            let t1 = Instant::now();
+            let hashed: Vec<(Hash, &[u8])> = spans
+                .iter()
+                .map(|s| {
+                    let sl = &buf[s.offset as usize..(s.offset + u64::from(s.len)) as usize];
+                    (Hash::of(sl), sl)
+                })
+                .collect();
+            hash_ms.push(t1.elapsed().as_secs_f64() * 1000.0);
+            let t2 = Instant::now();
             let mut n: u64 = 0;
-            for s in &spans {
-                let sl = &buf[s.offset as usize..(s.offset + u64::from(s.len)) as usize];
-                let h = Hash::of(sl);
+            for (h, sl) in &hashed {
                 // local CAS stores RAW (compression is wire-only, engine.rs:131)
-                cas.put(&h, sl)?;
-                n += u64::from(s.len);
+                cas.put(h, sl)?;
+                n += sl.len() as u64;
             }
+            put_ms.push(t2.elapsed().as_secs_f64() * 1000.0);
             let dt = t0.elapsed().as_secs_f64();
             vals.push(mibs(n, dt));
         }
+        println!(
+            "ingest_stages          cut p50 {:>8.1} ms | hash p50 {:>8.1} ms | put p50 {:>8.1} ms   (128 MiB)",
+            percentile(cut_ms, 0.5),
+            percentile(hash_ms, 0.5),
+            percentile(put_ms, 0.5),
+        );
         chunk_bytes_total = buf.len() as u64;
         samples.push(Sample::new("ingest_pipeline", "MiB/s", vals));
     }

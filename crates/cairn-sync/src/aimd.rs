@@ -85,6 +85,10 @@ impl Aimd {
 pub struct Gate {
     aimd: Aimd,
     in_flight: AtomicUsize,
+    /// Wakes one parked `acquire_async` waiter per released slot (replaces
+    /// the old 5ms poll loop in uploaders — same permit discipline, no
+    /// timer churn while saturated).
+    notify: tokio::sync::Notify,
 }
 
 impl Gate {
@@ -94,6 +98,7 @@ impl Gate {
         Gate {
             aimd: Aimd::new(8, 4, 64),
             in_flight: AtomicUsize::new(0),
+            notify: tokio::sync::Notify::new(),
         }
     }
 
@@ -105,6 +110,19 @@ impl Gate {
             true
         } else {
             false
+        }
+    }
+
+    /// Async acquire: parks on the waiter queue instead of polling.
+    /// Deadlock-free: failure implies permits are outstanding (the limit
+    /// floor is ≥ min > 0), and every outstanding permit ends in `finish`,
+    /// which notifies exactly one waiter per released slot.
+    pub async fn acquire_async(&self) {
+        loop {
+            if self.try_acquire() {
+                return;
+            }
+            self.notify.notified().await;
         }
     }
 
@@ -124,6 +142,7 @@ impl Gate {
             // so we halve the correct restored value.
             self.aimd.on_failure();
         }
+        self.notify.notify_one();
     }
 
     /// Current limit (metrics).

@@ -41,9 +41,30 @@ pub struct Store {
 /// Current client schema version (`PRAGMA user_version`).
 pub const CLIENT_SCHEMA_VERSION: i64 = 3;
 
+/// True when `root` lives on a network filesystem where SQLite WAL is
+/// unsafe: `-shm` coordination assumes POSIX mmap + local locking, which
+/// SMB/NFS violate (SQLITE_PROTOCOL, torn WAL, silent corruption).
+/// Detection is prefix-based and Windows-focused (UNC `\\server\share` —
+/// the primary deployment target): mapped drives and unix mounts are NOT
+/// detected, so this is a tripwire, not a guarantee. Returns false for
+/// relative paths (resolved by the caller before open in practice).
+#[must_use]
+pub fn root_on_network_mount(root: &Path) -> bool {
+    let s = root.to_string_lossy();
+    s.starts_with(r"\\") || s.starts_with("//")
+}
+
 impl Store {
     /// Open (or create) the store at `root` (a directory). Applies migrations.
     pub fn open(root: &Path, clock: std::sync::Arc<dyn SystemClock>) -> Result<Self, CairnError> {
+        if root_on_network_mount(root) {
+            // Loud, not fatal: refusing to open would strand existing
+            // setups; silent corruption strands their data. Doctor gates it.
+            tracing::warn!(
+                root = %root.display(),
+                "store lives on a network share: SQLite WAL is unsafe there (locking/mmap); move the home to a local disk"
+            );
+        }
         std::fs::create_dir_all(root)
             .map_err(|e| CairnError::new(cairn_core::ErrorKind::Io, format!("mkdir root: {e}")))?;
         let db_path = root.join("db.sqlite");
@@ -65,6 +86,15 @@ impl Store {
             .map_err(|e| CairnError::new(cairn_core::ErrorKind::Io, format!("cache_size: {e}")))?;
         conn.pragma_update(None, "temp_store", "MEMORY")
             .map_err(|e| CairnError::new(cairn_core::ErrorKind::Io, format!("temp_store: {e}")))?;
+        // Checkpoint cadence: without an explicit autocheckpoint, a long-lived
+        // reader (dashboard/scan holding a snapshot) lets the WAL grow without
+        // bound during write bursts until the partition fills (SQLITE_FULL).
+        // 1000 pages ≈ 4 MiB — the production baseline; passive checkpoints
+        // never block writers.
+        conn.pragma_update(None, "wal_autocheckpoint", 1000)
+            .map_err(|e| {
+                CairnError::new(cairn_core::ErrorKind::Io, format!("wal_autocheckpoint: {e}"))
+            })?;
         let store = Store {
             conn: std::sync::Arc::new(Mutex::new(conn)),
             root: root.to_path_buf(),
@@ -259,15 +289,44 @@ impl Store {
     #[must_use]
     pub fn list_files(&self, project_id: &str) -> Vec<FileRow> {
         let conn = self.conn.lock().expect("store poisoned");
-        let mut stmt = match conn.prepare(
+        Self::query_files(
+            &conn,
             "SELECT path, project_id, manifest_hash, size, mode, mtime, local_state
              FROM files WHERE project_id=?1 ORDER BY path",
-        ) {
+            vec![project_id.to_string()],
+        )
+    }
+
+    /// Files in any of `states` (e.g. `&["dirty", "conflict"]`): predicate
+    /// pushdown so hot passes don't decode the whole table to discard most
+    /// of it. Same row shape and ordering as [`Store::list_files`]; empty
+    /// `states` returns empty (never "all").
+    pub fn list_files_in_states(&self, project_id: &str, states: &[&str]) -> Vec<FileRow> {
+        if states.is_empty() {
+            return Vec::new();
+        }
+        let placeholders = states.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "SELECT path, project_id, manifest_hash, size, mode, mtime, local_state
+             FROM files WHERE project_id=?1 AND local_state IN ({placeholders}) ORDER BY path"
+        );
+        let mut params = vec![project_id.to_string()];
+        params.extend(states.iter().map(|s| s.to_string()));
+        let conn = self.conn.lock().expect("store poisoned");
+        Self::query_files(&conn, &sql, params)
+    }
+
+    fn query_files(
+        conn: &rusqlite::Connection,
+        sql: &str,
+        params: Vec<String>,
+    ) -> Vec<FileRow> {
+        let mut stmt = match conn.prepare(sql) {
             Ok(s) => s,
             Err(_) => return Vec::new(),
         };
         let rows = stmt
-            .query_map(rusqlite::params![project_id], |r| {
+            .query_map(rusqlite::params_from_iter(params), |r| {
                 Ok(FileRow {
                     path: r.get(0)?,
                     project_id: r.get(1)?,
@@ -808,6 +867,70 @@ mod tests {
         let (_d, s) = open_tmp();
         assert_eq!(s.schema_version().unwrap(), CLIENT_SCHEMA_VERSION);
         assert!(s.get_file("p1", "a.mov").is_none());
+    }
+
+    fn file_row(path: &str, state: &str) -> FileRow {
+        FileRow {
+            path: path.into(),
+            project_id: "p1".into(),
+            manifest_hash: None,
+            size: 10,
+            mode: "file".into(),
+            mtime: 1,
+            local_state: state.into(),
+        }
+    }
+
+    #[test]
+    fn list_files_in_states_matches_list_files_subset() {
+        let (_d, s) = open_tmp();
+        s.put_file(&file_row("a.mov", "dirty")).unwrap();
+        s.put_file(&file_row("b.mov", "synced")).unwrap();
+        s.put_file(&file_row("c.mov", "conflict")).unwrap();
+        let all = s.list_files("p1");
+        assert_eq!(all.len(), 3);
+        // path order preserved
+        let mut got: Vec<String> = s
+            .list_files_in_states("p1", &["dirty", "conflict"])
+            .into_iter()
+            .map(|r| r.path)
+            .collect();
+        got.sort();
+        assert_eq!(got, vec!["a.mov".to_string(), "c.mov".to_string()]);
+        assert!(s.list_files_in_states("p1", &[]).is_empty());
+        assert!(s.list_files_in_states("p1", &["nope"]).is_empty());
+    }
+
+    #[test]
+    fn network_mount_tripwire() {
+        use std::path::Path;
+        assert!(super::root_on_network_mount(Path::new(r"\\nas\share\cairn")));
+        assert!(super::root_on_network_mount(Path::new("//nas/share/cairn")));
+        assert!(!super::root_on_network_mount(Path::new(
+            r"C:\Users\ed\cairn-home"
+        )));
+        assert!(!super::root_on_network_mount(Path::new("relative/home")));
+    }
+
+    /// Hardened open discipline: WAL + NORMAL + bounded autocheckpoint must
+    /// be exactly what the connection serves, read back (never trust that
+    /// a pragma stuck — pooling layers rebuild connections silently).
+    #[test]
+    fn open_applies_hardened_pragma_stack() {
+        let (_d, s) = open_tmp();
+        let conn = s.conn.lock().expect("store poisoned");
+        let journal: String = conn
+            .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(journal.to_lowercase(), "wal");
+        let synchronous: i64 = conn
+            .query_row("PRAGMA synchronous", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(synchronous, 1, "NORMAL == 1");
+        let autocheckpoint: i64 = conn
+            .query_row("PRAGMA wal_autocheckpoint", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(autocheckpoint, 1000);
     }
 
     /// ADR-0014 Phase 3: pid-bound leases renew in place, a DEAD owner's row is

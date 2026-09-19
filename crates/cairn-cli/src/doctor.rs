@@ -118,6 +118,22 @@ pub fn collect(home: &Path) -> Report {
         t.elapsed().as_secs_f64() * 1000.0,
     );
 
+    // Local volume: SQLite WAL coordination (-shm mmap + locking) is void
+    // on SMB/NFS — running the home there risks silent corruption, so
+    // doctor fails LOUD rather than letting it pass as healthy.
+    rep.push(
+        "local_volume",
+        if cairn_store::db::root_on_network_mount(home) {
+            Err(format!(
+                "home {} is on a network share: move it to a local disk",
+                home.display()
+            ))
+        } else {
+            Ok("home on local volume".into())
+        },
+        t.elapsed().as_secs_f64() * 1000.0,
+    );
+
     // CAS integrity sample (doctor spec: sample verify)
     let cas_dir = home.join("blobs");
     let conn = store.conn_handle();

@@ -25,3 +25,8 @@ docs/superpowers/
 .superpowers/
 .agents/skills/
 skills/
+
+# signing keys + local server state — never commit (Issue #1 blocker)
+.cairn-server/
+*.key
+.secrets/

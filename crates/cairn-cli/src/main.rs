@@ -535,6 +535,9 @@ pub mod proxy_cmd {
         List {
             #[arg(long, default_value = ".")]
             root: String,
+            /// Force a full blake3 rehash instead of the stat fast-path
+            #[arg(long)]
+            verify: bool,
         },
         /// One media file's proxy state
         Status {
@@ -2239,7 +2242,7 @@ fn run_proxy(cmd: proxy_cmd::ProxyCmd) -> anyhow::Result<()> {
         } => {
             proxy::cmd_generate(Path::new(&root), &media, max_height, crf, copy)?;
         }
-        ProxyCmd::List { root } => proxy::cmd_list(Path::new(&root))?,
+        ProxyCmd::List { root, verify } => proxy::cmd_list(Path::new(&root), verify)?,
         ProxyCmd::Status { root, media } => proxy::cmd_status(Path::new(&root), &media)?,
     }
     Ok(())

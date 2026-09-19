@@ -60,6 +60,14 @@ pub struct PassStats {
     pub appended: u32,
     pub conflicts_resolved: u32,
     pub applied_entries: u32,
+    /// P1 measurement (perf triage #3): per-stage ingest timings accumulated
+    /// across `process_file` calls in this pass — read / hash+chunk /
+    /// local-CAS / network. Lets the next profiling run attribute the
+    /// pipeline instead of guessing (serial-vs-parallel lives here).
+    pub read_ms: u64,
+    pub hash_ms: u64,
+    pub cas_ms: u64,
+    pub net_ms: u64,
 }
 
 impl Engine {
@@ -74,7 +82,16 @@ impl Engine {
     async fn push_phase(&self, stats: &mut PassStats) -> Result<(), CairnError> {
         // recovery first: resend any acknowledged-but-unsent outbox entries (I2)
         self.flush_outbox(stats).await?;
-        for f in self.store.list_files(&self.local_ns) {
+        // State filter pushed into SQL: busy projects skip decoding every
+        // synced row just to discard it (same set as the old in-memory
+        // filter — dirty/conflict only; unknown strings never match either).
+        for f in self.store.list_files_in_states(
+            &self.local_ns,
+            &[
+                LocalState::Dirty.as_str(),
+                LocalState::Conflict.as_str(),
+            ],
+        ) {
             let Some(state) = LocalState::parse(&f.local_state) else {
                 continue;
             };
@@ -110,9 +127,11 @@ impl Engine {
         // file machinery — on Linux with the io_uring driver armed (tokio
         // `io-uring` feature, runtime-probed with automatic fallback) big reads
         // land on the ring instead of parking an I/O worker on `std::fs::read`.
+        let t_read = std::time::Instant::now();
         let bytes = tokio::fs::read(&full)
             .await
             .map_err(|e| CairnError::new(ErrorKind::Io, format!("read {path}: {e}")))?;
+        stats.read_ms += t_read.elapsed().as_millis() as u64;
         // raw (pre-normalization) size feeds the content-derived idempotency key
         // and the upsert op below — captured before `bytes` moves into the lane
         let raw_len = bytes.len();
@@ -168,9 +187,12 @@ impl Engine {
         } else {
             bytes
         };
+        let t_hash = std::time::Instant::now();
         let (sh, content) = crate::offload::hash_stream_owned(content, fine).await?;
+        stats.hash_ms += t_hash.elapsed().as_millis() as u64;
 
         // local CAS insert (verified) — content-addressed, idempotent
+        let t_cas = std::time::Instant::now();
         for (span, h) in sh.spans.iter().zip(sh.chunk_hashes.iter()) {
             let raw = &content[span.offset as usize..(span.offset + u64::from(span.len)) as usize];
             if self.cas.contains(h) {
@@ -180,42 +202,108 @@ impl Engine {
                 stats.uploaded_chunks += 1;
             }
         }
+        stats.cas_ms += t_cas.elapsed().as_millis() as u64;
 
         // upload missing chunks via session + AIMD
         let hash_hexes: Vec<String> = sh.chunk_hashes.iter().map(Hash::hex).collect();
-        let missing = self
-            .plane
-            .batch_exists(&self.tenant_id, &hash_hexes)
-            .await?;
+        let t_net = std::time::Instant::now();
+        // Per-call retry like the PUT path: a lost batch_exists fails the
+        // whole file push otherwise. Read-only → trivially idempotent.
+        let mut attempts = 0u32;
+        let mut rng = rand::rngs::StdRng::seed_from_u64(0xbe7c4e55u64);
+        let missing = loop {
+            match self.plane.batch_exists(&self.tenant_id, &hash_hexes).await {
+                Ok(m) => break m,
+                Err(e) => {
+                    attempts += 1;
+                    if !should_retry(e.retry_class(), attempts - 1) {
+                        return Err(e);
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(backoff_millis(
+                        attempts, &mut rng,
+                    )))
+                    .await;
+                }
+            }
+        };
         if !missing.is_empty() {
-            let session = self
-                .plane
-                .create_session(&self.tenant_id, &self.author_id, &self.project_id, &missing)
-                .await?;
+            // Same retry; a duplicate session on retry is a harmless orphan
+            // (sessions expire; PUTs only ever target the winning session).
+            let mut attempts = 0u32;
+            let session = loop {
+                match self
+                    .plane
+                    .create_session(&self.tenant_id, &self.author_id, &self.project_id, &missing)
+                    .await
+                {
+                    Ok(s) => break s,
+                    Err(e) => {
+                        attempts += 1;
+                        if !should_retry(e.retry_class(), attempts - 1) {
+                            return Err(e);
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(backoff_millis(
+                            attempts, &mut rng,
+                        )))
+                        .await;
+                    }
+                }
+            };
             // receipts must report the size the BUCKET holds — the compressed/stored bytes —
             // because CompleteUpload sample-verifies via HEAD against the object key.
             // (Raw span sizes are only correct for Compression::None; reporting them for
             // zstd-stored chunks rejects every upload.)
+            // O(1) span lookup per chunk (was an O(n) .find() per chunk →
+            // O(n²) per file with many chunks).
+            let span_by_hash: std::collections::HashMap<Hash, &cairn_core::chunker::ChunkSpan> =
+                sh.spans.iter().zip(sh.chunk_hashes.iter()).map(|(s, h)| (*h, s)).collect();
+            // Bounded-parallel upload (was strictly serial: N chunks = N
+            // sequential compress + round trips). Each PUT is independent and
+            // idempotent (content-addressed); receipts are still built from
+            // `session.puts` order, so completion semantics are unchanged.
+            // A failed chunk aborts the pass like before — chunks already in
+            // flight are crash-equivalent orphans (sessions expire; the
+            // server sweeps), exactly what a kill -9 mid-upload produces.
+            // Bound tracks the AIMD window so the gate still throttles us.
+            use futures::StreamExt as _;
+            let bound = self.gate.limit().clamp(4, 32);
+            let puts: Vec<(String, String)> = session
+                .puts
+                .iter()
+                .map(|(h, u)| (h.clone(), u.clone()))
+                .collect();
+            // Shared borrows bound once so each `async move` future copies
+            // the reference, not the owned value (FnMut closure runs per item).
+            let spans = &span_by_hash;
+            let body: &[u8] = &content;
+            let d = dict.as_ref();
+            let uploaded: Vec<Result<(String, u64), CairnError>> =
+                futures::stream::iter(puts)
+                    .map(|(hash_hex, url)| async move {
+                        let h = Hash::from_hex(&hash_hex).ok_or_else(|| {
+                            CairnError::new(ErrorKind::Internal, "bad hash in session")
+                        })?;
+                        let span = spans.get(&h).ok_or_else(|| {
+                            CairnError::new(
+                                ErrorKind::Internal,
+                                format!("session hash {hash_hex} not in local chunk set"),
+                            )
+                        })?;
+                        let raw = &body[span.offset as usize
+                            ..(span.offset + u64::from(span.len)) as usize];
+                        let stored = compress::compress_chunk(raw, policy, d)?;
+                        let checksum = cairn_core::hash::hex_encode(&Sha256::digest(&stored));
+                        self.upload_with_aimd(&url, &stored, &checksum).await?;
+                        Ok((hash_hex, stored.len() as u64))
+                    })
+                    .buffered(bound)
+                    .collect()
+                    .await;
             let mut stored_sizes: std::collections::HashMap<String, u64> =
                 std::collections::HashMap::new();
-            for (hash_hex, url) in &session.puts {
-                let h = Hash::from_hex(hash_hex)
-                    .ok_or_else(|| CairnError::new(ErrorKind::Internal, "bad hash in session"))?;
-                let Some(span) = sh
-                    .spans
-                    .iter()
-                    .zip(sh.chunk_hashes.iter())
-                    .find(|(_, ch)| **ch == h)
-                    .map(|(s, _)| s)
-                else {
-                    continue;
-                };
-                let raw =
-                    &content[span.offset as usize..(span.offset + u64::from(span.len)) as usize];
-                let stored = compress::compress_chunk(raw, policy, dict.as_ref())?;
-                let checksum = cairn_core::hash::hex_encode(&Sha256::digest(&stored));
-                self.upload_with_aimd(url, &stored, &checksum).await?;
-                stored_sizes.insert(hash_hex.clone(), stored.len() as u64);
+            for r in uploaded {
+                let (hash_hex, len) = r?;
+                stored_sizes.insert(hash_hex, len);
             }
             let receipts: Vec<UploadReceipt> = session
                 .puts
@@ -226,7 +314,33 @@ impl Engine {
                     etag: String::new(),
                 })
                 .collect();
-            let out = self.plane.complete(&session.id, &receipts).await?;
+            // Per-call retry (was single-shot AFTER all uploads succeeded:
+            // losing `complete` discarded a fully-uploaded session's worth of
+            // work back to the next pass). Same Auto-only discipline; the
+            // (session, receipts) pair is idempotent server-side.
+            let mut seed = 0xcbf29ce484222325u64;
+            for b in session.id.bytes() {
+                seed ^= u64::from(b);
+                seed = seed.wrapping_mul(0x100000001b3);
+            }
+            let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+            let mut attempts = 0u32;
+            let out = loop {
+                match self.plane.complete(&session.id, &receipts).await {
+                    Ok(out) => break out,
+                    Err(e) => {
+                        attempts += 1;
+                        if !should_retry(e.retry_class(), attempts - 1) {
+                            return Err(e);
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(backoff_millis(
+                            attempts, &mut rng,
+                        )))
+                        .await;
+                    }
+                }
+            };
+            stats.net_ms += t_net.elapsed().as_millis() as u64;
             if !out.rejected.is_empty() {
                 return Err(CairnError::new(
                     ErrorKind::ChecksumMismatch,
@@ -260,19 +374,83 @@ impl Engine {
         );
         // children first (leaf-first order), parent last — crash between the two leaves
         // unreferenced children that GC reclaims, never a dangling parent
+        let mut seed = 0xcbf29ce484222325u64;
+        for b in path.bytes() {
+            seed ^= u64::from(b);
+            seed = seed.wrapping_mul(0x100000001b3);
+        }
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
         for (child_hash, child_bytes) in &built.child_objects {
+            let t = std::time::Instant::now();
             self.cas.put(child_hash, child_bytes)?;
-            self.plane
-                .put_manifest(&self.tenant_id, &child_hash.hex(), child_bytes)
-                .await?;
+            stats.cas_ms += t.elapsed().as_millis() as u64;
+            // Content-addressed PUT → idempotent; retried like chunk PUTs.
+            let mut attempts = 0u32;
+            loop {
+                let t = std::time::Instant::now();
+                match self
+                    .plane
+                    .put_manifest(&self.tenant_id, &child_hash.hex(), child_bytes)
+                    .await
+                {
+                    Ok(()) => {
+                        stats.net_ms += t.elapsed().as_millis() as u64;
+                        break;
+                    }
+                    Err(e) => {
+                        stats.net_ms += t.elapsed().as_millis() as u64;
+                        attempts += 1;
+                        if !should_retry(e.retry_class(), attempts - 1) {
+                            return Err(e);
+                        }
+                        tokio::time::sleep(std::time::Duration::from_millis(backoff_millis(
+                            attempts, &mut rng,
+                        )))
+                        .await;
+                    }
+                }
+            }
         }
         let manifest = built.manifest;
         let (manifest_hash, manifest_bytes) = manifest.serialize();
         // mirror the manifest object into the local CAS (hydration path reads it offline)
+        let t = std::time::Instant::now();
         self.cas.put(&manifest_hash, &manifest_bytes)?;
-        self.plane
-            .put_manifest(&self.tenant_id, &manifest_hash.hex(), &manifest_bytes)
-            .await?;
+        stats.cas_ms += t.elapsed().as_millis() as u64;
+        let mut attempts = 0u32;
+        loop {
+            let t = std::time::Instant::now();
+            match self
+                .plane
+                .put_manifest(&self.tenant_id, &manifest_hash.hex(), &manifest_bytes)
+                .await
+            {
+                Ok(()) => {
+                    stats.net_ms += t.elapsed().as_millis() as u64;
+                    break;
+                }
+                Err(e) => {
+                    stats.net_ms += t.elapsed().as_millis() as u64;
+                    attempts += 1;
+                    if !should_retry(e.retry_class(), attempts - 1) {
+                        return Err(e);
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(backoff_millis(
+                        attempts, &mut rng,
+                    )))
+                    .await;
+                }
+            }
+        }
+        tracing::debug!(
+            path = %path,
+            chunks = sh.spans.len(),
+            read_ms = stats.read_ms,
+            hash_ms = stats.hash_ms,
+            cas_ms = stats.cas_ms,
+            net_ms = stats.net_ms,
+            "ingest stages"
+        );
 
         // Stat-only drift short-circuit (round 18, the W4 catch): a fork
         // marker on this path means apply REFUSED a remote upsert (§7.1 guard
@@ -405,9 +583,7 @@ impl Engine {
         checksum: &str,
     ) -> Result<(), CairnError> {
         let mut attempts = 0u32;
-        while !self.gate.try_acquire() {
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        }
+        self.gate.acquire_async().await;
         let mut rng = rand::rngs::StdRng::seed_from_u64(
             cairn_core::clock::WallClock
                 .now_millis()
@@ -426,10 +602,8 @@ impl Engine {
                     if should_retry(e.retry_class(), attempts - 1) {
                         let delay = backoff_millis(attempts, &mut rng);
                         tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
-                        // re-acquire for the next attempt
-                        while !self.gate.try_acquire() {
-                            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-                        }
+                        // re-acquire for the next attempt (parks, no polling)
+                        self.gate.acquire_async().await;
                         continue;
                     }
                     return Err(e);
@@ -613,17 +787,45 @@ impl Engine {
             Some(cairn_proto::pb::journal_op::Op::FileUpsert(u)) => Some(u.manifest_hash.clone()),
             _ => None,
         };
-        match self
-            .plane
-            .append(
-                &self.tenant_id,
-                &self.project_id,
-                &self.author_id,
-                request_id,
-                op,
-                lease_token,
-            )
-            .await
+        // Per-call retry (was single-shot: one lost packet failed the pass
+        // even though the outbox row survives for the next pass). Auto-class
+        // only, capped, full-jitter; the append is idempotent by request_id
+        // (server dedups), so retrying is safe. Deterministic rng per
+        // request keeps sim schedules reproducible.
+        let mut seed = 0xcbf29ce484222325u64;
+        for b in request_id.bytes() {
+            seed ^= u64::from(b);
+            seed = seed.wrapping_mul(0x100000001b3);
+        }
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        let mut attempts = 0u32;
+        let append_out = loop {
+            match self
+                .plane
+                .append(
+                    &self.tenant_id,
+                    &self.project_id,
+                    &self.author_id,
+                    request_id,
+                    op.clone(),
+                    lease_token,
+                )
+                .await
+            {
+                Ok(out) => break Ok(out),
+                Err(e) => {
+                    attempts += 1;
+                    if !should_retry(e.retry_class(), attempts - 1) {
+                        break Err(e);
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(backoff_millis(
+                        attempts, &mut rng,
+                    )))
+                    .await;
+                }
+            }
+        };
+        match append_out
         {
             Ok((_seq, _dedup)) => {
                 self.outbox.ack(request_id)?;
@@ -749,10 +951,28 @@ impl Engine {
 
     async fn pull_phase(&self, stats: &mut PassStats) -> Result<(), CairnError> {
         let cursor = self.store.get_cursor(&self.author_id, &self.local_ns);
-        let entries = self
-            .plane
-            .fetch_batch(&self.tenant_id, &self.project_id, cursor, 512)
-            .await?;
+        // Read-only → retried like everything else on the flaky path.
+        let mut rng = rand::rngs::StdRng::seed_from_u64(0x9114E55u64);
+        let mut attempts = 0u32;
+        let entries = loop {
+            match self
+                .plane
+                .fetch_batch(&self.tenant_id, &self.project_id, cursor, 512)
+                .await
+            {
+                Ok(e) => break e,
+                Err(e) => {
+                    attempts += 1;
+                    if !should_retry(e.retry_class(), attempts - 1) {
+                        return Err(e);
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(backoff_millis(
+                        attempts, &mut rng,
+                    )))
+                    .await;
+                }
+            }
+        };
         for e in &entries {
             // Own-device ops are already folded locally: the push path marked the row
             // synced (mark_synced) when the append was acked. Replaying them here would

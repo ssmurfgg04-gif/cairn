@@ -59,23 +59,65 @@ fn load_index(root: &Path) -> Result<ProxyIndex, String> {
     }
 }
 
+/// (len bytes, mtime millis) fingerprint of a file — cheap stat-only check.
+/// Used as a fast path so `proxy list` doesn't rehash gigabytes of media.
+pub fn source_fingerprint(path: &Path) -> Result<(u64, i64), String> {
+    let meta = fs::metadata(path).map_err(|e| format!("stat {}: {e}", path.display()))?;
+    let mtime_ms = meta
+        .modified()
+        .map_err(|e| format!("mtime {}: {e}", path.display()))?
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    Ok((meta.len(), mtime_ms))
+}
+
 /// Status of a media file's proxy: current entry + its state, or None.
 pub fn status_of(
     root: &Path,
     media_rel: &str,
 ) -> Result<Option<(ProxyEntry, crate::model::ProxyStatus)>, String> {
+    status_of_fast(root, media_rel, true)
+}
+
+/// Fast status: `verify=false` trusts a matching (len, mtime) fingerprint and
+/// skips the full blake3 rehash; `verify=true` (or unknown/mismatched stat)
+/// falls back to `digest_file`. Returns the entry + status, or None.
+pub fn status_of_fast(
+    root: &Path,
+    media_rel: &str,
+    verify: bool,
+) -> Result<Option<(ProxyEntry, crate::model::ProxyStatus)>, String> {
     let src = root.join(media_rel.trim_start_matches(['/', '\\']));
     if !src.is_file() {
         return Ok(None);
     }
-    let digest = digest_file(&src)?;
     let idx = load_index(root)?;
-    Ok(idx
+    let latest = idx
         .proxies
         .values()
         .filter(|e| e.media_rel == media_rel)
         .max_by_key(|e| e.generated_at_ms)
-        .map(|e| (e.clone(), e.status(&digest))))
+        .cloned();
+    let Some(e) = latest else {
+        return Ok(None);
+    };
+    if e.last_error.is_some() {
+        return Ok(Some((e, crate::model::ProxyStatus::Failed)));
+    }
+    if !verify {
+        if let (Some(want_len), Some(want_mtime)) = (e.source_len, e.source_mtime_ms) {
+            if let Ok((cur_len, cur_mtime)) = source_fingerprint(&src) {
+                if cur_len == want_len && cur_mtime == want_mtime {
+                    return Ok(Some((e, crate::model::ProxyStatus::Ready)));
+                }
+                // stat mismatch → fall through to verified digest below
+            }
+        }
+    }
+    let digest = digest_file(&src)?;
+    let st = e.status(&digest);
+    Ok(Some((e, st)))
 }
 
 /// Generate (or reuse) the proxy for one media file.
@@ -105,6 +147,7 @@ pub fn generate(
     }
 
     let digest = digest_file(&src)?;
+    let (src_len, src_mtime_ms) = source_fingerprint(&src).ok().unwrap_or((meta.len(), 0));
     let mut idx = load_index(root)?;
 
     // reuse: current entry + file present
@@ -141,6 +184,8 @@ pub fn generate(
                 bytes: 0,
                 generated_at_ms: now_ms,
                 last_error: Some(err.clone()),
+                source_len: Some(src_len),
+                source_mtime_ms: Some(src_mtime_ms),
             };
             idx.proxies.insert(digest.clone(), fail);
             if let Ok(json) = idx.to_json() {
@@ -158,6 +203,8 @@ pub fn generate(
         bytes,
         generated_at_ms: now_ms,
         last_error: None,
+        source_len: Some(src_len),
+        source_mtime_ms: Some(src_mtime_ms),
     };
     idx.proxies
         .insert(entry.source_digest.clone(), entry.clone());
@@ -262,5 +309,39 @@ mod tests {
         let d2 = digest_file(&root.join("cuts/v1.mov")).unwrap();
         assert_eq!(d1, d2);
         assert_eq!(d1.len(), 64);
+    }
+
+    #[test]
+    fn fast_path_skips_rehash_when_stat_matches() {
+        let root = setup();
+        let t = CopyTranscoder;
+        let p = ProxyProfile::default();
+        let e1 = generate(&root, "cuts/v1.mov", &p, &t, 1000).unwrap();
+        assert!(e1.source_len.is_some());
+        assert!(e1.source_mtime_ms.is_some());
+
+        // fast path: unchanged file stays Ready without hashing
+        let (_, st) = status_of_fast(&root, "cuts/v1.mov", false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(st, crate::model::ProxyStatus::Ready);
+
+        // verified path agrees
+        let (_, st_v) = status_of_fast(&root, "cuts/v1.mov", true).unwrap().unwrap();
+        assert_eq!(st_v, crate::model::ProxyStatus::Ready);
+    }
+
+    #[test]
+    fn fast_path_falls_back_to_digest_on_stat_mismatch() {
+        let root = setup();
+        let t = CopyTranscoder;
+        let p = ProxyProfile::default();
+        let _ = generate(&root, "cuts/v1.mov", &p, &t, 1000).unwrap();
+
+        // rewrite with same length but different bytes: stat len matches,
+        // mtime may or may not change — verified path must catch it either way
+        std::fs::write(root.join("cuts/v1.mov"), b"AAAA-media-bytes-v2").unwrap();
+        let (_, st) = status_of_fast(&root, "cuts/v1.mov", true).unwrap().unwrap();
+        assert_eq!(st, crate::model::ProxyStatus::Stale);
     }
 }

@@ -180,8 +180,8 @@ pub async fn nightly_tick(
         Ok("false")
     );
     for t in &tenants {
-        match jobs::gc::gc_pass(state, t, shadow).await {
-            Ok((flagged, violations, scanned)) => {
+        match jobs::gc::gc_pass_stats(state, t, shadow).await {
+            Ok((flagged, violations, scanned, stats)) => {
                 if violations > 0 {
                     tracing::error!(
                         tenant = %t,
@@ -190,7 +190,10 @@ pub async fn nightly_tick(
                     );
                 }
                 summary.push(format!(
-                    "gc {t}: scanned={scanned} flagged={flagged} violations={violations}{}",
+                    "gc {t}: scanned={scanned} flagged={flagged} violations={violations} queries={} fetches={} wall_ms={}{}",
+                    stats.db_queries,
+                    stats.manifest_fetches,
+                    stats.wall_ms,
                     if shadow { " (shadow)" } else { "" }
                 ));
             }

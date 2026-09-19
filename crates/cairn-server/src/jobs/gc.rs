@@ -17,11 +17,38 @@ use super::bump_epoch;
 
 const GRACE_MILLIS: i64 = 14 * 24 * 3600 * 1000;
 
+/// P1 measurement (perf triage #6): GC cost attribution. Counts DB
+/// round-trips + manifest object fetches and walls the whole pass so the
+/// next profiling run can tell a query storm from a deep manifest walk.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct GcStats {
+    /// SQL statements issued (refs, trash, sessions, holds, journal, scan, writes).
+    pub db_queries: u64,
+    /// Object-store reads while walking manifest trees.
+    pub manifest_fetches: u64,
+    /// Wall time of the instrumented pass.
+    pub wall_ms: u64,
+    /// Result counters, mirrored here so one struct tells the whole pass.
+    pub flagged: u64,
+    pub violations: u64,
+    pub scanned: u64,
+}
+
 /// Objects reachable from all roots (chunk hashes + manifest hashes).
 pub async fn mark(state: &ServerState, tenant_id: &str) -> Result<HashSet<String>, CairnError> {
+    let mut stats = GcStats::default();
+    mark_inner(state, tenant_id, &mut stats).await
+}
+
+async fn mark_inner(
+    state: &ServerState,
+    tenant_id: &str,
+    stats: &mut GcStats,
+) -> Result<HashSet<String>, CairnError> {
     let mut live = HashSet::new();
 
     // root 1: refs → commits → trees → manifests
+    stats.db_queries += 1;
     let refs: Vec<String> = sqlx::query("SELECT commit_hash FROM refs WHERE tenant_id=?1")
         .bind(tenant_id)
         .fetch_all(&state.db)
@@ -75,7 +102,7 @@ pub async fn mark(state: &ServerState, tenant_id: &str) -> Result<HashSet<String
                             .unwrap_or_default();
                         pos += 32;
                         live.insert(mh.clone());
-                        collect_manifest_chunks(state, tenant_id, &mh, &mut live).await;
+                        collect_manifest_chunks(state, tenant_id, &mh, &mut live, stats).await;
                     }
                 }
             }
@@ -83,6 +110,7 @@ pub async fn mark(state: &ServerState, tenant_id: &str) -> Result<HashSet<String
     }
 
     // root 2: trash tombstones protect their content until purge
+    stats.db_queries += 1;
     let trash: Vec<String> =
         sqlx::query("SELECT manifest_hash FROM trash WHERE tenant_id=?1 AND manifest_hash<>''")
             .bind(tenant_id)
@@ -94,10 +122,11 @@ pub async fn mark(state: &ServerState, tenant_id: &str) -> Result<HashSet<String
             .collect();
     for mh in trash {
         live.insert(mh.clone());
-        collect_manifest_chunks(state, tenant_id, &mh, &mut live).await;
+        collect_manifest_chunks(state, tenant_id, &mh, &mut live, stats).await;
     }
 
     // root 3: in-flight upload sessions <7d protect their chunk hashes
+    stats.db_queries += 1;
     let cutoff = state.clock.now_millis() - 7 * 24 * 3600 * 1000;
     let sessions: Vec<Vec<u8>> = sqlx::query(
         "SELECT chunk_hashes FROM upload_sessions WHERE tenant_id=?1 AND expires_at>?2 AND state<>'complete'",
@@ -121,6 +150,7 @@ pub async fn mark(state: &ServerState, tenant_id: &str) -> Result<HashSet<String
     }
 
     // root 4: legal holds (∞) — protect the last known manifest of the held path
+    stats.db_queries += 1;
     let holds: Vec<String> = sqlx::query("SELECT path FROM legal_holds WHERE tenant_id=?1")
         .bind(tenant_id)
         .fetch_all(&state.db)
@@ -135,6 +165,7 @@ pub async fn mark(state: &ServerState, tenant_id: &str) -> Result<HashSet<String
         // column" error that failed the ENTIRE gc_pass for any tenant with a
         // legal hold (silently, because shadow mode logged it). The op blob
         // carries the manifest hash; one query, decoded once.
+        stats.db_queries += 1;
         let Some(op_blob) = sqlx::query_scalar::<_, Vec<u8>>(
             "SELECT op FROM journal WHERE tenant_id=?1 AND path=?2 ORDER BY seq DESC LIMIT 1",
         )
@@ -148,7 +179,7 @@ pub async fn mark(state: &ServerState, tenant_id: &str) -> Result<HashSet<String
         };
         if let Ok(op) = cairn_proto::pb::JournalOp::decode(op_blob.as_slice()) {
             if let Some(cairn_proto::pb::journal_op::Op::FileUpsert(u)) = op.op {
-                collect_manifest_chunks(state, tenant_id, &u.manifest_hash, &mut live).await;
+                collect_manifest_chunks(state, tenant_id, &u.manifest_hash, &mut live, stats).await;
                 live.insert(u.manifest_hash);
             }
         }
@@ -162,7 +193,9 @@ async fn collect_manifest_chunks(
     tenant_id: &str,
     manifest_hex: &str,
     live: &mut HashSet<String>,
+    stats: &mut GcStats,
 ) {
+    stats.manifest_fetches += 1;
     let bytes = match state
         .store
         .get(&crate::storage::LocalFsStore::object_key(
@@ -180,7 +213,7 @@ async fn collect_manifest_chunks(
     // Fanout-safe (review round): `flatten()` returns NOTHING for Node manifests, which
     // marked every child chunk of a >8,192-chunk file as garbage and swept LIVE data.
     // Walk the tree recursively, fetching child manifest objects from the store.
-    collect_manifest_tree(state, tenant_id, &m, live, 0).await;
+    collect_manifest_tree(state, tenant_id, &m, live, 0, stats).await;
 }
 
 /// Depth guard: a content-addressed manifest tree cannot cycle (a child's bytes hash to
@@ -195,6 +228,7 @@ fn collect_manifest_tree<'a>(
     m: &'a Manifest,
     live: &'a mut HashSet<String>,
     depth: u32,
+    stats: &'a mut GcStats,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'a>> {
     Box::pin(async move {
         if depth > MAX_MANIFEST_DEPTH {
@@ -210,13 +244,15 @@ fn collect_manifest_tree<'a>(
             Manifest::Node { children, .. } => {
                 for c in children {
                     let hex = c.hash.hex();
+                    stats.manifest_fetches += 1;
                     if let Ok(bytes) = state
                         .store
                         .get(&crate::storage::LocalFsStore::object_key(tenant_id, &hex))
                         .await
                     {
                         if let Ok(child) = Manifest::parse(&bytes) {
-                            collect_manifest_tree(state, tenant_id, &child, live, depth + 1).await;
+                            collect_manifest_tree(state, tenant_id, &child, live, depth + 1, stats)
+                                .await;
                         }
                     } else {
                         // unresolvable child: its chunks are UNREACHABLE to this walk —
@@ -236,11 +272,27 @@ pub async fn gc_pass(
     tenant_id: &str,
     shadow: bool,
 ) -> Result<(u64, u64, u64), CairnError> {
+    gc_pass_stats(state, tenant_id, shadow)
+        .await
+        .map(|(flagged, violations, scanned, _)| (flagged, violations, scanned))
+}
+
+/// GC pass with cost attribution (P1 measurement, perf triage #6).
+/// Returns (would_delete | deleted, violations, scanned, stats).
+pub async fn gc_pass_stats(
+    state: &ServerState,
+    tenant_id: &str,
+    shadow: bool,
+) -> Result<(u64, u64, u64, GcStats), CairnError> {
+    let t0 = std::time::Instant::now();
+    let mut stats = GcStats::default();
     let _epoch = bump_epoch(state).await?; // epoch guard vs packing (§12)
+    stats.db_queries += 1; // bump_epoch
     let now = state.clock.now_millis();
-    let live = mark(state, tenant_id).await?;
+    let live = mark_inner(state, tenant_id, &mut stats).await?;
 
     // scan all chunk rows for the tenant
+    stats.db_queries += 1;
     let rows: Vec<(String, String, i64)> =
         sqlx::query("SELECT hash, state, last_touched FROM chunks WHERE tenant_id=?1")
             .bind(tenant_id)
@@ -268,6 +320,7 @@ pub async fn gc_pass(
             if now - last_touched >= GRACE_MILLIS && !shadow {
                 let key = crate::storage::LocalFsStore::chunk_key(tenant_id, hash);
                 state.store.delete(&key).await?;
+                stats.db_queries += 1;
                 sqlx::query("DELETE FROM chunks WHERE tenant_id=?1 AND hash=?2")
                     .bind(tenant_id)
                     .bind(hash)
@@ -281,6 +334,7 @@ pub async fn gc_pass(
         } else {
             // mark phase: unreachable → deleting (grace period starts)
             if !shadow {
+                stats.db_queries += 1;
                 sqlx::query("UPDATE chunks SET state='deleting', last_touched=?3 WHERE tenant_id=?1 AND hash=?2")
                     .bind(tenant_id)
                     .bind(hash)
@@ -292,6 +346,7 @@ pub async fn gc_pass(
             removed += 1;
         }
     }
+    stats.db_queries += 1; // audit row
     crate::db::audit(
         &state.db,
         &state.clock,
@@ -302,7 +357,22 @@ pub async fn gc_pass(
         &format!("scanned={scanned} flagged={removed} violations={violations}"),
     )
     .await;
-    Ok((removed, violations, scanned))
+    stats.wall_ms = t0.elapsed().as_millis() as u64;
+    stats.flagged = removed;
+    stats.violations = violations;
+    stats.scanned = scanned;
+    tracing::info!(
+        tenant = %tenant_id,
+        scanned,
+        flagged = removed,
+        violations,
+        db_queries = stats.db_queries,
+        manifest_fetches = stats.manifest_fetches,
+        wall_ms = stats.wall_ms,
+        shadow,
+        "gc pass stats"
+    );
+    Ok((removed, violations, scanned, stats))
 }
 
 fn db_err(e: sqlx::Error) -> CairnError {
