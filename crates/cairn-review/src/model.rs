@@ -250,6 +250,16 @@ impl ReviewFile {
         before - self.links.len()
     }
 
+    /// Kill a link immediately (mom-test round): expiry was never
+    /// revocation — the "that link leaked" path needs a same-day kill
+    /// switch. Unknown tokens are a no-op (false), never an error: revoke
+    /// is idempotent by token.
+    pub fn revoke_link(&mut self, token: &str) -> bool {
+        let before = self.links.len();
+        self.links.retain(|l| l.token != token);
+        before != self.links.len()
+    }
+
     /// Look up a version by stack number.
     pub fn version(&self, number: u32) -> Option<&ReviewVersion> {
         self.versions.iter().find(|v| v.number == number)
@@ -355,6 +365,23 @@ mod tests {
         // housekeeping
         assert_eq!(f.prune_links(now() + 10), 1);
         assert_eq!(f.links.len(), 2);
+    }
+
+    #[test]
+    fn revoke_kills_a_link_now() {
+        let mut f = ReviewFile::default();
+        let keep = f.add_link(GuestRole::Commenter, "jane".into(), 0, false, now());
+        let kill = f.add_link(GuestRole::Viewer, "leaked".into(), 0, false, now());
+        // revocation works even on a never-expiring link (ttl 0)
+        assert!(f.revoke_link(&kill));
+        // the revoked token is dead at any timestamp
+        assert!(GuestLink::resolve(&f.links, &kill, now()).is_none());
+        // siblings survive
+        assert!(GuestLink::resolve(&f.links, &keep, now()).is_some());
+        // idempotent by token: unknown/already-revoked is a no-op
+        assert!(!f.revoke_link(&kill));
+        assert!(!f.revoke_link("deadbeef"));
+        assert_eq!(f.links.len(), 1);
     }
 
     #[test]

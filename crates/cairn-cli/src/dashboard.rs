@@ -31,8 +31,20 @@ const INDEX_HTML: &str = include_str!("../assets/dashboard/index.html");
 const APP_CSS: &str = include_str!("../assets/dashboard/app.css");
 const APP_JS: &str = include_str!("../assets/dashboard/app.js");
 
+/// Per-launch dashboard API token (P0 hardening, mom-test round): the
+/// daemon mints one uuid v4 per dashboard start and injects it into the
+/// served page (`window.CAIRN_TOKEN`). Every `/api` request must present
+/// it — header `x-cairn-token` (fetch), or `?t=` for the two clients that
+/// cannot set headers: the presence EventSource and browser download
+/// links. Loopback-only binding alone is NOT a boundary (DNS rebinding +
+/// drive-by POSTs ride the user's own browser); host, origin, and token
+/// gates below make the local API loopback-USER-only.
+#[derive(Clone)]
+struct DashToken(std::sync::Arc<String>);
+
 /// Serve the local dashboard + JSON gateway (loopback only; ADR-0009 policy).
 pub async fn serve(addr: String, state: Arc<DaemonState>) -> anyhow::Result<()> {
+    let token = DashToken(std::sync::Arc::new(uuid::Uuid::new_v4().simple().to_string()));
     let app = Router::new()
         .route("/", get(index))
         .route("/assets/app.css", get(css))
@@ -89,8 +101,15 @@ pub async fn serve(addr: String, state: Arc<DaemonState>) -> anyhow::Result<()> 
         .route("/api/v1/team/join", post(team_join))
         .route("/api/v1/review/publish", post(review_publish))
         .route("/api/v1/review/link", post(review_link))
+        .route("/api/v1/review/revoke", post(review_revoke))
         .route("/api/v1/tl-merge", post(tl_merge))
         .route("/api/v1/compress", post(compress))
+        // P0: host + origin + token gates for EVERY route (the layer wraps
+        // all routes added above). Order matters: layer before with_state.
+        .layer(axum::middleware::from_fn_with_state(
+            token.clone(),
+            security_gate,
+        ))
         .with_state(state);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!(%addr, "dashboard listening (loopback only)");
@@ -98,8 +117,116 @@ pub async fn serve(addr: String, state: Arc<DaemonState>) -> anyhow::Result<()> 
     Ok(())
 }
 
-async fn index() -> axum::response::Html<&'static str> {
-    axum::response::Html(INDEX_HTML)
+/// The page itself: inject the per-launch token where app.js can read it
+/// (the `%%CAIRN_TOKEN%%` placeholder lives in index.html <head>). Static
+/// assets stay token-free so the page loads; every /api call carries it.
+async fn index(
+    axum::Extension(token): axum::Extension<DashToken>,
+) -> axum::response::Html<String> {
+    axum::response::Html(INDEX_HTML.replace("%%CAIRN_TOKEN%%", &token.0))
+}
+
+/// True for the loopback Host forms the dashboard accepts: `127.0.0.1`
+/// (any 127.x), `localhost`, `[::1]` — any port, case-insensitive.
+fn is_loopback_host(hostport: &str) -> bool {
+    let h = hostport.trim();
+    if h.eq_ignore_ascii_case("localhost") || h == "::1" {
+        return true;
+    }
+    // strip :port (last colon; IPv6 arrives bracketed from real clients)
+    let host = match h.rsplit_once(':') {
+        Some((hp, port)) if !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => hp,
+        _ => h,
+    };
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+    host == "::1" || host.eq_ignore_ascii_case("localhost") || host.starts_with("127.")
+}
+
+/// `scheme://loopback[:port]` origins only (the scheme is whatever the
+/// browser says; the AUTHORITY decides — evil.com rebinding to 127.0.0.1
+/// still arrives with Host: evil.com and Origin: https://evil.com).
+fn is_loopback_origin(origin: &str) -> bool {
+    let Some((_scheme, rest)) = origin.split_once("://") else {
+        return false;
+    };
+    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
+    is_loopback_host(authority)
+}
+
+/// Length-independent string compare (the token is a 32-hex uuid; the
+/// constant-time posture costs 4 lines and never lies in a review).
+fn token_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+/// The P0 gate, in order:
+/// 1. HOST — DNS-rebinding protection. A loopback bind is not a trust
+///    boundary: an attacker page can resolve evil.com to 127.0.0.1 and the
+///    browser sends `Host: evil.com`. Anything but a loopback Host dies.
+/// 2. ORIGIN — browsers attach Origin to every fetch/XHR and all
+///    cross-site form POSTs. Present-but-not-loopback (`https://evil.com`,
+///    `null`) dies. Absent means a non-browser client (curl, the tray),
+///    which then still faces the token gate.
+/// 3. TOKEN — every `/api` call must carry the per-launch token. This is
+///    what stops a plain `<img>`/no-cors drive-by from the whole big
+///    internet pointing at the user's own 127.0.0.1.
+///
+/// The token rides downstream as an Extension so the index handler can
+/// inject it into the page without a second source of truth.
+async fn security_gate(
+    axum::extract::State(DashToken(expected)): axum::extract::State<DashToken>,
+    mut req: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::http::header;
+    let deny = |msg: &'static str| {
+        (
+            axum::http::StatusCode::FORBIDDEN,
+            Json(json!({"ok": false, "error": msg})),
+        )
+            .into_response()
+    };
+
+    let host_ok = req
+        .headers()
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .map(is_loopback_host)
+        .unwrap_or(false);
+    if !host_ok {
+        return deny("forbidden: loopback Host required");
+    }
+
+    if let Some(origin) = req.headers().get(header::ORIGIN) {
+        let ok = origin.to_str().map(is_loopback_origin).unwrap_or(false);
+        if !ok {
+            return deny("forbidden: cross-origin request");
+        }
+    }
+
+    if req.uri().path().starts_with("/api/") {
+        let provided = req
+            .headers()
+            .get("x-cairn-token")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned)
+            .or_else(|| {
+                req.uri().query().and_then(|q| {
+                    q.split('&').find_map(|kv| {
+                        let (k, v) = kv.split_once('=')?;
+                        (k == "t").then(|| v.to_owned())
+                    })
+                })
+            })
+            .unwrap_or_default();
+        if !token_eq(&provided, &expected) {
+            return deny("forbidden: missing or bad dashboard token");
+        }
+    }
+
+    req.extensions_mut().insert(DashToken(expected));
+    next.run(req).await
 }
 
 async fn css() -> impl axum::response::IntoResponse {
@@ -690,6 +817,15 @@ async fn review_summary(State(_state): State<Arc<DaemonState>>) -> Json<serde_js
                         })).collect::<Vec<_>>(),
                         "live_links": f.links.iter().filter(|l| !l.is_expired(now)).count(),
                         "expired_links": f.links.iter().filter(|l| l.is_expired(now)).count(),
+                        // mom-test round: the surface that makes revoke real —
+                        // a user cannot kill a link they cannot see.
+                        "links": f.links.iter().map(|l| json!({
+                            "token": l.token,
+                            "note": l.note,
+                            "role": l.role.as_str(),
+                            "expired": l.is_expired(now),
+                            "expires_at": l.expires_at,
+                        })).collect::<Vec<_>>(),
                         "open_notes": comments,
                     })
                 }
@@ -1530,44 +1666,57 @@ async fn team_join(
     )
 }
 
-/// POST /api/v1/review/publish {project_id, media, frames, fps, title?} —
+/// POST /api/v1/review/publish {project_id, media, title?, frames?, fps?} —
 /// append a version to the review stack (same store the CLI uses).
+///
+/// P0 (mom-test round): the backend OWNS the media truth. The dashboard
+/// used to publish whatever the UI guessed ("first .mp4", 100 frames,
+/// 24 fps), which shipped a 25 fps / 8400-frame cut with a wrong
+/// timecode end to end. Now: frames/fps arrive only from callers that
+/// already know them (the CLI path), everything else is probed from the
+/// file itself (ffprobe) — fail closed on an honest error, never on a
+/// guess. The old `root.join(media)` fallback on a refused path is also
+/// gone: that silently defeated the traversal guard.
 async fn review_publish(
     State(state): State<Arc<DaemonState>>,
     body: Option<Json<serde_json::Value>>,
 ) -> Json<serde_json::Value> {
     let Some(Json(v)) = body else {
-        return Json(
-            json!({"ok": false, "error": "body required: {project_id, media, frames, fps}"}),
-        );
+        return Json(json!({"ok": false, "error": "body required: {project_id, media}"}));
     };
     let project = v["project_id"].as_str().unwrap_or("").to_string();
     let media = v["media"].as_str().unwrap_or("").to_string();
-    let frames: u64 = v["frames"].as_u64().unwrap_or(0);
-    let fps: String = v["fps"].as_str().unwrap_or("24").to_string();
     let title: String = v["title"].as_str().unwrap_or("").to_string();
-    if project.is_empty() || media.is_empty() || frames == 0 {
-        return Json(json!({"ok": false, "error": "project_id, media, frames required"}));
+    if project.is_empty() || media.is_empty() {
+        return Json(json!({"ok": false, "error": "project_id, media required"}));
     }
     let Some(root) = project_root_path(&state, &project).await else {
         return Json(json!({"ok": false, "error": "project not attached"}));
     };
-    let full = match safe_join(&root, &media) {
-        Some(p) => p,
-        None => root.join(&media),
+    let Some(full) = safe_join(&root, &media) else {
+        return Json(json!({"ok": false, "error": "path refused (traversal)"}));
     };
     if !full.is_file() {
         return Json(
             json!({"ok": false, "error": "media not found on this machine — attach or materialize first"}),
         );
     }
-    // Parse fps "24" | "25" | "23.976" | "24000/1001"
-    let (num, den) = match fps.as_str() {
-        "24" => (24u32, 1u32),
-        "25" => (25, 1),
-        "23.976" | "24000/1001" => (24000, 1001),
-        "30" => (30, 1),
-        _ => (24, 1),
+    // Explicit frames/fps (CLI callers that already know the truth) or
+    // probe. The probe reuses the CLI's dogfood-fixed path (crate::review):
+    // ONE implementation of media truth, never two that drift.
+    let (frames, num, den) = match (v["frames"].as_u64(), v["fps"].as_str()) {
+        (Some(count), Some(rate)) if count > 0 => match crate::review::parse_fps(rate) {
+            Ok(parsed) => (count, parsed.0, parsed.1),
+            Err(e) => {
+                return Json(json!({ "ok": false, "error": format!("unparseable fps: {e}") }))
+            }
+        },
+        _ => match crate::review::probe_media(&full) {
+            Some(probed) => (probed.2, probed.0, probed.1),
+            None => {
+                return Json(json!({"ok": false, "error": "could not probe this media (ffprobe missing or file unreadable) - install ffmpeg, or publish with explicit frames/fps"}))
+            }
+        },
     };
     let mut file = match cairn_review::store::Store::load(&root) {
         Ok(Some(f)) => f,
@@ -1595,7 +1744,7 @@ async fn review_publish(
     };
     let n = file.publish(ver);
     match cairn_review::store::Store::save(&root, &file) {
-        Ok(()) => Json(json!({"ok": true, "version": n, "frames": frames})),
+        Ok(()) => Json(json!({"ok": true, "version": n, "frames": frames, "fps": format!("{num}/{den}")})),
         Err(e) => Json(json!({"ok": false, "error": e})),
     }
 }
@@ -1642,6 +1791,45 @@ async fn review_link(
     );
     match cairn_review::store::Store::save(&root, &file) {
         Ok(()) => Json(json!({"ok": true, "token": token, "link": format!("/r/{token}")})),
+        Err(e) => Json(json!({"ok": false, "error": e})),
+    }
+}
+
+/// POST /api/v1/review/revoke {project_id?, token} — kill a guest link
+/// NOW. Expiry was never revocation: the "that link leaked" path needs a
+/// same-day kill switch (mom-test P0 follow-up).
+async fn review_revoke(
+    State(state): State<Arc<DaemonState>>,
+    body: Option<Json<serde_json::Value>>,
+) -> Json<serde_json::Value> {
+    let Some(Json(v)) = body else {
+        return Json(json!({"ok": false, "error": "body required: {token}"}));
+    };
+    let project = v["project_id"].as_str().unwrap_or("").to_string();
+    let token = v["token"].as_str().unwrap_or("").trim().to_string();
+    if token.is_empty() {
+        return Json(json!({"ok": false, "error": "token required"}));
+    }
+    let root = if project.is_empty() {
+        match first_runtime().await {
+            Some((_, r, _, _)) => r,
+            None => return Json(json!({"ok": false, "error": "no attached project"})),
+        }
+    } else {
+        match project_root_path(&state, &project).await {
+            Some(r) => r,
+            None => return Json(json!({"ok": false, "error": "project not attached"})),
+        }
+    };
+    let mut file = match cairn_review::store::Store::load(&root) {
+        Ok(Some(f)) => f,
+        _ => return Json(json!({"ok": false, "error": "no review session for this project"})),
+    };
+    if !file.revoke_link(&token) {
+        return Json(json!({"ok": false, "error": "unknown link"}));
+    }
+    match cairn_review::store::Store::save(&root, &file) {
+        Ok(()) => Json(json!({"ok": true})),
         Err(e) => Json(json!({"ok": false, "error": e})),
     }
 }
@@ -1792,5 +1980,71 @@ async fn compress(
         Err(e) => Json(
             json!({"ok": false, "error": format!("ffmpeg missing: {e} — winget install Gyan.FFmpeg")}),
         ),
+    }
+}
+
+#[cfg(test)]
+mod security_gate_tests {
+    use super::is_loopback_host;
+    use super::is_loopback_origin;
+    use super::token_eq;
+
+    #[test]
+    fn host_gate_accepts_only_loopback_forms() {
+        for ok in [
+            "127.0.0.1:17778",
+            "127.0.0.1",
+            "127.9.9.9:80",
+            "localhost",
+            "localhost:17778",
+            "LOCALHOST:17778",
+            "[::1]:17778",
+            "::1",
+        ] {
+            assert!(is_loopback_host(ok), "should accept {ok}");
+        }
+        for bad in [
+            "evil.com",
+            "evil.com:17778",
+            "192.168.1.10:17778",
+            "10.0.0.5",
+            "[2001:db8::1]:17778",
+            "metadata.google.internal",
+            "",
+        ] {
+            assert!(!is_loopback_host(bad), "should reject {bad}");
+        }
+    }
+
+    #[test]
+    fn origin_gate_accepts_only_loopback_authorities() {
+        for ok in [
+            "http://127.0.0.1:17778",
+            "http://localhost:17778",
+            "https://localhost",
+            "http://[::1]:17778",
+        ] {
+            assert!(is_loopback_origin(ok), "should accept {ok}");
+        }
+        for bad in [
+            "null",
+            "https://evil.com",
+            "http://evil.com:80",
+            "evil.com",
+            "http://192.168.1.10:17778",
+            "",
+        ] {
+            assert!(!is_loopback_origin(bad), "should reject {bad}");
+        }
+    }
+
+    #[test]
+    fn token_compare_is_exact() {
+        let t = "0123456789abcdef0123456789abcdef";
+        assert!(token_eq(t, t));
+        assert!(token_eq("", ""));
+        assert!(!token_eq(t, "0123456789abcdef0123456789abcdeX"));
+        assert!(!token_eq(t, "short"));
+        assert!(!token_eq(t, ""));
     }
 }
