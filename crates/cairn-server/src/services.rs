@@ -340,7 +340,8 @@ impl cairn_proto::pb::download_server::Download for DownloadSvc {
     }
 }
 
-/// Journal-op path extraction helper (fold job, M4).
+/// Journal-op path extraction helper (fold job, M4). StateRecord ops
+/// (ADR-0031) map to their synthetic `state/<family>/<key>` journal path.
 #[must_use]
 pub fn op_path(op: &OpKind) -> Option<String> {
     match op {
@@ -348,6 +349,9 @@ pub fn op_path(op: &OpKind) -> Option<String> {
         OpKind::FileDelete(o) => Some(o.path.clone()),
         OpKind::Rename(r) => Some(r.new_path.clone()),
         OpKind::LeaseEvent(l) => Some(l.path.clone()),
+        OpKind::StateRecord(sr) => {
+            Some(cairn_core::pathutil::state_record_path(&sr.family, &sr.key))
+        }
     }
 }
 

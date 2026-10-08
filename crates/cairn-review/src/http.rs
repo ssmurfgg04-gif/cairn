@@ -28,6 +28,7 @@ use cairn_tl::notes::NoteStatus;
 
 use crate::model::{GuestLink, ReviewFile};
 use crate::store::Store;
+use crate::waveform::{WaveError, WaveformService};
 
 const REVIEW_HTML: &str = include_str!("../assets/review.html");
 const REVIEW_CSS: &str = include_str!("../assets/review.css");
@@ -68,18 +69,29 @@ pub trait RootProvider: Send + Sync {
     }
 }
 
-/// Shared portal state: root provider + in-memory presence keyed by
-/// (token, reviewer).
+/// Shared portal state: root provider + waveform service + in-memory
+/// presence keyed by (token, reviewer).
 #[derive(Clone)]
 pub struct Portal {
     provider: Arc<dyn RootProvider>,
     presence: Arc<Mutex<HashMap<(String, String), PresenceEntry>>>,
+    /// Bounded, admission-gated waveform peaks (CONTRACT-DEBT #4). Built
+    /// from env by `new`; `with_waveform` overrides it for tests.
+    waveform: Arc<WaveformService>,
 }
 impl Portal {
     pub fn new(provider: Arc<dyn RootProvider>) -> Portal {
+        let blobs = provider.blobs_root();
+        Portal::with_waveform(provider, WaveformService::from_env(blobs.as_deref()))
+    }
+
+    /// Same portal with an explicitly built waveform service (tests: lane
+    /// config, temp caches). The daemon path keeps using `new`.
+    pub fn with_waveform(provider: Arc<dyn RootProvider>, waveform: WaveformService) -> Portal {
         Portal {
             provider,
             presence: Arc::new(Mutex::new(HashMap::new())),
+            waveform: Arc::new(waveform),
         }
     }
 
@@ -148,6 +160,7 @@ pub fn router(portal: Portal) -> Router {
         .route("/r/:token/api/presence", post(presence))
         .route("/r/:token/attachment/:hash", get(attachment))
         .route("/r/:token/media/:version", get(media))
+        .route("/r/:token/waveform/:version", get(waveform))
         .with_state(portal)
 }
 
@@ -747,6 +760,91 @@ fn file_stream(f: tokio::fs::File) -> impl Stream<Item = std::io::Result<Bytes>>
     })
 }
 
+/// WaveError → the portal's `{"ok":false,"error":...}` convention, with
+/// the honest status per failure class.
+fn wave_err(e: WaveError) -> Response {
+    match e {
+        WaveError::RateLimited { retry_after_secs } => {
+            let mut r = err(StatusCode::TOO_MANY_REQUESTS, "RATE_LIMITED");
+            if let Ok(v) = HeaderValue::from_str(&retry_after_secs.to_string()) {
+                r.headers_mut().insert(header::RETRY_AFTER, v);
+            }
+            r
+        }
+        WaveError::TooLong => err(StatusCode::BAD_REQUEST, "audio too long for waveform"),
+        WaveError::UnsupportedCodec(c) => err(
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            &format!("unsupported audio codec: {c}"),
+        ),
+        WaveError::Timeout => err(StatusCode::SERVICE_UNAVAILABLE, "waveform decode timed out"),
+        WaveError::Disabled => err(StatusCode::SERVICE_UNAVAILABLE, "waveform disabled"),
+        WaveError::Io(_) | WaveError::Decode(_) => err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "waveform generation failed",
+        ),
+    }
+}
+
+/// GET /r/:token/waveform/:version[?full=1] — server-side peaks for the
+/// scrub timeline (CONTRACT-DEBT #4). Resolves the media exactly like
+/// `media()` does (proxy first, `full=1` for the original, containment
+/// checked, proxy-missing fallback), then computes min/max peaks through
+/// the bounded waveform service: constant-memory decode, admission-gated
+/// (429 + Retry-After when the lanes are full), content-addressed cache.
+/// Success is `Cache-Control: public, max-age=86400` — the key is the
+/// media content, so the response is immutable for those bytes.
+async fn waveform(
+    State(p): State<Portal>,
+    UrlPath((token, version_str)): UrlPath<(String, String)>,
+    Query(q): Query<HashMap<String, String>>,
+) -> Response {
+    let Some((root, file, link)) = p.resolve(&token).await else {
+        return err(StatusCode::NOT_FOUND, "link not found or expired");
+    };
+    let Ok(version) = version_str.parse::<u32>() else {
+        return err(StatusCode::BAD_REQUEST, "version must be a number");
+    };
+    // visibility: a latest_only link may only see versions it can see
+    // (404, not 403 — never confirm the existence of hidden versions)
+    if !file
+        .versions_for(&link)
+        .iter()
+        .any(|vv| vv.number == version)
+    {
+        return err(StatusCode::NOT_FOUND, "no such version");
+    }
+    let Some(vn) = file.version(version) else {
+        return err(StatusCode::NOT_FOUND, "no such version");
+    };
+    let full = q.get("full").map(|f| f == "1").unwrap_or(false);
+    let rel = if full {
+        vn.media_rel.as_str()
+    } else {
+        vn.stream_rel()
+    };
+    // same resolution-with-fallback as media(): a promised proxy that is
+    // not on disk must never break the waveform — analyze the original
+    let path = match contained(&root, rel).filter(|p| p.is_file()) {
+        Some(p) => p,
+        None if !full && vn.proxy_rel.is_some() => match contained(&root, &vn.media_rel) {
+            Some(p) if p.is_file() => p,
+            _ => return err(StatusCode::NOT_FOUND, "media not available"),
+        },
+        _ => return err(StatusCode::NOT_FOUND, "media not available"),
+    };
+    match p.waveform.peaks_for(&path).await {
+        Ok(resp) => (
+            [
+                (header::CACHE_CONTROL, "public, max-age=86400"),
+                (header::CONTENT_TYPE, "application/json"),
+            ],
+            Json(resp),
+        )
+            .into_response(),
+        Err(e) => wave_err(e),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1316,5 +1414,178 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(bytes.len(), 50_000);
+    }
+
+    // ---- server-side waveform peaks (CONTRACT-DEBT #4) ---------------------
+
+    /// Publish an extra version whose media is a real generated WAV and
+    /// return the version number.
+    fn publish_wav_version(root: &Path, sample_rate: u32, seconds: f64) -> u32 {
+        let mut f = Store::load(root).unwrap().unwrap();
+        crate::waveform::write_test_wav(
+            &root.join("cuts").join("bed.wav"),
+            sample_rate,
+            seconds,
+            220.0,
+        );
+        let n = f.publish(crate::model::ReviewVersion {
+            number: 0,
+            label: "bed".into(),
+            media_rel: "cuts/bed.wav".into(),
+            proxy_rel: None,
+            fps_num: 24,
+            fps_den: 1,
+            frames: 100,
+            timeline_fingerprint: None,
+            snapshot: None,
+            published_by: "editor".into(),
+            published_at: 2,
+        });
+        Store::save(root, &f).unwrap();
+        n
+    }
+
+    /// Like `setup_with_blobs`, but the portal carries an explicit
+    /// waveform service (tests drive the lane config) and the latest
+    /// version's media is a real generated WAV.
+    fn setup_with_wave(cfg: crate::waveform::WaveConfig) -> (Portal, PathBuf, String, u32) {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.keep();
+        let mut f = crate::model::ReviewFile {
+            title: "Brand Film".into(),
+            ..Default::default()
+        };
+        f.publish(ReviewVersion {
+            number: 0,
+            label: "v1".into(),
+            media_rel: "cuts/v1.mp4".into(),
+            proxy_rel: None,
+            fps_num: 24,
+            fps_den: 1,
+            frames: 100,
+            timeline_fingerprint: None,
+            snapshot: None,
+            published_by: "editor".into(),
+            published_at: 1,
+        });
+        Store::save(&root, &f).unwrap();
+        let token = f.add_link(GuestRole::Commenter, "client".into(), 0, false, 1);
+        Store::save(&root, &f).unwrap();
+        let version = publish_wav_version(&root, 8_000, 1.0);
+        let cache_dir = tempfile::tempdir().unwrap().keep().join("waveform-cache");
+        let provider = Arc::new(FixedProvider {
+            roots: vec![("p1".into(), root.clone())],
+            blobs: None,
+            now: std::sync::atomic::AtomicI64::new(1_000),
+        });
+        (
+            Portal::with_waveform(
+                provider,
+                crate::waveform::WaveformService::new(cfg, cache_dir),
+            ),
+            root,
+            token,
+            version,
+        )
+    }
+
+    /// The acceptance wire shape: lanes full → 429, body
+    /// `{"ok":false,"error":"RATE_LIMITED"}`, `Retry-After` header present.
+    #[tokio::test]
+    async fn waveform_admission_returns_429_with_retry_after() {
+        let (p, _root, token, version) = setup_with_wave(crate::waveform::WaveConfig {
+            lanes: 1,
+            ..crate::waveform::WaveConfig::default()
+        });
+        // hold the only lane (deterministic — no timing races)
+        let _permit = p.waveform.hold_lane().unwrap();
+        let r = waveform(
+            State(p),
+            UrlPath((token, version.to_string())),
+            Query(HashMap::new()),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(r.headers().get(header::RETRY_AFTER).unwrap(), "2");
+        let body = body_json(r).await;
+        assert_eq!(body["ok"], false);
+        assert_eq!(body["error"], "RATE_LIMITED");
+    }
+
+    /// `CAIRN_WAVEFORM_LANES=0` disables the service: 503, never a decode.
+    #[tokio::test]
+    async fn waveform_disabled_is_503() {
+        let (p, _root, token, version) = setup_with_wave(crate::waveform::WaveConfig {
+            lanes: 0,
+            ..crate::waveform::WaveConfig::default()
+        });
+        let r = waveform(
+            State(p),
+            UrlPath((token, version.to_string())),
+            Query(HashMap::new()),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = body_json(r).await;
+        assert_eq!(body["error"], "waveform disabled");
+    }
+    /// The happy path: a real WAV through the endpoint → 200, the exact
+    /// bin count for the rate (ceil(duration · rate_hz)), floats in
+    /// [-1, 1], and the immutable-content cache header.
+    #[tokio::test]
+    async fn waveform_serves_peaks_with_exact_bins_and_fails_closed() {
+        let (p, root, token, _studio) = setup_with_blobs();
+        let v = publish_wav_version(&root, 8_000, 2.0);
+        assert_eq!(v, 2);
+
+        let r = waveform(
+            State(p.clone()),
+            UrlPath((token.clone(), v.to_string())),
+            Query(HashMap::new()),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::OK);
+        assert_eq!(
+            r.headers().get(header::CACHE_CONTROL).unwrap(),
+            "public, max-age=86400"
+        );
+        let body = body_json(r).await;
+        assert_eq!(body["ok"], true);
+        assert_eq!(body["rate_hz"], 8);
+        assert_eq!(body["bins"], 16, "2 s at 8 peaks/s = 16 bins");
+        assert_eq!(body["duration_ms"], 2000);
+        let peaks = body["peaks"].as_array().unwrap();
+        assert_eq!(peaks.len(), 16);
+        for pk in peaks {
+            let pair = pk.as_array().unwrap();
+            assert_eq!(pair.len(), 2);
+            let (lo, hi) = (pair[0].as_f64().unwrap(), pair[1].as_f64().unwrap());
+            assert!((-1.0..=1.0).contains(&lo) && (-1.0..=1.0).contains(&hi));
+        }
+
+        // fails closed: hidden version, unknown token, non-numeric version
+        let r2 = waveform(
+            State(p.clone()),
+            UrlPath((token.clone(), "9".into())),
+            Query(HashMap::new()),
+        )
+        .await;
+        assert_eq!(r2.status(), StatusCode::NOT_FOUND);
+        let r3 = waveform(
+            State(p.clone()),
+            UrlPath(("no-such-token".into(), v.to_string())),
+            Query(HashMap::new()),
+        )
+        .await;
+        assert_eq!(r3.status(), StatusCode::NOT_FOUND);
+        let bad = body_json(r3).await;
+        assert_eq!(bad["ok"], false);
+        let r4 = waveform(
+            State(p),
+            UrlPath((token, "zero".into())),
+            Query(HashMap::new()),
+        )
+        .await;
+        assert_eq!(r4.status(), StatusCode::BAD_REQUEST);
     }
 }

@@ -23,6 +23,10 @@ fn extract_path(op_bytes: &[u8]) -> Option<String> {
         cairn_proto::pb::journal_op::Op::FileDelete(d) => Some(d.path.clone()),
         cairn_proto::pb::journal_op::Op::Rename(r) => Some(r.old_path.clone()),
         cairn_proto::pb::journal_op::Op::LeaseEvent(l) => Some(l.path.clone()),
+        cairn_proto::pb::journal_op::Op::StateRecord(sr) => {
+            // synthetic grouping key (ADR-0031): never leased, never materialized
+            Some(cairn_core::pathutil::state_record_path(&sr.family, &sr.key))
+        }
     }
 }
 

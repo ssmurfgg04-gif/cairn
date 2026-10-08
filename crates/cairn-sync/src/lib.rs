@@ -8,6 +8,7 @@ pub mod apply;
 pub mod domains;
 pub mod engine;
 pub mod hydrate;
+pub mod merge_offer;
 pub mod native_collab;
 pub mod offload;
 pub mod outbox_worker;
@@ -16,6 +17,7 @@ pub mod plane;
 pub mod plane_grpc;
 pub mod retry;
 pub mod scan;
+pub mod state_records;
 pub mod watch;
 pub mod workspace;
 

@@ -15,6 +15,10 @@ serde_json = { workspace = true }
 uuid = { workspace = true }
 tracing = { workspace = true }
 
+# server-side waveform peaks (CONTRACT-DEBT #4): bounded, admission-gated
+# decode of review-cut audio (WAV/FLAC/MP3/OGG-Vorbis) via symphonia.
+symphonia = { workspace = true }
+
 # http surface (the guest portal)
 axum = { workspace = true }
 tokio = { workspace = true }

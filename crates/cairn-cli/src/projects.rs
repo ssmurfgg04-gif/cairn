@@ -114,6 +114,13 @@ pub struct ProjectRuntime {
     /// forwarder sends here without needing the manager. All runtimes of a
     /// daemon share the ONE channel owned by [`ProjectManager`].
     presence: tokio::sync::broadcast::Sender<LocalPresence>,
+    /// The live sync engine of the CURRENT run_loop invocation, published so
+    /// service actions (merge-offer accept, CONTRACT-DEBT #1) can drive the
+    /// same engine the loop uses instead of building a second one against the
+    /// same store. std Mutex (no await while held — clone in/out only); the
+    /// run_loop's RAII guard clears it on every exit path so a dead loop's
+    /// engine never answers "accept" requests honestly meant for a live one.
+    engine: std::sync::Mutex<Option<Arc<Engine>>>,
     abort: tokio::sync::watch::Sender<bool>,
 }
 
@@ -161,6 +168,18 @@ impl ProjectRuntime {
         if let Some(swarm) = blocking_swarm(&self.swarm) {
             swarm.shutdown();
         }
+    }
+
+    /// Publish the loop's engine (run_loop start) / drop it (loop exit).
+    fn set_engine(&self, engine: Option<Arc<Engine>>) {
+        *self.engine.lock().expect("engine slot poisoned") = engine;
+    }
+
+    /// A snapshot of the live engine, if the sync loop is currently running.
+    /// `None` between loop retries (server down) — surfaces as an honest
+    /// "project not running" to the caller, never a stale engine.
+    pub fn live_engine(&self) -> Option<Arc<Engine>> {
+        self.engine.lock().expect("engine slot poisoned").clone()
     }
 }
 
@@ -469,6 +488,32 @@ impl ProjectManager {
         self.presence.send(ev).unwrap_or(0)
     }
 
+    /// Drive the LIVE sync engine of `project_id` through `f` (CONTRACT-DEBT
+    /// #1: the merge-offer accept path must run on the same engine the loop
+    /// uses — same store handle, same plane, same AIMD gate — instead of
+    /// building a second one against the same SQLite file). The closure owns
+    /// the engine handle (an `Arc` clone) while the loop keeps ticking on the
+    /// same object; the single-writer store mutex serializes the SQL either
+    /// way. Errors are honest strings: "project not attached" (no runtime)
+    /// and "project not running" (runtime exists, loop is between retries).
+    pub async fn with_engine<R, Fut>(
+        &self,
+        project_id: &str,
+        f: impl FnOnce(Arc<Engine>) -> Fut,
+    ) -> Result<R, String>
+    where
+        Fut: std::future::Future<Output = R>,
+    {
+        let rt = self
+            .find_by_project(project_id)
+            .await
+            .ok_or_else(|| "project not attached".to_string())?;
+        let engine = rt
+            .live_engine()
+            .ok_or_else(|| "project not running".to_string())?;
+        Ok(f(engine).await)
+    }
+
     /// Subscribe to the daemon-wide presence hub (ctl stream + SSE).
     pub fn subscribe_presence(&self) -> tokio::sync::broadcast::Receiver<LocalPresence> {
         self.presence.subscribe()
@@ -610,6 +655,7 @@ impl ProjectManager {
             sweep_counter: AtomicU64::new(0),
             swarm: Mutex::new(None),
             presence: self.presence.clone(),
+            engine: std::sync::Mutex::new(None),
             abort: tokio::sync::watch::channel(false).0,
         });
         self.runtimes
@@ -1115,6 +1161,17 @@ static OVERLAY_FP: std::sync::LazyLock<
 /// rename storm a project throws at once; the consumer warns at 80%.
 const WATCH_MAILBOX_CAP: usize = 512;
 
+/// RAII: clear the runtime's engine slot when `run_loop` exits — normal
+/// shutdown, error retry, or panic unwind all end with `None`, so a live
+/// engine is never claimed from a loop that no longer runs.
+struct EngineSlotGuard(Arc<ProjectRuntime>);
+
+impl Drop for EngineSlotGuard {
+    fn drop(&mut self) {
+        self.0.set_engine(None);
+    }
+}
+
 async fn run_loop(
     rt: &Arc<ProjectRuntime>,
     store: &Store,
@@ -1140,7 +1197,7 @@ async fn run_loop(
     // readers so 32-concurrent-open bursts don't serialize behind store writes
     // (8-wide r2d2 pool, ADR-0025 — production width, matches the burst bench)
     let headers = HeaderCache::with_read_pool(conn.clone(), &store.root().join("db.sqlite"), 8);
-    let engine = Engine {
+    let engine = Arc::new(Engine {
         tenant_id: identity.tenant_id.clone(),
         // server journal scope stays the PROJECT; the local namespace and
         // journal authorship are per-root (ADR-0019 §2)
@@ -1155,7 +1212,12 @@ async fn run_loop(
         plane: Arc::clone(&plane),
         dicts: cairn_core::compress::DictRegistry::new(),
         gate: Gate::default(),
-    };
+    });
+    // Publish the engine for service actions (merge-offer accept, CONTRACT-DEBT
+    // #1) and guarantee the slot is cleared on EVERY loop exit — retries
+    // included — so "not running" never answers from a dead plane.
+    rt.set_engine(Some(Arc::clone(&engine)));
+    let _engine_guard = EngineSlotGuard(Arc::clone(rt));
 
     // swarm join (ADR-0017): peer-first hydration when the daemon runs with
     // --swarm-signal. Failure to join is NON-FATAL — the plane path is the

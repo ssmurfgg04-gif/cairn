@@ -26,15 +26,55 @@ pub struct Entry {
     pub server_ts: i64,
 }
 
-/// Extract the affected path(s) of an op (conflict-check keys).
+/// Extract the affected path(s) of an op (conflict-check keys). State records
+/// (ADR-0031) ride a SYNTHETIC path derived from (family, key) — it groups
+/// records in the journal without colliding with real files, and the real
+/// validation of a record happens in `validate_state_record` below, not here.
 fn paths_of(op: &JournalOp) -> Vec<String> {
     match op.op.as_ref() {
         Some(JournalOpKind::FileUpsert(o)) => vec![o.path.clone()],
         Some(JournalOpKind::FileDelete(o)) => vec![o.path.clone()],
         Some(JournalOpKind::Rename(r)) => vec![r.old_path.clone(), r.new_path.clone()],
         Some(JournalOpKind::LeaseEvent(l)) => vec![l.path.clone()],
+        Some(JournalOpKind::StateRecord(sr)) => {
+            vec![cairn_core::pathutil::state_record_path(&sr.family, &sr.key)]
+        }
         None => vec![],
     }
+}
+
+/// True when this op is a `state_record` (ADR-0031 Phase 1): exempt from
+/// lease fencing AND from the §7.1 conflict rule. Concurrent same-key appends
+/// from different devices are LEGAL for records — convergence is LWW/union at
+/// apply time on every device (`cairn_sync::state_records::
+/// apply_record_locally`), never at append time.
+fn is_state_record(op: &JournalOp) -> bool {
+    matches!(op.op.as_ref(), Some(JournalOpKind::StateRecord(_)))
+}
+
+/// Authoritative state-record validation (the choke point complement to
+/// `paths_of`'s synthetic path): unknown families and separator-bearing keys
+/// never reach the journal — a `\` or `/` in a key would alias into sibling
+/// records on every peer's replay.
+fn validate_state_record(op: &JournalOp) -> Result<(), CairnError> {
+    let Some(JournalOpKind::StateRecord(sr)) = op.op.as_ref() else {
+        return Ok(());
+    };
+    // known families only (the fixed set keeps the synthetic path shape-safe)
+    let known = [
+        "member",
+        "audit",
+        "review_version",
+        "review_link",
+        "review_comment",
+    ];
+    if !known.contains(&sr.family.as_str()) {
+        return Err(CairnError::new(
+            ErrorKind::InvalidPath,
+            "invalid state record: unknown family",
+        ));
+    }
+    cairn_core::pathutil::validate_state_key(&sr.key)
 }
 
 /// Encode the op blob + primary conflict path for storage.
@@ -78,6 +118,22 @@ pub async fn append(
             return Err(e);
         }
     }
+    // ADR-0031 choke point: a record's family/key gate runs beside the path
+    // gate (the synthetic path passes `validate_rel_path` for any
+    // family-shaped string, so the KEY must be checked directly).
+    if let Err(e) = validate_state_record(&op) {
+        crate::db::audit(
+            pool,
+            clock,
+            tenant_id,
+            device_id,
+            "journal.append.invalid_state_record",
+            project_id,
+            &e.message,
+        )
+        .await;
+        return Err(e);
+    }
     let (op_blob, primary_path) = encode(&op)?;
     let mut conn = crate::db::begin_immediate(pool).await?;
 
@@ -96,7 +152,11 @@ pub async fn append(
         return Ok((seq.max(0) as u64, true));
     }
 
-    // fencing (SPEC §8): leased + unexpired path requires current (device, token)
+    // fencing (SPEC §8): leased + unexpired path requires current (device, token).
+    // ADR-0031: state records are EXEMPT — they never touch a leased file path
+    // (their journal path is the synthetic `state/<family>/<key>`), so fencing
+    // a pen on `scene.prproj` must never delay a roster/audit/review append.
+    // The kind guard below is exactly that exemption.
     if matches!(
         op.op.as_ref(),
         Some(JournalOpKind::FileUpsert(_)) | Some(JournalOpKind::Rename(_))
@@ -132,27 +192,35 @@ pub async fn append(
 
     // conflict rule, implemented exactly (SPEC §7.1): accepted iff NO entry from a DIFFERENT
     // device has seq > base_seq for the same path (any op kind — upsert/delete/rename).
-    let base_seq = base_seq_of(&op);
-    let conflicting: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM journal
-         WHERE tenant_id=?1 AND project_id=?2 AND path=?3 AND seq>?4 AND device_id<>?5",
-    )
-    .bind(tenant_id)
-    .bind(project_id)
-    .bind(&primary_path)
-    .bind(base_seq.max(0))
-    .bind(device_id)
-    .fetch_one(&mut *conn)
-    .await
-    .map_err(db_err)?;
-    if conflicting > 0 {
-        crate::db::rollback(&mut conn).await;
-        return Err(CairnError::new(
-            ErrorKind::Conflict,
-            format!("path {primary_path}: a different device has seq>{base_seq}; upsert diverged"),
-        ));
+    // ADR-0031: state records are EXEMPT — the rule exists to preserve file
+    // content lineage; records are CRDT-shaped (LWW per key / append-only
+    // union by content id) and converge at apply time, so concurrent
+    // same-key appends from different devices are legal and MUST both land.
+    if !is_state_record(&op) {
+        let base_seq = base_seq_of(&op);
+        let conflicting: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM journal
+             WHERE tenant_id=?1 AND project_id=?2 AND path=?3 AND seq>?4 AND device_id<>?5",
+        )
+        .bind(tenant_id)
+        .bind(project_id)
+        .bind(&primary_path)
+        .bind(base_seq.max(0))
+        .bind(device_id)
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(db_err)?;
+        if conflicting > 0 {
+            crate::db::rollback(&mut conn).await;
+            return Err(CairnError::new(
+                ErrorKind::Conflict,
+                format!(
+                    "path {primary_path}: a different device has seq>{base_seq}; upsert diverged"
+                ),
+            ));
+        }
+        // same-device entries with seq > base: always supersede (rule allows)
     }
-    // same-device entries with seq > base: always supersede (rule allows)
 
     // server-assigned seq (I4) inside the same IMMEDIATE tx
     let max_seq: i64 = sqlx::query_scalar(
@@ -189,6 +257,9 @@ fn base_seq_of(op: &JournalOp) -> i64 {
         Some(JournalOpKind::FileUpsert(o)) => o.base_seq as i64,
         Some(JournalOpKind::FileDelete(o)) => o.base_seq as i64,
         Some(JournalOpKind::Rename(r)) => r.base_seq as i64,
+        // LeaseEvents carry no base_seq (informational); state records
+        // (ADR-0031) declare no lineage — their appends skip the conflict
+        // rule entirely, so the base is never read for them.
         _ => 0,
     }
 }
@@ -599,5 +670,168 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(s, 1);
+    }
+
+    // ---------- state records (ADR-0031 Phase 1) ----------
+
+    fn state_record(family: &str, key: &str, ts: i64, tombstone: bool) -> JournalOp {
+        JournalOp {
+            op: Some(cairn_proto::pb::journal_op::Op::StateRecord(
+                cairn_proto::pb::StateRecordOp {
+                    family: family.into(),
+                    key: key.into(),
+                    payload: format!(r#"{{"key":"{key}"}}"#).into_bytes(),
+                    ts_ms: ts,
+                    tombstone,
+                },
+            )),
+        }
+    }
+
+    /// ADR-0031: the §7.1 conflict rule does NOT apply to state records — two
+    /// devices appending a record for the SAME key (the racing-writers case:
+    /// two machines edit the same member's role concurrently) must BOTH be
+    /// accepted with distinct seqs. Convergence is LWW at apply time.
+    #[tokio::test]
+    async fn state_records_allow_concurrent_same_key_appends() {
+        let (_d, pool, clock) = setup().await;
+        // d1 appends a member record for device "dev-x" ...
+        let (s1, dedup1) = append(
+            &pool,
+            &clock,
+            "t1",
+            "p1",
+            "d1",
+            "r1",
+            state_record("member", "dev-x", 100, false),
+            0,
+        )
+        .await
+        .unwrap();
+        assert!(!dedup1);
+        // ... d2 appends the SAME key concurrently (base_seq is irrelevant —
+        // records declare none): MUST be Ok, not CONFLICT.
+        let (s2, _) = append(
+            &pool,
+            &clock,
+            "t1",
+            "p1",
+            "d2",
+            "r2",
+            state_record("member", "dev-x", 200, false),
+            0,
+        )
+        .await
+        .unwrap();
+        assert_eq!(s1, 1);
+        assert_eq!(s2, 2, "both appends land with distinct server seqs");
+
+        // the exemption is scoped to records: the §7.1 conflict rule still
+        // fires for FILE ops on their real paths
+        append(&pool, &clock, "t1", "p1", "d3", "r3", upsert("a.mov", 0), 0)
+            .await
+            .unwrap();
+        let e = append(&pool, &clock, "t1", "p1", "d4", "r4", upsert("a.mov", 0), 0)
+            .await
+            .unwrap_err();
+        assert_eq!(e.code(), "CONFLICT", "file ops keep the strict rule");
+        let batch = batch(&pool, "t1", "p1", 0, 100).await.unwrap();
+        assert_eq!(batch.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn state_record_dedups_by_request_id() {
+        let (_d, pool, clock) = setup().await;
+        let (s1, d1) = append(
+            &pool,
+            &clock,
+            "t1",
+            "p1",
+            "d1",
+            "req-state-abc",
+            state_record("audit", "cid-1", 100, false),
+            0,
+        )
+        .await
+        .unwrap();
+        // crash-recovery resend of the SAME request id → dedup, same seq
+        let (s2, d2) = append(
+            &pool,
+            &clock,
+            "t1",
+            "p1",
+            "d1",
+            "req-state-abc",
+            state_record("audit", "cid-1", 100, false),
+            0,
+        )
+        .await
+        .unwrap();
+        assert!(d2, "retry must dedup by request_id");
+        assert!(!d1);
+        assert_eq!(s1, s2);
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM journal")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(n, 1);
+    }
+
+    /// ADR-0031 choke point: record keys are identifiers, not paths — a key
+    /// carrying a separator would alias into sibling records on every peer's
+    /// replay, so it is rejected at append (same INVALID_PATH taxonomy as the
+    /// file-path gate; nothing reaches the journal).
+    #[tokio::test]
+    async fn state_record_paths_are_validated() {
+        let (_d, pool, clock) = setup().await;
+        for bad_key in ["dev/1", "", "a\\b", "bell\u{7}"] {
+            let r = append(
+                &pool,
+                &clock,
+                "t1",
+                "p1",
+                "d1",
+                "r-bad",
+                state_record("member", bad_key, 100, false),
+                0,
+            )
+            .await;
+            assert!(r.is_err(), "must reject key: {bad_key:?}");
+            assert_eq!(r.unwrap_err().kind, cairn_core::ErrorKind::InvalidPath);
+        }
+        // unknown family never lands either
+        let r = append(
+            &pool,
+            &clock,
+            "t1",
+            "p1",
+            "d1",
+            "r-bad-fam",
+            state_record("roster", "dev-1", 100, false),
+            0,
+        )
+        .await;
+        assert_eq!(r.unwrap_err().kind, cairn_core::ErrorKind::InvalidPath);
+
+        // and nothing from this test reached the journal
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM journal")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(n, 0);
+
+        // the honest record still appends after the rejects
+        append(
+            &pool,
+            &clock,
+            "t1",
+            "p1",
+            "d1",
+            "r-ok",
+            state_record("member", "dev-1", 100, false),
+            0,
+        )
+        .await
+        .unwrap();
     }
 }

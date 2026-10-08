@@ -60,6 +60,9 @@ pub struct PassStats {
     pub appended: u32,
     pub conflicts_resolved: u32,
     pub applied_entries: u32,
+    /// CONTRACT-DEBT #1: timeline conflicts where a semantic-merge offer row
+    /// was created this pass (flag-gated).
+    pub merge_offered: u32,
     /// P1 measurement (perf triage #3): per-stage ingest timings accumulated
     /// across `process_file` calls in this pass — read / hash+chunk /
     /// local-CAS / network. Lets the next profiling run attribute the
@@ -110,7 +113,14 @@ impl Engine {
         Ok(())
     }
 
-    async fn process_file(&self, path: &str, stats: &mut PassStats) -> Result<(), CairnError> {
+    /// Ingest one dirty file end-to-end. `pub(crate)`: the merge-offer
+    /// accept path re-drives the normal pipeline for the merged timeline
+    /// (ONE journal entry, same request-id discipline) instead of cloning it.
+    pub(crate) async fn process_file(
+        &self,
+        path: &str,
+        stats: &mut PassStats,
+    ) -> Result<(), CairnError> {
         let full = self.rooted(path);
         // stat BEFORE reading: these are the values the sweep/rescan will compare
         // against after the push — if a write lands mid-push, the watcher re-dirties
@@ -640,6 +650,13 @@ impl Engine {
             if let Ok(op) = cairn_proto::pb::JournalOp::decode(e.op.as_slice()) {
                 let path = op_path(&op);
                 let lease_token = self.store.get_lease(&path).map_or(0, |(t, _)| t);
+                // Manifest fast-path extraction: ONLY FileUpsert has a row to
+                // complete. StateRecord ops (ADR-0031) carry no manifest and no
+                // file row — they append+ack on this fast path with
+                // manifest=None (nothing to mark), and any Err falls through
+                // to the sequential `send_outbox_entry` below, whose
+                // StateRecord arm leaves the entry pending without touching
+                // files (no dirty marking, no conflict copy).
                 let manifest = match op.op.as_ref() {
                     Some(cairn_proto::pb::journal_op::Op::FileUpsert(u)) => {
                         Some(u.manifest_hash.clone())
@@ -773,7 +790,7 @@ impl Engine {
         Ok(())
     }
 
-    async fn send_outbox_entry(
+    pub(crate) async fn send_outbox_entry(
         &self,
         request_id: &str,
         op: cairn_proto::pb::JournalOp,
@@ -782,6 +799,15 @@ impl Engine {
         stats: &mut PassStats,
     ) -> Result<(), CairnError> {
         let _base_seq = self.store.get_cursor(&self.author_id, &self.local_ns);
+        // State records (ADR-0031 Phase 1) carry NO file row: a failed send
+        // must leave the outbox entry pending and touch nothing else — no
+        // dirty marking (there is no row), no conflict copy (there is no file
+        // to rename; and a spec-correct server never CONFLICTs this family —
+        // only a legacy pre-ADR server could, and that is surfaced honestly).
+        let is_state_record = matches!(
+            op.op.as_ref(),
+            Some(cairn_proto::pb::journal_op::Op::StateRecord(_))
+        );
         // manifest identity extracted up front (op is consumed by the append)
         let upsert_manifest: Option<String> = match op.op.as_ref() {
             Some(cairn_proto::pb::journal_op::Op::FileUpsert(u)) => Some(u.manifest_hash.clone()),
@@ -853,6 +879,12 @@ impl Engine {
                 stats.appended += 1;
                 Ok(())
             }
+            Err(e) if is_state_record => {
+                // ADR-0031: nothing to dirty, nothing to copy — the entry stays
+                // pending (acked only on Ok) and the next pass re-sends it
+                // (request_id dedup). Surfaced so the pass reports the truth.
+                Err(e)
+            }
             Err(e) if e.code() == "STALE_LEASE" => {
                 // surface to user per §14: keep the outbox entry, mark state, stop this path
                 self.store
@@ -861,7 +893,29 @@ impl Engine {
             }
             Err(e) if e.code() == "CONFLICT" => {
                 // conflict copy per §7.1: rename on the new path and re-append
-                self.conflict_copy(path, stats).await?;
+                let copy_path = self.conflict_copy(path, stats).await?;
+                // CONTRACT-DEBT #1: offer a semantic merge of the conflict when
+                // the flag is on and the file is a timeline. Fire-and-forget by
+                // contract: a failed offer NEVER fails the conflict resolution
+                // (the copy already preserved the local edit); the merge is the
+                // passive affordance on top.
+                let op_base_seq = match op.op.as_ref() {
+                    Some(cairn_proto::pb::journal_op::Op::FileUpsert(u)) => u.base_seq,
+                    _ => 0,
+                };
+                match self
+                    .create_offer_if_mergeable(op_base_seq, path, &copy_path)
+                    .await
+                {
+                    Ok(true) => stats.merge_offered += 1,
+                    Ok(false) => {}
+                    Err(err) => {
+                        tracing::warn!(
+                            path = %path,
+                            "merge offer failed (conflict resolution unaffected): {err}"
+                        );
+                    }
+                }
                 self.outbox.ack(request_id)?;
                 Ok(())
             }
@@ -869,7 +923,10 @@ impl Engine {
         }
     }
 
-    async fn conflict_copy(&self, path: &str, stats: &mut PassStats) -> Result<(), CairnError> {
+    /// Returns the conflict copy's project-relative path (CONTRACT-DEBT #1:
+    /// the merge-offer step needs it to read this device's side of the merge
+    /// without recomputing the name).
+    async fn conflict_copy(&self, path: &str, stats: &mut PassStats) -> Result<String, CairnError> {
         let date = date_of(self.store.clock().now_millis());
         let name = path.rsplit('/').next().unwrap_or(path);
         let copy_name = cairn_core::pathutil::conflict_copy_name(name, &self.author_id, &date);
@@ -945,7 +1002,7 @@ impl Engine {
         Box::pin(self.process_file(&copy_path, &mut inner)).await?;
         stats.conflicts_resolved += 1;
         stats.appended += inner.appended;
-        Ok(())
+        Ok(copy_path)
     }
 
     async fn pull_phase(&self, stats: &mut PassStats) -> Result<(), CairnError> {
@@ -996,7 +1053,17 @@ impl Engine {
         Ok(())
     }
 
-    fn rooted(&self, path: &str) -> std::path::PathBuf {
+    /// Cursor replay on demand (CONTRACT-DEBT #1): `merge_offer::accept_offer`
+    /// pulls BEFORE re-pushing the merged timeline so its append claims a base
+    /// the server's seq>base rule accepts instead of re-conflicting. Idempotent.
+    pub(crate) async fn pull_now(&self) -> Result<(), CairnError> {
+        let mut stats = PassStats::default();
+        self.pull_phase(&mut stats).await
+    }
+
+    /// Project-relative -> absolute workspace path. Shared with the
+    /// merge-offer accept path (same crate, different module).
+    pub(crate) fn rooted(&self, path: &str) -> std::path::PathBuf {
         workspace_dir(&self.store, &self.local_ns).join(path)
     }
 }
@@ -1007,6 +1074,10 @@ fn op_path(op: &cairn_proto::pb::JournalOp) -> String {
         Some(cairn_proto::pb::journal_op::Op::FileDelete(o)) => o.path.clone(),
         Some(cairn_proto::pb::journal_op::Op::Rename(r)) => r.old_path.clone(),
         Some(cairn_proto::pb::journal_op::Op::LeaseEvent(l)) => l.path.clone(),
+        Some(cairn_proto::pb::journal_op::Op::StateRecord(sr)) => {
+            // synthetic grouping key (ADR-0031): never a real file, never leased
+            cairn_core::pathutil::state_record_path(&sr.family, &sr.key)
+        }
         None => String::new(),
     }
 }

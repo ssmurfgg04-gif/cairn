@@ -1,14 +1,18 @@
 //! Membership CLI (ADR-0020 §4): manage `.cairn/members.json` and check
-//! permissions against the RBAC matrix. The file syncs with the project;
-//! enforcement lives at every root-based mutating command (review
-//! publish/link check ManageReview; member edits check ManageMembers).
-//! Daemon-side gRPC enforcement lands with the ctl proto change (the
-//! ledger records it).
+//! permissions against the RBAC matrix. The file is the machine-LOCAL
+//! authority (ADR-0031: `.cairn*` does not sync as a file) — enforcement
+//! lives at every root-based mutating command (review publish/link check
+//! ManageReview; member edits check ManageMembers). Since ADR-0031 Phase 1
+//! every roster change is ALSO mirrored into the synced `member` record
+//! family (fire-and-forget; see [`crate::state_records`]), so attached
+//! machines converge on one roster view.
 
 use std::path::{Path, PathBuf};
 
 use cairn_core::clock::SystemClock as _;
 use cairn_core::rbac::{MemberFile, Permission, Role};
+
+use crate::state_records as sr;
 
 /// `<root>/.cairn/members.json`
 pub fn members_path(root: &Path) -> PathBuf {
@@ -136,14 +140,18 @@ pub fn cmd_add(
 ) -> anyhow::Result<()> {
     let actor = acting_device(as_device);
     let mut f = guard(root, &actor, Permission::ManageMembers)?;
-    f.upsert(
-        device,
-        name,
-        role,
-        &actor,
-        cairn_core::clock::WallClock.now_millis(),
-    );
+    let now_ms = cairn_core::clock::WallClock.now_millis();
+    f.upsert(device, name, role, &actor, now_ms);
     save(root, &f)?;
+    // ADR-0031 Phase 1: mirror the roster change into the synced member
+    // record family. Fire-and-forget — the file write above is the PRIMARY
+    // action and stays authoritative for enforcement; a publish failure is
+    // logged (crate::state_records) and this command still succeeds.
+    if let Some((target, store)) = member_publish_target(root) {
+        if let Some(m) = f.members.get(device) {
+            sr::publish_member(&store, &target, m);
+        }
+    }
     println!("{device} ({name}) -> {}", role.as_str());
     Ok(())
 }
@@ -156,8 +164,29 @@ pub fn cmd_remove(root: &Path, device: &str, as_device: Option<&str>) -> anyhow:
         anyhow::bail!("{device} is not a member");
     }
     save(root, &f)?;
+    // ADR-0031 Phase 1: removal rides a synced member TOMBSTONE (see cmd_add).
+    if let Some((target, store)) = member_publish_target(root) {
+        sr::publish_member_removal(&store, &target, device);
+    }
     println!("removed {device}");
     Ok(())
+}
+
+/// The publish context for a member change: the home store + the resolved
+/// record target for this root. `None` (no login, no binding, no home store)
+/// means there is nothing to sync into — the CLI change still happened.
+fn member_publish_target(root: &Path) -> Option<(sr::RecordTarget, cairn_store::Store)> {
+    let home = std::env::var("CAIRN_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            dirs::home_dir()
+                .map(|h| h.join(".cairn"))
+                .unwrap_or_else(|| PathBuf::from(".cairn"))
+        });
+    let store =
+        cairn_store::Store::open(&home, std::sync::Arc::new(cairn_core::clock::WallClock)).ok()?;
+    let target = sr::resolve_target_for_root(&store, root)?;
+    Some((target, store))
 }
 
 /// `cairn member list` — includes the implicit default row.

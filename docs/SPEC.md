@@ -175,6 +175,12 @@ Append-only, per-project, server-assigned u64 seq. Ops:
 - `FileDelete{path, base_seq}`
 - `Rename{old_path, new_path, manifest_hash, base_seq}`
 - `LeaseEvent{path, kind, device_id}` (informational)
+- `state_record{family, key, payload, ts_ms, tombstone}` (ADR-0031) — project-scoped collaboration
+  record: families `member`/`audit`/`review_version`/`review_link`/`review_comment`; merged at replay
+  by per-family semantics — LWW per key (tie: higher ts_ms, then device_id; a tombstone wins ties) for
+  `member`/`review_link`/`review_comment`, append-only union by content id for `audit`/`review_version`.
+  The §7.1 server conflict rule does NOT apply to this family (concurrent same-key appends are legal).
+  Carried under the synthetic path `state/<family>/<key>`; compaction exempts `state/%` paths.
 
 **Idempotency**: client generates `request_id` (UUIDv7); server dedupes. Retries safe.
 

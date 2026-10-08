@@ -1,6 +1,6 @@
 # ADR-0031: Cross-device project state — what `.cairn*` holds, what syncs, and the path to synced collaboration
 
-Date: 2026-10-08 · Status: accepted (plan; Phase 0 groundwork landed) · Scope: cairn-sync, cairn-review, cairn-core, members/audit
+Date: 2026-10-08 · Status: accepted (plan; Phase 0 groundwork landed; **Phase 1 landed 2026-10-08**) · Scope: cairn-sync, cairn-review, cairn-core, members/audit
 
 ## Context
 
@@ -118,3 +118,50 @@ instead of aspirationally.
 **Verification (Phase 0, this round):** `is_ignored` behavior asserted by
 cairn-sync's scan tests (existing); docs cross-checked against code by
 grep — no remaining doc claims `.cairn*` syncs.
+
+## Phase 1 implementation notes (landed 2026-10-08)
+
+The record family shipped as a `state_record` journal op (`PROTO_VERSION`
+4 → 5). Decisions the plan glossed over, now written down:
+
+- **Synthetic conflict keys.** The server's §7.1 conflict rule and journal
+  index key on the `path` column, so every record carries a synthetic path
+  `state/<family>/<key>` (`pathutil::state_record_path`). It satisfies
+  `validate_rel_path`, gives per-key indexing for free, and keeps records
+  out of every file scan (they exist only in the journal and the local
+  table — `is_ignored` is not involved).
+- **The §7.1 conflict rule does NOT apply to records** (deliberate SPEC
+  §7.1 deviation, this ADR is the citation): concurrent same-key appends
+  from different devices are legal because convergence is defined at apply
+  time — members/review_link/review_comment are LWW-registers keyed by
+  `record_id = key` (rank = `(ts_ms, device_id)`, and a tombstone beats a
+  live value on an exact rank tie — mint+revoke inside one millisecond
+  must not resurrect a link); audit/review_version are append-only unions
+  keyed by a content id (`blake3(family|key|payload)[..32]`), idempotent
+  under replay. Lease fencing also does not apply (no chunks to fence).
+- **Compaction exempts `state/%` rows.** Snapshots stay file-only
+  (`fold::materialize` ignores records), so a cold-attached device
+  replays the full journal to rebuild record state; compaction therefore
+  deletes nothing under `state/`. Record volume is small (~hundreds of
+  bytes per entry); a per-key collapse (keep latest per key) is the
+  Phase-2+ lever if a studio's audit ledger ever makes it matter.
+- **Own-op suppression interaction.** `pull_phase` skips own-device
+  entries, so a record is applied to the local table AT PUBLISH TIME
+  (durable-before-send via the outbox, unchanged kill -9 semantics — a
+  device that crashes before its record is acked re-sends it from the
+  outbox, and the content-id dedupe makes that idempotent).
+- **Enforcement stays machine-local until Phase 3.** Every roster/audit/
+  review surface publishes fire-and-forget (a record failure never fails
+  the primary action) and the dashboard Team view shows the synced
+  roster BESIDE the local one; members.json remains the enforcement
+  authority. Cross-machine enforcement is exactly Phase 2's revoke work.
+- **Verification:** unit tests (LWW tie-break, union idempotence,
+  tombstone), integration tests
+  (`crates/cairn-sync/tests/state_records.rs` — two engines, one journal:
+  LWW convergence, audit union, tombstone propagation), and sim-level
+  E2E (`crates/cairn-sim/tests/state_and_offer_e2e.rs` — roster/audit/
+  revoke over the real server journal, crash-resume durability for a
+  pending record). Old-client behavior: unknown oneof arms decode to
+  `None` and are skipped with the cursor advanced; servers must be
+  upgraded first (an old server would re-encode the decoded op and drop
+  the unknown arm — the deployment note in the proto file).

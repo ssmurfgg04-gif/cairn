@@ -17,6 +17,7 @@ mod proxy;
 mod review;
 mod search;
 mod service;
+mod state_records;
 mod tlbranch;
 mod win_attach;
 

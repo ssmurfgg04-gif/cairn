@@ -97,6 +97,14 @@ pub async fn serve(addr: String, state: Arc<DaemonState>) -> anyhow::Result<()> 
         .route("/api/v1/review/publish", post(review_publish))
         .route("/api/v1/review/link", post(review_link))
         .route("/api/v1/review/revoke", post(review_revoke))
+        // ADR-0031 Phase 1 read surface: the raw synced record table
+        // (query: project, family) — the merged view of local publishes +
+        // everything replayed from peers.
+        .route("/api/v1/state-records", get(state_records))
+        // CONTRACT-DEBT #1: the conflict auto-offer — accept lands the merged
+        // timeline (one journal entry), decline keeps the conflict copy.
+        .route("/api/v1/merge/offer/accept", post(merge_offer_accept))
+        .route("/api/v1/merge/offer/decline", post(merge_offer_decline))
         .route("/api/v1/tl-merge", post(tl_merge))
         .route("/api/v1/compress", post(compress))
         // P0: host + origin + token gates for EVERY route (the layer wraps
@@ -523,6 +531,23 @@ async fn files(
     Json(service::views::files(&state, &project, &needle))
 }
 
+async fn state_records(
+    State(state): State<Arc<DaemonState>>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Json<serde_json::Value> {
+    let mut project = q.get("project").cloned().unwrap_or_default();
+    // An unnamed project reads the first attached one (the team/markers
+    // convention — single-project machines should not have to pass ids);
+    // nothing attached keeps the empty id, and the view answers honestly.
+    if project.is_empty() {
+        if let Some((pid, _, _, _)) = state.projects.first().await {
+            project = pid;
+        }
+    }
+    let family = q.get("family").cloned().unwrap_or_default();
+    Json(service::views::state_records(&state, &project, &family))
+}
+
 async fn team(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
     Json(service::views::team(&state).await)
 }
@@ -729,6 +754,42 @@ async fn file_duplicate(
         )
         .await,
     )
+}
+
+/// POST /api/v1/merge/offer/accept {project_id, path} — thin adapter over
+/// `actions::merge_offer_accept` (CONTRACT-DEBT #1). All behavior — the
+/// engine resolution, the merge, the copy removal — lives in the service.
+async fn merge_offer_accept(
+    State(state): State<Arc<DaemonState>>,
+    body: Option<Json<serde_json::Value>>,
+) -> Json<serde_json::Value> {
+    let Some(Json(v)) = body else {
+        return Json(json!({"ok": false, "error": "body required: {project_id, path}"}));
+    };
+    Json(
+        service::actions::merge_offer_accept(
+            &state,
+            v["project_id"].as_str().unwrap_or_default(),
+            v["path"].as_str().unwrap_or_default(),
+        )
+        .await,
+    )
+}
+
+/// POST /api/v1/merge/offer/decline {project_id, path} — thin adapter over
+/// `actions::merge_offer_decline`.
+async fn merge_offer_decline(
+    State(state): State<Arc<DaemonState>>,
+    body: Option<Json<serde_json::Value>>,
+) -> Json<serde_json::Value> {
+    let Some(Json(v)) = body else {
+        return Json(json!({"ok": false, "error": "body required: {project_id, path}"}));
+    };
+    Json(service::actions::merge_offer_decline(
+        &state,
+        v["project_id"].as_str().unwrap_or_default(),
+        v["path"].as_str().unwrap_or_default(),
+    ))
 }
 
 async fn team_regenerate(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {

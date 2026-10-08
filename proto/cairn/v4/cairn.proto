@@ -72,12 +72,27 @@ message LeaseEventOp {
   reserved 100 to 199;
 }
 
+// ADR-0031 Phase 1: project-scoped collaboration state (roster/audit/review)
+// carried as journal records. Merge semantics are per-family (see SPEC §7.1):
+// member/review_link/review_comment are LWW-registers keyed by `key`
+// (tie-break: higher ts_ms, then higher device_id); audit/review_version are
+// append-only sets keyed by content id. Server applies no conflict rule —
+// concurrent appends of the same record key are legal and converge at apply time.
+message StateRecordOp {
+  string family = 1;    // "member" | "audit" | "review_version" | "review_link" | "review_comment"
+  string key = 2;       // family-scoped key (no '/' and not empty; e.g. member=<device_id>, audit=<content id>, review_link=<token>)
+  bytes payload = 3;    // canonical JSON of the record
+  int64 ts_ms = 4;      // writer clock (LWW timestamp)
+  bool tombstone = 5;   // true = delete/revoke marker (e.g. link revoke, member removal)
+}
+
 message JournalOp {
   oneof op {
     FileUpsertOp file_upsert = 1;
     FileDeleteOp file_delete = 2;
     RenameOp rename = 3;
     LeaseEventOp lease_event = 4;
+    StateRecordOp state_record = 5;
   }
   reserved 100 to 199;
 }

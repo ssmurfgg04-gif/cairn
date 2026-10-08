@@ -40,6 +40,45 @@ Prerequisites read: SPEC.md, docs/ctl-api.md, docs/runbooks/*.
    the conflict copy path `"name (conflict — device — date).ext"`; journal cursors converge;
    `cairn doctor` stays healthy.
 
+## Waveform service (review portal, CONTRACT-DEBT #4)
+
+The portal computes scrub-waveform peaks SERVER-side (`GET
+/r/:token/waveform/:version`): symphonia (pure Rust) streams the media
+packet-by-packet into per-bin min/max — memory is one decode buffer plus
+a bins array capped at 200k bins (~1.6 MiB), so peak RSS does not scale
+with duration. The player falls back to its own browser decoder whenever
+the endpoint refuses, so a misconfigured service degrades, never breaks.
+
+Knobs (read once at portal construction):
+
+| env | default | meaning |
+|---|---|---|
+| `CAIRN_WAVEFORM_LANES` | `2` | concurrent decode lanes; `0` disables the service |
+| `CAIRN_WAVEFORM_RATE_HZ` | `8` | peaks per second of audio (bins density) |
+| `CAIRN_WAVEFORM_MAX_MINUTES` | `240` | audio longer than this → `400 "audio too long for waveform"` |
+| `CAIRN_WAVEFORM_TIMEOUT_SECS` | `120` | per-job decode timeout (→ `503`) |
+| `CAIRN_WAVEFORM_RETRY_AFTER_SECS` | `2` | seconds advertised in `Retry-After` on 429 |
+
+Failure contract (body is always `{"ok":false,"error":...}`):
+
+- lanes full → `429`, error `RATE_LIMITED`, `Retry-After` header — the
+  portal never queues a guest behind another decode; the browser decodes
+  locally instead (budget 40 MiB, as before).
+- `lanes = 0` → the endpoint answers `503 "waveform disabled"` without
+  touching any file (the kill switch; no restart needed to shed load
+  beyond it — it applies on portal restart).
+- unsupported codec (only WAV/FLAC/MP3/OGG-Vorbis decode today) → `415`;
+  overlong audio → `400`; decode timeout → `503`.
+
+Cache: `<blobs_root>/waveforms/<blake3-of-media-bytes>.json` (or
+`<tempdir>/cairn-waveforms` when no blob tree is reachable). Keys are
+content-addressed, so entries survive re-publishes of the same bytes and
+are safe to delete at any time; responses are served with
+`Cache-Control: public, max-age=86400`.
+
+Benchmark + memory evidence: `docs/BENCHMARKS.md` → "Waveform peaks
+(server-side)"; repro `bash scripts/bench_waveform.sh`.
+
 ## Gates before a studio goes live
 - [ ] `cairn doctor` healthy on every device
 - [ ] canary loop green for 24h (`jobs` table / `cairn_canary_loop_result` metric)

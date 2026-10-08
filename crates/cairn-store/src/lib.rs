@@ -16,11 +16,15 @@ pub mod db;
 #[allow(unsafe_code)] // free-space probes only (statvfs / GetDiskFreeSpaceExW)
 pub mod eviction;
 pub mod headers;
+pub mod merge_offers;
 pub mod outbox;
 pub mod state;
+pub mod state_records;
 
 pub use cas::Cas;
 pub use db::FileRow;
 pub use db::Store;
 pub use headers::HeaderCache;
+pub use merge_offers::MergeOfferRow;
 pub use outbox::{Outbox, OutboxEntry, OutboxTrait};
+pub use state_records::StateRecordRow;

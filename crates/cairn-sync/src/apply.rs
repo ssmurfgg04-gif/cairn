@@ -7,6 +7,7 @@ use cairn_store::state::LocalState;
 use cairn_store::{FileRow, Store};
 
 use crate::plane::Entry;
+use crate::state_records;
 
 /// Apply one journal entry to the local view (idempotent: replaying a seq is a no-op via
 /// cursor monotonicity enforced by the caller).
@@ -19,6 +20,15 @@ pub fn apply_entry(
     let Some(op) = entry.op.op.as_ref() else {
         return Ok(());
     };
+    // State records (ADR-0031 Phase 1) never touch the file table or the
+    // filesystem — they merge into the state_records table with per-family
+    // semantics (cairn_sync::state_records). Handled BEFORE the file-path
+    // gate: their "path" is a SYNTHETIC journal grouping key derived from
+    // (family, key), and the honest validation of a record is the family +
+    // key gates below, not a filesystem-shaped path check.
+    if let OpKind::StateRecord(sr) = op {
+        return apply_state_record(store, project_id, entry, sr);
+    }
     // WO6-9 defense in depth: the server rejects traversal paths at append, but replay
     // must never trust that an older/compromised server filtered — validate before the
     // path can reach a filesystem join (hydration writes root.join(path)).
@@ -27,11 +37,13 @@ pub fn apply_entry(
         OpKind::FileDelete(d) => vec![&d.path],
         OpKind::Rename(r) => vec![&r.old_path, &r.new_path],
         OpKind::LeaseEvent(_) => vec![],
+        OpKind::StateRecord(_) => unreachable!("handled above"),
     };
     for p in paths {
         cairn_core::pathutil::validate_rel_path(p)?;
     }
     match op {
+        OpKind::StateRecord(_) => unreachable!("handled above"),
         OpKind::FileUpsert(u) => {
             // W5 guard (round 13, caught LIVE by the two-device matrix on the
             // plain-file path): a locally-CLEAN row whose DISK stat has drifted
@@ -184,6 +196,50 @@ pub fn apply_entry(
     Ok(())
 }
 
+/// Merge a replayed `state_record` entry into the local record table
+/// (ADR-0031 Phase 1). Contract matches an old client's unknown-oneof
+/// behavior for anything THIS build does not understand: an unknown family or
+/// an invalid key is a graceful `Ok(())` skip (loud in the logs, never an
+/// error that would wedge the cursor — a poisoned entry must not stop
+/// convergence), while valid records merge per-family via
+/// [`state_records::apply_record_locally`].
+fn apply_state_record(
+    store: &Store,
+    project_id: &str,
+    entry: &Entry,
+    sr: &cairn_proto::pb::StateRecordOp,
+) -> Result<(), CairnError> {
+    if state_records::validate_family(&sr.family).is_err() {
+        tracing::warn!(family = %sr.family, "state record with unknown family — skipping (forward compat)");
+        return Ok(());
+    }
+    if cairn_core::pathutil::validate_state_key(&sr.key).is_err() {
+        tracing::warn!(
+            family = %sr.family,
+            "state record with invalid key — skipping (a bad key aliases siblings)",
+        );
+        return Ok(());
+    }
+    // the synthetic journal path must stay filesystem-gate-clean for every
+    // validated (family, key) — pin the invariant instead of trusting it
+    debug_assert!(cairn_core::pathutil::validate_rel_path(
+        &cairn_core::pathutil::state_record_path(&sr.family, &sr.key)
+    )
+    .is_ok());
+    let record_id = state_records::record_id_for(&sr.family, &sr.key, &sr.payload);
+    state_records::apply_record_locally(
+        store,
+        project_id,
+        &sr.family,
+        &record_id,
+        &sr.key,
+        sr.ts_ms,
+        &entry.device_id,
+        &sr.payload,
+        sr.tombstone,
+    )
+}
+
 // ---------- content-lineage fork markers (round 13, the W5 catch) ----------
 //
 // base_seq for an append must declare what the local BYTES descend from, not
@@ -288,6 +344,91 @@ mod tests {
                 .as_deref(),
             Some("aa")
         );
+    }
+
+    // ---------- state records (ADR-0031 Phase 1) ----------
+
+    fn state_op(family: &str, key: &str, ts: i64, tombstone: bool) -> cairn_proto::pb::JournalOp {
+        cairn_proto::pb::JournalOp {
+            op: Some(OpKind::StateRecord(cairn_proto::pb::StateRecordOp {
+                family: family.into(),
+                key: key.into(),
+                payload: format!(r#"{{"key":"{key}"}}"#).into_bytes(),
+                ts_ms: ts,
+                tombstone,
+            })),
+        }
+    }
+
+    #[test]
+    fn replay_merges_state_records_lww_and_skips_junk() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path(), Arc::new(WallClock)).unwrap();
+
+        // remote member record lands in the record table (not the file table)
+        apply_entry(
+            &store,
+            "p1",
+            "me",
+            &entry(state_op("member", "dev-1", 100, false), 1),
+        )
+        .unwrap();
+        assert!(
+            store.get_file("p1", "state/member/dev-1").is_none(),
+            "never a file row"
+        );
+        let g = store.get_state_record("p1", "member", "dev-1").unwrap();
+        assert_eq!(g.ts_ms, 100);
+        assert_eq!(
+            g.device_id, "other",
+            "authorship comes from the journal entry"
+        );
+
+        // a STALE replay (lower ts) does not regress the register
+        apply_entry(
+            &store,
+            "p1",
+            "me",
+            &entry(state_op("member", "dev-1", 50, false), 2),
+        )
+        .unwrap();
+        assert_eq!(
+            store
+                .get_state_record("p1", "member", "dev-1")
+                .unwrap()
+                .ts_ms,
+            100
+        );
+
+        // unknown family: graceful skip (cursor keeps moving), nothing written
+        apply_entry(
+            &store,
+            "p1",
+            "me",
+            &entry(state_op("roster", "dev-1", 200, false), 3),
+        )
+        .unwrap();
+        assert!(store.get_state_record("p1", "roster", "dev-1").is_none());
+
+        // invalid key ('/' aliases sibling records): graceful skip
+        apply_entry(
+            &store,
+            "p1",
+            "me",
+            &entry(state_op("member", "a/b", 200, false), 4),
+        )
+        .unwrap();
+        assert!(store.get_state_record("p1", "member", "a/b").is_none());
+
+        // valid append family: union by content id
+        apply_entry(
+            &store,
+            "p1",
+            "me",
+            &entry(state_op("audit", "cid-1", 300, false), 5),
+        )
+        .unwrap();
+        assert_eq!(store.list_state_records("p1", "audit").len(), 1);
     }
 
     // ---------- W5 guard (round 13): undiscovered-local-edit at pull time ----------

@@ -39,7 +39,7 @@ pub struct Store {
 }
 
 /// Current client schema version (`PRAGMA user_version`).
-pub const CLIENT_SCHEMA_VERSION: i64 = 3;
+pub const CLIENT_SCHEMA_VERSION: i64 = 5;
 
 /// True when `root` lives on a network filesystem where SQLite WAL is
 /// unsafe: `-shm` coordination assumes POSIX mmap + local locking, which
@@ -224,6 +224,60 @@ impl Store {
             .map_err(|e| CairnError::new(cairn_core::ErrorKind::Io, format!("migrate v3: {e}")))?;
             conn.pragma_update(None, "user_version", 3)
                 .map_err(|e| CairnError::new(cairn_core::ErrorKind::Io, format!("set v3: {e}")))?;
+        }
+        if v < 4 {
+            // ADR-0031 Phase 1: project-scoped collaboration records (roster /
+            // audit / review) carried as journal `state_record` ops. One row per
+            // (project, family, record_id); the MERGE semantics (LWW vs
+            // append-only union) live in cairn_sync::state_records — this table
+            // is the durable materialized view the apply/publish paths share.
+            // `device_id` is the journal authorship of the winning/last write
+            // (LWW tie-break), `payload` the canonical JSON of the record.
+            conn.execute_batch(
+                r"
+                CREATE TABLE IF NOT EXISTS state_records (
+                  project_id TEXT NOT NULL,
+                  family     TEXT NOT NULL,
+                  record_id  TEXT NOT NULL,
+                  key        TEXT NOT NULL,
+                  ts_ms      INTEGER NOT NULL,
+                  device_id  TEXT NOT NULL,
+                  payload    BLOB NOT NULL,
+                  tombstone  INTEGER NOT NULL DEFAULT 0,
+                  PRIMARY KEY (project_id, family, record_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_state_records_family
+                  ON state_records(project_id, family, ts_ms);
+                ",
+            )
+            .map_err(|e| CairnError::new(cairn_core::ErrorKind::Io, format!("migrate v4: {e}")))?;
+            conn.pragma_update(None, "user_version", 4)
+                .map_err(|e| CairnError::new(cairn_core::ErrorKind::Io, format!("set v4: {e}")))?;
+        }
+        if v < 5 {
+            // CONTRACT-DEBT #1 (conflict auto-offer): one PENDING semantic-merge
+            // offer per (project, path), created by the engine's CONFLICT arm
+            // when the flag is on and the three-way merge would land clean.
+            // Passive until a human accepts (cairn_sync::merge_offer); the row
+            // stores the manifests needed to RECOMPUTE the merge at accept time
+            // (the merge is byte-deterministic, so bytes are never persisted).
+            conn.execute_batch(
+                r"
+                CREATE TABLE IF NOT EXISTS merge_offers (
+                  project_id     TEXT NOT NULL,
+                  path           TEXT NOT NULL,
+                  copy_path      TEXT NOT NULL,
+                  base_manifest  TEXT NOT NULL,
+                  theirs_manifest TEXT NOT NULL,
+                  report_json    TEXT NOT NULL,
+                  created_ms     INTEGER NOT NULL,
+                  PRIMARY KEY (project_id, path)
+                );
+                ",
+            )
+            .map_err(|e| CairnError::new(cairn_core::ErrorKind::Io, format!("migrate v5: {e}")))?;
+            conn.pragma_update(None, "user_version", 5)
+                .map_err(|e| CairnError::new(cairn_core::ErrorKind::Io, format!("set v5: {e}")))?;
         }
         Ok(())
     }
@@ -1116,8 +1170,8 @@ mod pin_tests {
         .unwrap();
         assert_eq!(
             s.schema_version().unwrap(),
-            3,
-            "pins + lease-ctx migrations applied"
+            CLIENT_SCHEMA_VERSION,
+            "pins + lease-ctx + state-records migrations applied"
         );
         s.put_file(&FileRow {
             path: "hero.prproj".into(),

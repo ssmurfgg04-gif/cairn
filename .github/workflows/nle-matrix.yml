@@ -16,6 +16,13 @@
 #   real-timeline-corpus   the pinned real-NLE timeline corpus gate (round 13
 #                          part 1's scripts/real_timeline_corpus.py now in
 #                          CI, python-otio interop oracle included).
+#   premiere-uxp           CONTRACT-DEBT #3 scaffold: the third marker-bridge
+#                          surface — a real Premiere Pro 25+ host driving the
+#                          UXP panel (crates/cairn-cli/assets/uxp-panel/).
+#                          Dispatch-only on a [self-hosted, windows, premiere]
+#                          box (a label no runner carries yet — the job
+#                          documents intent). Amber until a transcript exists:
+#                          docs/nle-matrix-results/premiere-uxp-README.md.
 #
 # I1 numbers from the windows runner are a BEST-CASE bound (loopback plane +
 # NVMe): CI proves the MECHANISM and the local latency budget; WAN RTT is the
@@ -44,7 +51,12 @@ on:
       - ".github/workflows/nle-matrix.yml"
   schedule:
     - cron: "23 4 * * 1" # weekly re-verification (runner images drift)
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      premiere_project:
+        description: "attached project id the premiere-uxp transcript fetches markers for"
+        required: false
+        default: "premiere-demo"
 
 concurrency:
   group: nle-matrix
@@ -230,3 +242,88 @@ jobs:
           path: docs/nle-matrix-results/real-timeline-corpus.json
           if-no-files-found: warn
           retention-days: 30
+
+  premiere-uxp:
+    # CONTRACT-DEBT #3: the marker bridge has three surfaces (CLI export,
+    # HTTP /api/v1/markers, the Premiere UXP panel). Two are verified; the
+    # third — a REAL Premiere host driving the panel end-to-end — has never
+    # run. This job is the scaffold for that run, honestly amber until a
+    # transcript exists: the runner label does not exist yet, the job only
+    # fires on a manual dispatch against a box that carries it, and every
+    # failure is non-blocking. What green means (the acceptance): the
+    # transcript shows the panel fetching markers for the named project and
+    # receiving 200 with a parseable FCPXML —
+    # docs/nle-matrix-results/premiere-uxp-README.md.
+    runs-on: [self-hosted, windows, premiere]
+    timeout-minutes: 15
+    continue-on-error: true
+    if: github.event_name == 'workflow_dispatch'
+    steps:
+      - uses: actions/checkout@v4
+
+      # (b) idempotent, read-only probe of the four prerequisites. Best-effort
+      # BY DESIGN (exit 0 either way): the transcript is the verdict, not this
+      # step — it just echoes, loudly, what must be installed.
+      - name: "Probe the UXP runtime (best-effort; see docs/nle-matrix-results/premiere-uxp-README.md)"
+        shell: powershell
+        run: |
+          $missing = @()
+
+          # Premiere Pro 25+ — the host the panel manifest declares (minVersion 25.0.0)
+          $pp = Get-ChildItem "$env:ProgramFiles\Adobe" -Filter "Adobe Premiere Pro 2*" `
+                -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending | Select-Object -First 1
+          if ($pp) { Write-Host "premiere: found $($pp.Name)" }
+          else { Write-Warning "Adobe Premiere Pro 25+ not found -- install it (licensed) on this runner"; $missing += "premiere" }
+
+          # UXP Developer Tool -- loads the panel in dev mode, no signing needed
+          $uxp = Get-ChildItem "$env:LOCALAPPDATA\Programs" -Directory -ErrorAction SilentlyContinue |
+                 Where-Object { $_.Name -like "*UXP*" } | Select-Object -First 1
+          if ($uxp) { Write-Host "uxp developer tool: found ($($uxp.Name))" }
+          else { Write-Warning "UXP Developer Tool not found -- install it from Creative Cloud, then Load crates/cairn-cli/assets/uxp-panel/manifest.json"; $missing += "uxp-dev-tool" }
+
+          # the panel, copied to Premiere's UXP extensions dir (panel README step 1)
+          $panel = Join-Path $env:APPDATA "Adobe\Adobe Premiere Pro\extensions\cairn-markers\manifest.json"
+          if (Test-Path $panel) { Write-Host "panel: installed ($panel)" }
+          else { Write-Warning "cairn-markers panel not installed at $panel -- copy crates/cairn-cli/assets/uxp-panel/ there (or Load via the UXP Developer Tool)"; $missing += "panel" }
+
+          # the loopback gateway the panel reads (panel.js API const; ADR-0009 posture)
+          try {
+            $null = Invoke-WebRequest -Uri "http://127.0.0.1:17778/" -UseBasicParsing -TimeoutSec 5
+            Write-Host "gateway: http://127.0.0.1:17778 reachable (daemon up)"
+          } catch {
+            Write-Warning "daemon gateway not reachable on 127.0.0.1:17778 -- start it: cairn daemon"; $missing += "daemon"
+          }
+
+          foreach ($tool in @("cairn", "python")) {
+            if (Get-Command $tool -ErrorAction SilentlyContinue) { Write-Host "$tool on PATH: yes" }
+            else { Write-Warning "$tool not on PATH -- the collector needs it"; $missing += $tool }
+          }
+
+          if ($missing.Count -gt 0) {
+            Write-Output ("::warning::premiere-uxp prerequisites missing: " + ($missing -join ", ") + " -- setup checklist: docs/nle-matrix-results/premiere-uxp-README.md")
+          }
+          exit 0
+
+      # (c) the transcript. The collector replays the panel's exact markers
+      # fetch (200 + parseable FCPXML = the headlessly provable half) and
+      # records the human half (P1/P2/P3, --confirm-row on the box) as
+      # UNCONFIRMED: a CI run confirms nothing, so the verdict is honestly
+      # "pending-first-real-host-run" (exit 3) until an operator drives the
+      # panel per the README. Non-blocking either way (continue-on-error).
+      - name: Collect the premiere-uxp transcript
+        shell: powershell
+        run: |
+          python scripts/nle_matrix_collect.py --host premiere --nle premiere `
+            --project "${{ inputs.premiere_project }}" `
+            --out docs/nle-matrix-results/premiere-uxp/transcript.json
+
+      # (d) the transcript is the artifact the studio's first real host run
+      # sends back; landing it in docs/nle-matrix-results/ turns the cell green
+      - name: Upload transcript (premiere-uxp-transcript)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: premiere-uxp-transcript
+          path: docs/nle-matrix-results/premiere-uxp/transcript.json
+          if-no-files-found: warn
+          retention-days: 90

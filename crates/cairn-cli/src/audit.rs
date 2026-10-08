@@ -73,8 +73,10 @@ impl AuditFile {
     }
 
     /// Entry id: blake3 of the decision content — the same decision on
-    /// two machines converges to one entry after sync.
-    fn id_for(e: &AuditEntry) -> String {
+    /// two machines converges to one entry after sync. PUBLIC since
+    /// ADR-0031 Phase 1: the synced `audit` record family uses the same
+    /// content id as its record key (one id, one dedupe story).
+    pub fn id_for(e: &AuditEntry) -> String {
         let mut h = blake3::Hasher::new();
         h.update(e.device.as_bytes());
         h.update(&e.ts_ms.to_le_bytes());
@@ -88,37 +90,15 @@ impl AuditFile {
     /// atomically. A corrupt existing ledger is NEVER silently replaced:
     /// the decision still happens (enforcement is not hostage to
     /// bookkeeping), but the failure is surfaced so operators notice.
+    ///
+    /// Since ADR-0031 Phase 1 the daemon path calls `record_with_id`
+    /// directly (the decision's content id doubles as the synced `audit`
+    /// record key, so it must be known at the call site); this wrapper
+    /// stays for id-agnostic callers (tests, CLI one-shots).
+    #[allow(dead_code)] // no live non-test caller since the daemon switch above
     pub fn record(root: &Path, entry: AuditEntry) -> Result<(), String> {
-        let path = audit_path(root);
-        let mut f = match std::fs::read(&path) {
-            Ok(b) => AuditFile::from_json(&b)?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => AuditFile {
-                schema: SCHEMA.into(),
-                entries: BTreeMap::new(),
-            },
-            Err(e) => return Err(format!("read audit: {e}")),
-        };
-        f.schema = SCHEMA.into();
         let id = Self::id_for(&entry);
-        f.entries.insert(id, entry);
-        // bound the ledger, keeping the NEWEST by ts (then id for stability)
-        if f.entries.len() > MAX_ENTRIES {
-            let mut keys: Vec<(i64, String)> = f
-                .entries
-                .iter()
-                .map(|(k, v)| (v.ts_ms, k.clone()))
-                .collect();
-            keys.sort();
-            let drop_n = f.entries.len() - MAX_ENTRIES;
-            for (i, (_, k)) in keys.into_iter().enumerate() {
-                if i >= drop_n {
-                    break;
-                }
-                f.entries.remove(&k);
-            }
-        }
-        let json = f.to_json()?;
-        cairn_proxy::pipeline::atomic_write(&path, &json)
+        Self::record_with_id(root, entry, &id)
     }
 
     /// Read + sort by time for display (dashboard Team tab, CLI).
@@ -145,17 +125,51 @@ impl AuditFile {
         project: &str,
         allowed: bool,
     ) -> Result<(), String> {
-        Self::record(
-            root,
-            AuditEntry {
-                ts_ms,
-                device: device.to_string(),
-                role: role.to_string(),
-                action: action.to_string(),
-                project: project.to_string(),
-                allowed,
+        let entry = AuditEntry {
+            ts_ms,
+            device: device.to_string(),
+            role: role.to_string(),
+            action: action.to_string(),
+            project: project.to_string(),
+            allowed,
+        };
+        let id = Self::id_for(&entry);
+        Self::record_with_id(root, entry, &id)
+    }
+
+    /// Record a pre-built entry with a pre-computed id (the rbac_guard
+    /// reuses the id as the ADR-0031 `audit` record key, so the local
+    /// ledger and the synced record never diverge).
+    pub fn record_with_id(root: &Path, entry: AuditEntry, id: &str) -> Result<(), String> {
+        let path = audit_path(root);
+        let mut f = match std::fs::read(&path) {
+            Ok(b) => AuditFile::from_json(&b)?,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => AuditFile {
+                schema: SCHEMA.into(),
+                entries: BTreeMap::new(),
             },
-        )
+            Err(e) => return Err(format!("read audit: {e}")),
+        };
+        f.schema = SCHEMA.into();
+        f.entries.insert(id.to_string(), entry);
+        // bound the ledger, keeping the NEWEST by ts (then id for stability)
+        if f.entries.len() > MAX_ENTRIES {
+            let mut keys: Vec<(i64, String)> = f
+                .entries
+                .iter()
+                .map(|(k, v)| (v.ts_ms, k.clone()))
+                .collect();
+            keys.sort();
+            let drop_n = f.entries.len() - MAX_ENTRIES;
+            for (i, (_, k)) in keys.into_iter().enumerate() {
+                if i >= drop_n {
+                    break;
+                }
+                f.entries.remove(&k);
+            }
+        }
+        let json = f.to_json()?;
+        cairn_proxy::pipeline::atomic_write(&path, &json)
     }
 }
 

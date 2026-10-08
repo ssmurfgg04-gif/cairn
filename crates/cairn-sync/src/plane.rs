@@ -172,3 +172,25 @@ pub fn delete_op(path: &str, base_seq: u64) -> JournalOp {
         })),
     }
 }
+
+/// Build a StateRecord op (ADR-0031 Phase 1): one project-scoped
+/// roster/audit/review record with per-family merge semantics applied at
+/// replay time (the server applies no conflict rule to this family).
+#[must_use]
+pub fn state_record_op(
+    family: &str,
+    key: &str,
+    payload: &[u8],
+    ts_ms: i64,
+    tombstone: bool,
+) -> JournalOp {
+    JournalOp {
+        op: Some(OpKind::StateRecord(cairn_proto::pb::StateRecordOp {
+            family: family.into(),
+            key: key.into(),
+            payload: payload.to_vec(),
+            ts_ms,
+            tombstone,
+        })),
+    }
+}

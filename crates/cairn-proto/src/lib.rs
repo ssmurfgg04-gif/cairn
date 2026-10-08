@@ -12,7 +12,12 @@ pub mod pb {
 }
 
 /// Current wire protocol version negotiated at Handshake.
-pub const PROTO_VERSION: i32 = 4;
+/// 5 = StateRecordOp journal arm (ADR-0031 Phase 1). Old clients skip unknown
+/// oneof arms and advance their cursor, so this is upgrade-safe — but servers
+/// must be upgraded FIRST: an old server drops the unknown arm on decode and
+/// would silently record an empty op. Clients tolerate the loss gracefully
+/// (records are absent, not corrupt) yet the correct order is server → client.
+pub const PROTO_VERSION: i32 = 5;
 
 /// Error codes carried in `ErrorDetail.code` (ADR-0010). Keep in lockstep with docs/ctl-api.md.
 pub const ERROR_CODES: &[&str] = &[
@@ -86,6 +91,8 @@ pub fn error_detail(status: &tonic::Status) -> pb::ErrorDetail {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pb::JournalOp;
+    use prost::Message as _;
 
     #[test]
     fn error_roundtrip() {
@@ -99,5 +106,48 @@ mod tests {
     #[test]
     fn every_documented_code_maps() {
         assert!(ERROR_CODES.contains(&"STALE_LEASE"));
+    }
+
+    /// ADR-0031 Phase 1: the state_record arm must survive encode/decode as a
+    /// logical fixed point (byte-exactness is NOT a prost guarantee — see the
+    /// fuzz target's contract comment).
+    #[test]
+    fn state_record_op_roundtrips() {
+        let op = JournalOp {
+            op: Some(pb::journal_op::Op::StateRecord(pb::StateRecordOp {
+                family: "member".into(),
+                key: "dev-abc123".into(),
+                payload: br#"{"device_id":"dev-abc123","role":"editor"}"#.to_vec(),
+                ts_ms: 1_724_800_000_000,
+                tombstone: false,
+            })),
+        };
+        let mut buf = Vec::new();
+        op.encode(&mut buf).unwrap();
+        let back = JournalOp::decode(buf.as_slice()).unwrap();
+        assert_eq!(back, op, "decode/encode/decode must be a fixed point");
+        match back.op.as_ref().unwrap() {
+            pb::journal_op::Op::StateRecord(sr) => {
+                assert_eq!(sr.family, "member");
+                assert_eq!(sr.key, "dev-abc123");
+                assert_eq!(sr.ts_ms, 1_724_800_000_000);
+                assert!(!sr.tombstone);
+                assert!(String::from_utf8(sr.payload.clone()).is_ok());
+            }
+            other => panic!("expected StateRecord arm, got {other:?}"),
+        }
+        // tombstone variant survives too (the Phase-2 revoke substrate)
+        let tomb = JournalOp {
+            op: Some(pb::journal_op::Op::StateRecord(pb::StateRecordOp {
+                family: "review_link".into(),
+                key: "0123456789abcdef0123456789abcdef".into(),
+                payload: Vec::new(),
+                ts_ms: 1,
+                tombstone: true,
+            })),
+        };
+        let mut buf = Vec::new();
+        tomb.encode(&mut buf).unwrap();
+        assert_eq!(JournalOp::decode(buf.as_slice()).unwrap(), tomb);
     }
 }

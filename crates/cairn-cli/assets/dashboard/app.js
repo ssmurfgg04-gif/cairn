@@ -181,6 +181,10 @@ const STR = {
   "files.conflict": { en: "conflict", "de-DE": "Konflikt", "ja-JP": "競合", "zh-CN": "冲突" },
   "files.placeholder": { en: "placeholder", "de-DE": "Platzhalter", "ja-JP": "プレースホルダー", "zh-CN": "占位" },
   "files.pinnedA11y": { en: "pinned", "de-DE": "angepinnt", "ja-JP": "ピン留め済み", "zh-CN": "已置顶" },
+  /* CONTRACT-DEBT #1: the conflict auto-offer affordance (Files rows). */
+  "files.mergeAvailable": { en: "Merge available", "de-DE": "Zusammenführung möglich", "ja-JP": "マージ可能", "zh-CN": "可合并" },
+  "files.mergeAccept": { en: "Accept merge", "de-DE": "Zusammenführung annehmen", "ja-JP": "マージを受け入れる", "zh-CN": "接受合并" },
+  "files.mergeDecline": { en: "Decline", "de-DE": "Ablehnen", "ja-JP": "拒否", "zh-CN": "拒绝" },
   "files.error": { en: "couldn't reach the daemon - the list fills in the moment it responds", "de-DE": "Daemon nicht erreichbar - die Liste erscheint, sobald er antwortet", "ja-JP": "デーモンに接続できません - 応答すると一覧が表示されます", "zh-CN": "无法连接守护进程 - 响应后列表会自动出现" },
 
   "th.file": { en: "file", "de-DE": "Datei", "ja-JP": "ファイル", "zh-CN": "文件" },
@@ -244,6 +248,10 @@ const STR = {
   "toast.pinned": { en: "pinned", "de-DE": "angepinnt", "ja-JP": "ピン留めしました", "zh-CN": "已置顶" },
   "toast.unpinned": { en: "unpinned", "de-DE": "Pin gelöst", "ja-JP": "ピン留めを解除", "zh-CN": "已取消置顶" },
   "toast.recallStarted": { en: "recall started", "de-DE": "Abruf gestartet", "ja-JP": "リコール開始", "zh-CN": "取回已开始" },
+  /* CONTRACT-DEBT #1: merge offer decision toasts. */
+  "toast.mergeAccepted": { en: "Merged timeline synced", "de-DE": "Zusammengeführte Timeline synchronisiert", "ja-JP": "マージしたタイムラインを同期しました", "zh-CN": "已同步合并的时间线" },
+  "toast.mergeDeclined": { en: "Merge declined - conflict copy kept", "de-DE": "Zusammenführung abgelehnt - Konfliktkopie bleibt", "ja-JP": "マージを拒否しました - 競合コピーは保持", "zh-CN": "已拒绝合并 - 保留冲突副本" },
+  "toast.mergeFail": { en: "Merge failed", "de-DE": "Zusammenführung fehlgeschlagen", "ja-JP": "マージに失敗しました", "zh-CN": "合并失败" },
   "toast.versionCreated": { en: "version created", "de-DE": "Version erstellt", "ja-JP": "バージョン作成済み", "zh-CN": "版本已创建" },
   "toast.restored": { en: "restored {n} files ({b})", "de-DE": "{n} Dateien wiederhergestellt ({b})", "ja-JP": "{n}ファイルを復元（{b}）", "zh-CN": "已还原 {n} 个文件（{b}）" },
   "toast.copied": { en: "copied", "de-DE": "kopiert", "ja-JP": "コピーしました", "zh-CN": "已复制" },
@@ -1260,7 +1268,7 @@ function renderFiles(r) {
   const files = (r && r.files) || [];
   renderIfChanged(
     "files-body",
-    `${project}::${sigOf(files, (f) => `${f.path}:${f.size ?? 0}:${f.state ?? ""}:${f.pinned ? 1 : 0}:${f.placeholder ? 1 : 0}`)}`,
+    `${project}::${sigOf(files, (f) => `${f.path}:${f.size ?? 0}:${f.state ?? ""}:${f.pinned ? 1 : 0}:${f.placeholder ? 1 : 0}:${f.merge_available ? 1 : 0}`)}`,
     () => renderFilesInner(r, project),
   );
   if (sum) {
@@ -1307,6 +1315,7 @@ function renderFilesInner(r, project) {
     tdState.innerHTML =
       `<span class="f-state s-${cls}">${ST_ICONS[cls]}<span>${esc(t(key))}</span>` +
       (f.pinned ? `<span class="f-pinmark" title="${esc(t("files.pinnedA11y"))}">${PIN_IC}</span>` : "") +
+      (f.merge_available ? `<span class="f-pinmark f-merge" title="${esc(t("files.mergeAvailable"))}">${MERGE_IC}</span>` : "") +
       `</span>`;
 
     const tdAct = document.createElement("td");
@@ -1330,6 +1339,18 @@ function renderFilesInner(r, project) {
     rowActions.appendChild(pinBtn);
     rowActions.appendChild(fileActionBtn("copy", t("btn.copy"), f.path));
     if (f.placeholder) rowActions.appendChild(fileActionBtn("recall", t("btn.recall"), f.path));
+    // CONTRACT-DEBT #1: a pending semantic-merge offer answers with two
+    // explicit decisions - Accept lands the merged timeline, Decline keeps
+    // the conflict copy. Both are the user's call; sync never auto-applies.
+    let mergeAcceptBtn = null;
+    if (f.merge_available) {
+      mergeAcceptBtn = qaBtn("merge-accept", t("files.mergeAccept"), f.path);
+      mergeAcceptBtn.style.color = "var(--ok-fg)";
+      const mergeDeclineBtn = qaBtn("merge-decline", t("files.mergeDecline"), f.path);
+      rowActions.appendChild(mergeAcceptBtn);
+      rowActions.appendChild(mergeDeclineBtn);
+      mergeDeclineBtn.addEventListener("click", () => doMergeDecline(project, f.path));
+    }
     tdAct.appendChild(rowActions);
 
     openBtn.addEventListener("click", () => doFileOpen(project, f.path));
@@ -1337,6 +1358,7 @@ function renderFilesInner(r, project) {
     dupBtn.addEventListener("click", () => doFileDuplicate(project, f.path));
     shareBtn.addEventListener("click", () => doFileShare(project, f.path));
     pinBtn.addEventListener("click", () => doFilePin(project, f.path, f.pinned));
+    if (mergeAcceptBtn) mergeAcceptBtn.addEventListener("click", () => doMergeAccept(project, f.path));
     tdAct.querySelector('[data-act="copy"]').addEventListener("click", copyBtn);
     const recallBtnEl = tdAct.querySelector('[data-act="recall"]');
     if (recallBtnEl) recallBtnEl.addEventListener("click", () => doRecall(project, f.path));
@@ -1356,7 +1378,7 @@ function qaBtn(act, label, path) {
   btn.title = label;
   btn.dataset.path = path;
   btn.dataset.act = act;
-  btn.innerHTML = act === "open" ? OPEN_IC : act === "download" ? DL_IC : act === "duplicate" ? DUP_IC : SHARE_IC;
+  btn.innerHTML = act === "open" ? OPEN_IC : act === "download" ? DL_IC : act === "duplicate" ? DUP_IC : act === "merge-accept" ? MERGE_IC : act === "merge-decline" ? DEC_IC : SHARE_IC;
   return btn;
 }
 
@@ -1416,6 +1438,10 @@ const OPEN_IC = '<svg class="ic" viewBox="0 0 16 16" fill="none" stroke="current
 const DL_IC = '<svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5v7.5M4.5 7L8 10.5 11.5 7M3 13h10"/></svg>';
 const DUP_IC = '<svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M10.5 5.5V4A1.5 1.5 0 0 0 9 2.5H4A1.5 1.5 0 0 0 2.5 4v5A1.5 1.5 0 0 0 4 10.5h1.5"/></svg>';
 const SHARE_IC = '<svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><circle cx="12.5" cy="3.5" r="1.7"/><circle cx="3.5" cy="8" r="1.7"/><circle cx="12.5" cy="12.5" r="1.7"/><path d="M10.9 4.5l-6.8 2.6M5.1 8.9l6.8 2.6"/></svg>';
+/* CONTRACT-DEBT #1: the merge-offer badge (three strands joining) and its
+   decline twin (same mark, crossed out). */
+const MERGE_IC = '<svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v3.5c0 2.5 2 4.5 5 4.5s5-2 5-4.5V3"/><path d="M8 11v2.5"/><circle cx="8" cy="9.5" r="1.2"/></svg>';
+const DEC_IC = '<svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v3.5c0 2.5 2 4.5 5 4.5s5-2 5-4.5V3"/><path d="M8 11v2.5"/><circle cx="8" cy="9.5" r="1.2"/><path d="M2.5 13.5l11-11"/></svg>';
 
 async function doFileOpen(project, path) {
   if (!project || !path) return;
@@ -1454,6 +1480,31 @@ async function doFileDuplicate(project, path) {
     toast(t("toast.duplicated"));
     refreshFiles();
     refreshAssetsPanel();
+  }
+}
+
+/* CONTRACT-DEBT #1: the conflict auto-offer. Accept re-merges the three
+   sources on the daemon and syncs the result as ONE journal entry; Decline
+   only removes the affordance - the conflict copy stays (that is the sync
+   contract: declining never discards an edit). */
+async function doMergeAccept(project, path) {
+  if (!project || !path) return;
+  const r = await postJSON("/api/v1/merge/offer/accept", { project_id: project, path });
+  if (r && r.ok === false) toast(t("toast.mergeFail"), true);
+  else {
+    toast(t("toast.mergeAccepted"));
+    refreshFiles();
+    refreshFeed();
+  }
+}
+
+async function doMergeDecline(project, path) {
+  if (!project || !path) return;
+  const r = await postJSON("/api/v1/merge/offer/decline", { project_id: project, path });
+  if (r && r.ok === false) toast(t("toast.denied", { e: r.error }), true);
+  else {
+    toast(t("toast.mergeDeclined"));
+    refreshFiles();
   }
 }
 

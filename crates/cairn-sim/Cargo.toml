@@ -19,6 +19,10 @@ sha2 = { workspace = true }
 tempfile = { workspace = true }
 sqlx = { workspace = true }
 
+# state_and_offer_e2e.rs builds real OTIO fixtures + parses merged output
+[dev-dependencies]
+cairn-tl = { path = "../cairn-tl" }
+
 
 
 [lints]

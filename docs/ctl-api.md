@@ -18,6 +18,10 @@ Error envelope (both transports): every error carries
 `CONFLICT, STALE_LEASE, REF_CAS, UNAUTHENTICATED, PERMISSION_DENIED, NOT_FOUND, SESSION_EXPIRED,
 CHECKSUM_MISMATCH, BATCH_TOO_LARGE, RATE_LIMITED, INTERNAL, UNAVAILABLE, COMPACTION_REQUIRED,
 SESSION_FULL`.
+The guest review portal (ADR-0020, token routes `/r/:token/...`) reuses this
+code vocabulary in its JSON errors: the waveform peaks endpoint returns
+`{"ok":false,"error":"RATE_LIMITED"}` with HTTP 429 + `Retry-After` when its
+decode-lane admission gate is full (CONTRACT-DEBT #4).
 
 ---
 

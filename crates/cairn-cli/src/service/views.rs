@@ -402,6 +402,18 @@ pub fn files(state: &DaemonState, project: &str, needle: &str) -> serde_json::Va
             .map(|(p, _)| p)
             .collect()
     };
+    // CONTRACT-DEBT #1: pending semantic-merge offers keyed by the SAME
+    // namespace the file rows use — one row -> one "merge available" badge.
+    let offers: std::collections::HashSet<String> = if project.is_empty() {
+        Default::default()
+    } else {
+        store
+            .list_merge_offers(project)
+            .into_iter()
+            .map(|o| o.path)
+            .collect()
+    };
+    let merge_offers_n = offers.len() as u64; // decisions waiting, project-wide
     for row in store.list_files(project) {
         if row.mode != "file" {
             continue;
@@ -410,6 +422,7 @@ pub fn files(state: &DaemonState, project: &str, needle: &str) -> serde_json::Va
             continue;
         }
         total_files += 1;
+        let merge_available = offers.contains(&row.path);
         match file_badge(&row) {
             "synced" => synced_n += 1,
             "conflict" => conflict_n += 1,
@@ -421,6 +434,7 @@ pub fn files(state: &DaemonState, project: &str, needle: &str) -> serde_json::Va
             "mtime": row.mtime,
             "state": file_badge(&row),
             "pinned": pins.contains(&row.path),
+            "merge_available": merge_available,
             "placeholder": row.manifest_hash.is_some(),
         }));
     }
@@ -435,6 +449,7 @@ pub fn files(state: &DaemonState, project: &str, needle: &str) -> serde_json::Va
     summary.insert("syncing".into(), json!(dirty_n));
     summary.insert("conflict".into(), json!(conflict_n));
     summary.insert("pinned".into(), json!(pins.len()));
+    summary.insert("merge_offers".into(), json!(merge_offers_n));
     json!({"ok": true, "project": project, "summary": summary, "files": rows_out})
 }
 
@@ -491,6 +506,35 @@ pub async fn team(state: &DaemonState) -> serde_json::Value {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
+    // ADR-0031 Phase 1 merged read surface: the members file above stays the
+    // ENFORCEMENT authority (Phase-1 honesty — machine-local file rules), so
+    // these synced copies ADD to the response, never replace it. They show
+    // what the roster convergence will look like on every attached machine
+    // (and what is still missing): local publishes + everything replayed
+    // from peers, straight from the home store's record table.
+    let mut synced_members: Vec<serde_json::Value> = store
+        .list_state_records(&pid, "member")
+        .iter()
+        .map(
+            |r| match serde_json::from_slice::<serde_json::Value>(&r.payload) {
+                Ok(serde_json::Value::Object(mut obj)) => {
+                    obj.insert("tombstone".into(), json!(r.tombstone));
+                    serde_json::Value::Object(obj)
+                }
+                _ => json!({
+                    "payload": String::from_utf8_lossy(&r.payload),
+                    "tombstone": r.tombstone,
+                }),
+            },
+        )
+        .collect();
+    synced_members.sort_by(|a, b| {
+        a["device_id"]
+            .as_str()
+            .unwrap_or("")
+            .cmp(b["device_id"].as_str().unwrap_or(""))
+    });
+    let audit_count = store.list_state_records(&pid, "audit").len();
     json!({
         "ok": true,
         "projects": [{
@@ -505,6 +549,10 @@ pub async fn team(state: &DaemonState) -> serde_json::Value {
             "join_code": if join_code.is_empty() { serde_json::Value::Null } else { json!(join_code) },
             "signal": if signal.is_empty() { serde_json::Value::Null } else { json!(signal) },
             "audit": audit,
+            "synced_records": {
+                "members": synced_members,
+                "audit_count": audit_count,
+            },
             "now_ms": now_ms_i64(),
         }],
     })
@@ -660,4 +708,119 @@ pub async fn flags(state: &DaemonState) -> serde_json::Value {
     json!({
         "flags": flags.iter().map(|(n, v)| json!({"name": n, "value": v})).collect::<Vec<_>>(),
     })
+}
+
+/// GET /api/v1/state-records?project=&family= — the raw synced record table
+/// (ADR-0031 Phase 1 read surface): one family of project-scoped
+/// collaboration records exactly as the LOCAL store holds them — local
+/// publishes plus everything replayed from peers. Unknown/empty family →
+/// an honest empty list (the known set is `cairn_sync::state_records::
+/// FAMILIES`); an empty `project` is resolved to the first attached one by
+/// the HTTP adapter (the team/markers convention), and a project with no
+/// records is simply an empty list — absence stays absent.
+pub fn state_records(state: &DaemonState, project: &str, family: &str) -> serde_json::Value {
+    let records: Vec<serde_json::Value> = if cairn_sync::state_records::FAMILIES.contains(&family) {
+        open_store(state.home.as_path())
+            .map(|store| {
+                store
+                    .list_state_records(project, family)
+                    .iter()
+                    .map(|r| {
+                        json!({
+                            "record_id": r.record_id,
+                            "key": r.key,
+                            "ts_ms": r.ts_ms,
+                            "device_id": r.device_id,
+                            "tombstone": r.tombstone,
+                            "payload": serde_json::from_slice::<serde_json::Value>(&r.payload)
+                                .unwrap_or_else(|_| {
+                                    serde_json::Value::String(String::from_utf8_lossy(&r.payload).into_owned())
+                                }),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    json!({"ok": true, "project": project, "family": family, "records": records})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Task 6 (CONTRACT-DEBT #1 read surface): the files view must surface
+    /// the pending semantic-merge offer as a per-row `merge_available` badge
+    /// plus a project-wide `summary.merge_offers` count — the affordance an
+    /// editor actually clicks. Rows without an offer stay `false`; the count
+    /// is the number of DECISIONS waiting, not the number of rows.
+    #[test]
+    fn files_rows_expose_merge_available() {
+        let home = tempfile::tempdir().unwrap();
+        {
+            let store = open_store(home.path()).unwrap();
+            for path in ["hero.otio", "broll.otio"] {
+                store
+                    .put_file(&cairn_store::FileRow {
+                        path: path.into(),
+                        project_id: "p1".into(),
+                        manifest_hash: Some("aa11".into()),
+                        size: 10,
+                        mode: "file".into(),
+                        mtime: 1,
+                        local_state: "synced".into(),
+                    })
+                    .unwrap();
+            }
+            store
+                .upsert_merge_offer(&cairn_store::MergeOfferRow {
+                    project_id: "p1".into(),
+                    path: "hero.otio".into(),
+                    copy_path: "hero (conflict — dev — 2026-10-08).otio".into(),
+                    base_manifest: "bb22".into(),
+                    theirs_manifest: "cc33".into(),
+                    report_json: r#"{"policy":"semantic","outcome":"notes"}"#.into(),
+                    created_ms: 1,
+                })
+                .unwrap();
+        }
+        // DaemonState fields are all pub; `new` is daemon-private and the view
+        // only reads `home` — the rest of the shape is inert defaults.
+        let state = DaemonState {
+            home: home.path().to_path_buf(),
+            started: std::time::Instant::now(),
+            flags: tokio::sync::RwLock::new(Vec::new()),
+            recall_jobs: std::sync::Arc::new(tokio::sync::RwLock::new(
+                std::collections::HashMap::new(),
+            )),
+            projects: std::sync::Arc::new(crate::projects::ProjectManager::new()),
+            doctor_cache: tokio::sync::RwLock::new(None),
+        };
+
+        let out = files(&state, "p1", "");
+        assert_eq!(out["ok"], json!(true));
+        let rows = out["files"].as_array().expect("files array");
+        let hero = rows
+            .iter()
+            .find(|r| r["path"] == json!("hero.otio"))
+            .expect("hero row present");
+        assert_eq!(hero["merge_available"], json!(true), "offer -> badge");
+        let broll = rows
+            .iter()
+            .find(|r| r["path"] == json!("broll.otio"))
+            .expect("broll row present");
+        assert_eq!(
+            broll["merge_available"],
+            json!(false),
+            "no offer -> no badge"
+        );
+        assert_eq!(out["summary"]["merge_offers"], json!(1));
+
+        // project scoping: another namespace sees neither rows nor offers
+        let other = files(&state, "p2", "");
+        assert_eq!(other["files"].as_array().unwrap().len(), 0);
+        assert_eq!(other["summary"]["merge_offers"], json!(0));
+    }
 }

@@ -10,6 +10,9 @@ cairn-core = { path = "../cairn-core" }
 blake3 = { workspace = true }
 cairn-store = { path = "../cairn-store" }
 cairn-proto = { path = "../cairn-proto" }
+# CONTRACT-DEBT #1: the CONFLICT arm offers a semantic merge of timeline
+# conflicts. cairn-tl is pure (no I/O, forbid(unsafe_code)) — safe here.
+cairn-tl = { path = "../cairn-tl" }
 tonic = { workspace = true }
 tokio = { workspace = true }
 # CPU offload lane (ADR-0025): rayon::spawn + oneshot, PostHog pattern
@@ -36,5 +39,9 @@ tempfile = { workspace = true }
 proptest = { workspace = true }
 # sweep tests must restore mtimes after in-place edits (size+mtime-preserving divergence)
 filetime = "0.2"
+# merge_offer tests build real OTIO fixtures (stamp() gives elements stable ids)
+uuid = { workspace = true }
+# merge_offer tests parse the MergeReport::to_json rows
+serde_json = { workspace = true }
 
 

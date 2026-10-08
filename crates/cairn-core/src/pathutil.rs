@@ -176,6 +176,57 @@ pub fn validate_rel_path(path: &str) -> Result<(), crate::CairnError> {
     Ok(())
 }
 
+/// Max state-record key length (bytes). Tighter than [`MAX_REL_PATH_BYTES`]
+/// because keys are embedded in the synthetic journal path
+/// (`state/<family>/<key>`) and in SQLite primary keys on every device.
+pub const MAX_STATE_KEY_BYTES: usize = 256;
+
+/// Validate a state-record key (ADR-0031 Phase 1). Keys are family-scoped
+/// identifiers (member=device_id, audit=content id, review_link=token), never
+/// paths — so unlike [`validate_rel_path`] they may not contain separators at
+/// all: `/` or `\` in a key would alias into sibling records through the
+/// synthetic journal path.
+///
+/// Rejects: empty keys, `/`, `\`, C0 control characters + DEL, and keys over
+/// [`MAX_STATE_KEY_BYTES`]. Enforced at publish (client) and at the server
+/// journal append (authoritative choke point).
+///
+/// # Errors
+/// `INVALID_PATH` (same taxonomy — a bad key is the record-shaped version of a
+/// bad path); the message never echoes the offending key.
+pub fn validate_state_key(key: &str) -> Result<(), crate::CairnError> {
+    let reject = |why: &str| {
+        Err(crate::CairnError::new(
+            crate::ErrorKind::InvalidPath,
+            format!("invalid state record key: {why}"),
+        ))
+    };
+    if key.is_empty() {
+        return reject("empty");
+    }
+    if key.len() > MAX_STATE_KEY_BYTES {
+        return reject("exceeds length cap");
+    }
+    if key.bytes().any(|b| b < 0x20 || b == 0x7f) {
+        return reject("control character");
+    }
+    if key.contains('/') || key.contains('\\') {
+        return reject("path separator");
+    }
+    Ok(())
+}
+
+/// The synthetic journal path a state record rides (ADR-0031 Phase 1): the
+/// server journal's `path` column keys the conflict rule and compaction, so
+/// records need a path-shaped grouping key that can never collide with real
+/// files (`state/` is not a legal project-file name — it is not in any
+/// workspace, and apply never materializes it). Output passes
+/// [`validate_rel_path`] for every valid (family, key) pair.
+#[must_use]
+pub fn state_record_path(family: &str, key: &str) -> String {
+    format!("state/{family}/{key}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,5 +321,52 @@ mod tests {
         ];
         let c = find_case_collisions(&paths);
         assert_eq!(c, vec!["a/shot.braw".to_string()]);
+    }
+
+    // ---------- state records (ADR-0031 Phase 1) ----------
+
+    #[test]
+    fn validate_state_key_accepts_honest_keys() {
+        for k in [
+            "dev-abc123",
+            "0123456789abcdef0123456789abcdef", // review link token
+            "1724800000000",                    // review version number as string
+            "a3f9c2",                           // audit content id
+            "ünïcode-key",                      // non-ASCII is fine (UTF-8 bytes count)
+        ] {
+            assert!(validate_state_key(k).is_ok(), "should accept: {k}");
+            // and the synthetic path it produces must clear the file-path gate
+            assert!(validate_rel_path(&state_record_path("member", k)).is_ok());
+        }
+        // 256 bytes is the cap boundary — exactly-at passes
+        let at_cap = "k".repeat(MAX_STATE_KEY_BYTES);
+        assert!(validate_state_key(&at_cap).is_ok());
+    }
+
+    #[test]
+    fn validate_state_key_rejects_separators_and_junk() {
+        for k in [
+            "",
+            "dev/1",  // '/' would alias into sibling records
+            r"dev\1", // backslash
+            "a/b/c",
+            "bell\u{7}",
+            "nul\0byte",
+            "del\u{7f}",
+            &"k".repeat(MAX_STATE_KEY_BYTES + 1),
+        ] {
+            let err = validate_state_key(k);
+            assert!(err.is_err(), "should reject: {k:?}");
+            assert_eq!(err.unwrap_err().kind, crate::ErrorKind::InvalidPath);
+        }
+    }
+
+    #[test]
+    fn state_record_path_shape() {
+        assert_eq!(state_record_path("member", "dev-1"), "state/member/dev-1");
+        assert_eq!(
+            state_record_path("review_link", "tok"),
+            "state/review_link/tok"
+        );
     }
 }

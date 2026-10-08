@@ -72,6 +72,11 @@ pub async fn materialize(
                 );
             }
             Some(cairn_proto::pb::journal_op::Op::LeaseEvent(_)) => {}
+            // ADR-0031 Phase 1: state records are NOT file state — snapshots
+            // carry the file tree only, records replay from the journal
+            // because compaction exempts them (Phase-1 honest scope: cold
+            // attach replays the full journal).
+            Some(cairn_proto::pb::journal_op::Op::StateRecord(_)) => {}
             None => {}
         }
         let _ = &path;
@@ -231,7 +236,14 @@ pub async fn compact(
             .map_err(|e| CairnError::new(ErrorKind::NotFound, format!("project: {e}")))?;
     let cutoff_ts = state.clock.now_millis() - grace_millis;
     let res = sqlx::query(
-        "DELETE FROM journal WHERE tenant_id=?1 AND project_id=?2 AND seq<=?3 AND server_ts<?4",
+        // ADR-0031 Phase 1: record rows (synthetic `state/<family>/<key>`
+        // paths) are EXEMPT from compaction — they are the durable
+        // collaboration state (roster/audit/review), replayed by cold-attach
+        // clients that materialize no snapshot for them. Per-key collapse is
+        // a later phase; volume is bounded in practice (audit entries are
+        // ~200 bytes).
+        "DELETE FROM journal WHERE tenant_id=?1 AND project_id=?2 AND seq<=?3 AND server_ts<?4
+         AND path NOT LIKE 'state/%'",
     )
     .bind(tenant_id)
     .bind(project_id)

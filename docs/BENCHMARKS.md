@@ -186,3 +186,58 @@ Runner-measured numbers land in workflow artifacts + job summaries
 (`nle-matrix` workflow); committed copies live in `docs/nle-matrix-results/`.
 Host caveat applies to all of them: shared-runner timing is noisy; the gates
 assert structural correctness + bounded latency, not championship numbers.
+
+## Waveform peaks (server-side)
+
+CONTRACT-DEBT #4, measured 2026-10-08. The portal's
+`GET /r/:token/waveform/:version` endpoint computes min/max peak bins on the
+server so the player never downloads the whole media file just to draw ~700
+numbers.
+
+**Definition.** A synthetic sine bed (mono 48 kHz 16-bit, N minutes, streamed
+to the OS temp dir) is pushed through the REAL `WaveformService::peaks_for` —
+the same call the HTTP handler makes, not a socket — with a FRESH
+content-addressed cache every iteration, so every sample is the cold path (the
+first viewer of a version pays the decode; identical media is then a cache
+hit, keyed by BLAKE3 of the file content). Reported per configuration: wall
+time, peak RSS (VmHWM Δ from `/proc` — the kernel high-water mark never
+shrinks, so after−before is attributable to the run), and bins
+(`CAIRN_WAVEFORM_RATE_HZ` per second of audio, default 8, hard-capped at
+`MAX_BINS` = 200k).
+
+**Instrumentation.** `crates/cairn-review/examples/waveform_bench.rs` +
+`bash scripts/bench_waveform.sh` (release build; the bench deletes the temp
+WAV + cache afterwards). The bottom row is the 2 h 10 m acceptance bed from
+the register's multicam-audio scenario (714 MiB).
+
+| audio bed | iters | wall/iter (median) | peak RSS (VmHWM Δ) | bins (codec) |
+|---|---|---|---|---|
+| 10 min mono 48 kHz 16-bit sine (54 MiB) | 5 | **444 ms** | **1140 KiB (1.1 MiB)** | 4800 (pcm_s16le) |
+| 30 min mono 48 kHz 16-bit sine (164 MiB) | 3 | **1334 ms** | **976 KiB (1.0 MiB)** | 14400 (pcm_s16le) |
+| 130 min mono 48 kHz 16-bit sine (714 MiB) | 3 | **5722 ms** | **2816 KiB (2.8 MiB)** | 62400 (pcm_s16le) |
+
+Reading it: wall time is linear in duration/bins (13× the audio → 12.9× the
+wall) while peak RSS stays ~1–3 MiB across the whole range — the only
+allocation that grows with duration is the bins array (`bins × 2 f32`;
+62,400 bins ≈ 0.5 MiB of the Δ, the rest is async runtime + per-packet decode
+buffers; at the 200k `MAX_BINS` cap the array is ≈ 1.6 MiB). All three rows
+are measured — nothing projected.
+
+**Admission.** Decodes are bounded by a lane semaphore (`try_acquire` only,
+`CAIRN_WAVEFORM_LANES`, default 2): a request arriving at a full lane set is
+NEVER queued behind someone else's 2 h decode — it gets `429` + `Retry-After`
+(`CAIRN_WAVEFORM_RETRY_AFTER_SECS`, default 2) and the portal player falls
+back to its own decoder (assets/review.js). Guardrails: audio longer than
+`CAIRN_WAVEFORM_MAX_MINUTES` (default 240) refuses before decoding; every job
+is wrapped in a decode timeout (`CAIRN_WAVEFORM_TIMEOUT_SECS`, default 120);
+`lanes = 0` disables the endpoint (`503`). The table is a per-lane cold cost,
+not server throughput.
+
+**Host caveat.** Containerized Linux sandbox, 2 vCPU / 4 GB,
+page-cache-warm disk (2026-10-08; `df` showed 2.8 GiB free — the 714 MiB bed
+is a single self-deleting temp file written and read sequentially, no temp
+artifacts left behind). The 2h+ bed decode is STREAMING: peak RSS is bounded
+by the decode buffer + the bins array, not by duration, so a longer bed moves
+wall time linearly and memory only through the capped bins array.
+Relative-comparison instrumentation like the rest of this file — re-run on
+target hardware before quoting absolute values.

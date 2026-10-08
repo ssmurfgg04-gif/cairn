@@ -24,6 +24,11 @@
 //! * **The player** — [`http`] serves a self-contained web page (no build
 //!   toolchain, no CDN) with a scrub timeline, frame stepping, comment
 //!   pins, and HTTP-range media serving so browsers can scrub.
+//! * **Waveform peaks, server-side** — [`waveform`] computes per-bin
+//!   min/max peaks on the daemon (bounded memory, admission-gated with a
+//!   429 + Retry-After, content-addressed cache) so guests render a
+//!   scrub waveform without downloading and decoding the whole media
+//!   file; the player falls back to its own decoder on any refusal.
 //!
 //! The session file `.cairn/review.json` and the per-version note files
 //! are plain deterministic JSON in the project root. HONEST (ADR-0022
@@ -37,6 +42,8 @@
 pub mod http;
 pub mod model;
 pub mod store;
+pub mod waveform;
 
 pub use model::{GuestLink, GuestRole, ReviewFile, ReviewVersion};
 pub use store::{comment_path, session_path, Store};
+pub use waveform::{WaveConfig, WaveError, WaveformResponse, WaveformService};

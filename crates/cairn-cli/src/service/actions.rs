@@ -559,6 +559,38 @@ pub async fn review_publish(
     let n = file.publish(ver);
     match cairn_review::store::Store::save(&root, &file) {
         Ok(()) => {
+            // ADR-0031 Phase 1: mirror the version into the synced
+            // `review_version` family (append-only union keyed by the assigned
+            // stack number). Fire-and-forget — the save above is the primary
+            // act and must never fail because its synced side-effect could
+            // not be enqueued; a machine that misses the record sees the gap
+            // in the merged read surface, not a broken publish.
+            if let Some(target) = crate::state_records::resolve_target(state, project).await {
+                if let Some(store) = open_store(&state.home) {
+                    if let Some(v) = file.version(n) {
+                        let payload = serde_json::json!({
+                            "number": v.number,
+                            "label": v.label,
+                            "media_rel": v.media_rel,
+                            "fps_num": v.fps_num,
+                            "fps_den": v.fps_den,
+                            "frames": v.frames,
+                            "published_by": v.published_by,
+                            "published_at": v.published_at,
+                        });
+                        match serde_json::to_vec(&payload) {
+                            Ok(bytes) => crate::state_records::publish_review_version(
+                                &store, &target, bytes, n,
+                            ),
+                            Err(e) => {
+                                tracing::warn!(
+                                    "review version payload build failed (not synced): {e}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
             json!({"ok": true, "version": n, "frames": frames, "fps": format!("{num}/{den}")})
         }
         Err(e) => json!({"ok": false, "error": e}),
@@ -595,7 +627,36 @@ pub async fn review_link(
         WallClock.now_millis(),
     );
     match cairn_review::store::Store::save(&root, &file) {
-        Ok(()) => json!({"ok": true, "token": token, "link": format!("/r/{token}")}),
+        Ok(()) => {
+            // ADR-0031 Phase 1: mirror the minted link into the synced
+            // `review_link` family (LWW register keyed by token). Same
+            // fire-and-forget discipline as every publish in this module.
+            if let Some(target) = crate::state_records::resolve_target(state, project).await {
+                if let Some(store) = open_store(&state.home) {
+                    if let Some(link) = file.links.iter().find(|l| l.token == token) {
+                        let payload = serde_json::json!({
+                            "token": link.token,
+                            "role": link.role.as_str(),
+                            "note": link.note,
+                            "expires_at": link.expires_at,
+                            "latest_only": link.latest_only,
+                            "created_at": link.created_at,
+                        });
+                        match serde_json::to_vec(&payload) {
+                            Ok(bytes) => crate::state_records::publish_review_link(
+                                &store, &target, bytes, &token,
+                            ),
+                            Err(e) => {
+                                tracing::warn!(
+                                    "review link payload build failed (not synced): {e}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            json!({"ok": true, "token": token, "link": format!("/r/{token}")})
+        }
         Err(e) => json!({"ok": false, "error": e}),
     }
 }
@@ -620,7 +681,18 @@ pub async fn review_revoke(state: &Arc<DaemonState>, project: &str, token: &str)
         return json!({"ok": false, "error": "unknown link"});
     }
     match cairn_review::store::Store::save(&root, &file) {
-        Ok(()) => json!({"ok": true}),
+        Ok(()) => {
+            // ADR-0031 Phase 1: the revoke rides a synced review_link
+            // TOMBSTONE (the Phase-2 cross-machine revoke substrate — every
+            // portal consults the record before honoring the link).
+            // Fire-and-forget: the local revoke above already happened.
+            if let Some(target) = crate::state_records::resolve_target(state, project).await {
+                if let Some(store) = open_store(&state.home) {
+                    crate::state_records::publish_review_link_revocation(&store, &target, &token);
+                }
+            }
+            json!({"ok": true})
+        }
         Err(e) => json!({"ok": false, "error": e}),
     }
 }
@@ -769,5 +841,52 @@ pub async fn compress(
         Err(e) => json!(
             {"ok": false, "error": format!("ffmpeg missing: {e} — winget install Gyan.FFmpeg")}
         ),
+    }
+}
+
+/// POST /api/v1/merge/offer/accept {project_id, path} — accept a pending
+/// semantic-merge offer (CONTRACT-DEBT #1): recompute the merge, write the
+/// merged timeline to the original path, drop the conflict copy, and let the
+/// engine push exactly ONE journal entry. The action MUST run on the LIVE
+/// runtime's engine (same store handle + plane as the sync loop), so a
+/// stopped/never-started project answers honestly instead of half-accepting.
+/// The merge itself is byte-deterministic; `report` echoes the merge report
+/// for the UI toast.
+pub async fn merge_offer_accept(state: &Arc<DaemonState>, project: &str, path: &str) -> Json {
+    if project.is_empty() || path.is_empty() {
+        return json!({"ok": false, "error": "project_id, path required"});
+    }
+    let outcome = state
+        .projects
+        .with_engine(
+            project,
+            |engine| async move { engine.accept_offer(path).await },
+        )
+        .await;
+    match outcome {
+        Err(msg) => json!({"ok": false, "error": msg}),
+        Ok(Err(e)) => json!({"ok": false, "error": e.message}),
+        Ok(Ok(outcome)) => json!({"ok": true, "report": outcome.report_json}),
+    }
+}
+
+/// POST /api/v1/merge/offer/decline {project_id, path} — withdraw the offer
+/// affordance ONLY: the conflict copy stays on disk and in the table (§7.1
+/// contract — declining means "I'll resolve it myself", never "discard my
+/// edit"). Store-only on purpose: it works even while the project's sync
+/// loop is between retries, and deleting a row needs no engine.
+pub fn merge_offer_decline(state: &Arc<DaemonState>, project: &str, path: &str) -> Json {
+    if project.is_empty() || path.is_empty() {
+        return json!({"ok": false, "error": "project_id, path required"});
+    }
+    let Some(store) = open_store(&state.home) else {
+        return json!({"ok": false, "error": "store unavailable"});
+    };
+    match store.get_merge_offer(project, path) {
+        None => json!({"ok": true, "removed": false, "error": "no pending offer for that path"}),
+        Some(_) => match store.delete_merge_offer(project, path) {
+            Ok(()) => json!({"ok": true, "removed": true}),
+            Err(e) => json!({"ok": false, "error": e.message}),
+        },
     }
 }

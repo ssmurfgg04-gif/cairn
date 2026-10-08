@@ -435,18 +435,29 @@ pub(crate) async fn rbac_guard(
     };
     let role = members.role_of(&device);
     let allowed = rbac::allows(role, perm);
-    if let Err(e) = AuditFile::decision(
-        &root,
-        now_ms_i64(),
-        &device,
-        role.as_str(),
-        action,
-        project_id,
+    let entry = crate::audit::AuditEntry {
+        ts_ms: now_ms_i64(),
+        device: device.clone(),
+        role: role.as_str().to_string(),
+        action: action.to_string(),
+        project: project_id.to_string(),
         allowed,
-    ) {
+    };
+    let entry_id = crate::audit::AuditFile::id_for(&entry);
+    if let Err(e) = AuditFile::record_with_id(&root, entry.clone(), &entry_id) {
         // bookkeeping is never allowed to break enforcement, but it must
         // be loud when it breaks
         tracing::warn!(error = %e, "audit ledger write failed (decision still enforced)");
+    }
+    // ADR-0031 Phase 1: mirror the decision into the synced `audit` record
+    // family (append-only union, keyed by the SAME content id the local
+    // ledger uses). Fire-and-forget — enforcement above is the primary act
+    // and must not depend on the ledger ride-along. Daemon-wide actions
+    // (project "") have no project journal to publish into and are skipped.
+    if !project_id.is_empty() {
+        if let Some(target) = crate::state_records::resolve_target(state, project_id).await {
+            crate::state_records::publish_audit(&store, &target, &entry);
+        }
     }
     if !allowed {
         return Err(Status::permission_denied(format!(

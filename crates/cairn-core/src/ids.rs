@@ -28,6 +28,40 @@ pub fn request_id_for(
     format!("req-{hex}")
 }
 
+/// Content-derived idempotency key for state records (ADR-0031 Phase 1).
+/// Same shape as [`request_id_for`] — `req-state-` + the full BLAKE3-256 hex —
+/// over (tenant, project, family, key, payload, ts, device). Two enqueues of
+/// the SAME record (watcher-style races, crash-recovery replays, a caller
+/// retrying a fire-and-forget publish) dedupe to ONE journal entry; a genuine
+/// re-publish (new ts or payload) gets a fresh id. Append families key records
+/// by content (see `cairn_sync::state_records`), so their request ids are
+/// naturally stable across retries.
+pub fn state_record_request_id(
+    tenant: &str,
+    project: &str,
+    family: &str,
+    key: &str,
+    payload: &[u8],
+    ts_ms: i64,
+    device: &str,
+) -> String {
+    let mut h = blake3::Hasher::new();
+    h.update(tenant.as_bytes());
+    h.update(b"\n");
+    h.update(project.as_bytes());
+    h.update(b"\n");
+    h.update(family.as_bytes());
+    h.update(b"\n");
+    h.update(key.as_bytes());
+    h.update(b"\n");
+    h.update(payload);
+    h.update(b"\n");
+    h.update(&ts_ms.to_le_bytes());
+    h.update(b"\n");
+    h.update(device.as_bytes());
+    format!("req-state-{}", h.finalize().to_hex())
+}
+
 /// New random device id (short, readable).
 #[must_use]
 pub fn new_device_id() -> String {
@@ -64,5 +98,45 @@ mod tests {
     #[test]
     fn device_ids_prefixed() {
         assert!(new_device_id().starts_with("dev-"));
+    }
+
+    #[test]
+    fn state_record_request_ids_are_deterministic_and_content_sensitive() {
+        let payload = br#"{"role":"editor"}"#.to_vec();
+        let a = state_record_request_id("t", "p", "member", "dev-1", &payload, 100, "dev-A");
+        let b = state_record_request_id("t", "p", "member", "dev-1", &payload, 100, "dev-A");
+        assert_eq!(
+            a, b,
+            "same record must derive the same id (race/replay dedup)"
+        );
+        assert!(a.starts_with("req-state-"), "state ids are namespaced: {a}");
+        assert_eq!(a.len(), "req-state-".len() + 64, "full blake3-256 hex");
+        // any input change → fresh id
+        assert_ne!(
+            a,
+            state_record_request_id("t", "p", "member", "dev-1", &payload, 101, "dev-A")
+        );
+        assert_ne!(
+            a,
+            state_record_request_id("t", "p", "member", "dev-2", &payload, 100, "dev-A")
+        );
+        assert_ne!(
+            a,
+            state_record_request_id("t", "p", "audit", "dev-1", &payload, 100, "dev-A")
+        );
+        assert_ne!(
+            a,
+            state_record_request_id("t2", "p", "member", "dev-1", &payload, 100, "dev-A")
+        );
+        assert_ne!(
+            a,
+            state_record_request_id("t", "p", "member", "dev-1", &payload, 100, "dev-B")
+        );
+        // The two id namespaces can never collide: request_id_for output is
+        // `req-` + hex (hex alphabet only), so no output can start with
+        // "req-state-" ('s' is not a hex digit).
+        let file_id = request_id_for("t", "p", "member", "x", 0, 0);
+        assert!(!file_id.starts_with("req-state-"));
+        assert_ne!(a, file_id);
     }
 }

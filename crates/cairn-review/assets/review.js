@@ -8,6 +8,9 @@
 // zoom to 400% with pan, honest waveform (drawn only when the real audio
 // decodes — never faked), buffered range on the scrub bar, live composer
 // timecode, comment filters, and full interactive states everywhere.
+// CONTRACT-DEBT #4: waveform peaks are now fetched from the daemon's
+// bounded server-side endpoint first; the client decode below is the
+// fallback for refusals (429/415/404/503) and pre-endpoint daemons.
 
 (function () {
   "use strict";
@@ -186,6 +189,11 @@
   function mediaUrl(v) {
     const full = state.useFull ? "?full=1" : "";
     return "/r/" + encodeURIComponent(token) + "/media/" + v.number + full;
+  }
+
+  function waveformUrl(v) {
+    const full = state.useFull ? "?full=1" : "";
+    return "/r/" + encodeURIComponent(token) + "/waveform/" + v.number + full;
   }
 
   function pickVersion(v, first) {
@@ -419,7 +427,7 @@
     }
   }
 
-  // ---------- waveform (honest: drawn only when the audio really decodes) ----------
+  // ---------- waveform (server peaks first, honest client fallback) ----------
 
   const WAVE_BUDGET = 40 * 1024 * 1024; // only analyze small/proxy media
   const waveCache = new Map();          // version:full -> Float32Array | null
@@ -440,18 +448,39 @@
     waveFor = key;
     if (!waveCache.has(key)) {
       let peaks = null;
+      // 1) server-side peaks first (CONTRACT-DEBT #4): the daemon decodes
+      //    with bounded memory behind an admission gate and caches the
+      //    result content-addressed — no 40 MiB download to the browser.
+      //    Any refusal (429 RATE_LIMITED, 415 codec, 400 too-long, 404,
+      //    503 disabled/timeout) falls through to the client decode.
       try {
-        const head = await fetch(mediaUrl(v), { method: "HEAD" });
-        const len = Number(head.headers.get("Content-Length"));
-        if (Number.isFinite(len) && len > 0 && len <= WAVE_BUDGET) {
-          const buf = await (await fetch(mediaUrl(v))).arrayBuffer();
-          const actx = audioCtx();
-          if (actx) {
-            const audio = await actx.decodeAudioData(buf);
-            peaks = computePeaks(audio, 700);
+        const res = await fetch(waveformUrl(v));
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.ok && Array.isArray(data.peaks) && data.peaks.length) {
+            // server peaks are [[min,max],...] floats in [-1,1]; the
+            // drawer wants the per-bin amplitude, same shape computePeaks
+            // returns (0..1)
+            peaks = Float32Array.from(data.peaks, (p) => Math.max(Math.abs(p[0]), Math.abs(p[1])));
           }
         }
-      } catch { peaks = null; }
+      } catch { /* server unavailable or decode refused: fall back */ }
+      // 2) client-side fallback (unchanged): only small media pays the
+      //    full download + decodeAudioData cost
+      if (!peaks) {
+        try {
+          const head = await fetch(mediaUrl(v), { method: "HEAD" });
+          const len = Number(head.headers.get("Content-Length"));
+          if (Number.isFinite(len) && len > 0 && len <= WAVE_BUDGET) {
+            const buf = await (await fetch(mediaUrl(v))).arrayBuffer();
+            const actx = audioCtx();
+            if (actx) {
+              const audio = await actx.decodeAudioData(buf);
+              peaks = computePeaks(audio, 700);
+            }
+          }
+        } catch { peaks = null; }
+      }
       waveCache.set(key, peaks);
     }
     if (waveFor === key) drawWave(waveCache.get(key), progressRatio());

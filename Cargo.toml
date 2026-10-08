@@ -71,6 +71,12 @@ memmap2 = "0.9"
 blake3 = "1"
 zstd = "0.13"
 
+# server-side waveform peaks (CONTRACT-DEBT #4): pure-Rust audio decode for
+# the review portal's bounded peaks endpoint. default-features = false keeps
+# the dep tree lean: WAV/RIFF + FLAC + MP3 + OGG/Vorbis readers/codecs only
+# (no AAC/MKV/CAF/isomp4, no SIMD intrinsics).
+symphonia = { version = "0.5", default-features = false, features = ["wav", "flac", "mp3", "ogg", "vorbis", "pcm"] }
+
 # ids / serialization
 uuid = { version = "1", features = ["v7", "v4"] }
 serde = { version = "1", features = ["derive"] }
