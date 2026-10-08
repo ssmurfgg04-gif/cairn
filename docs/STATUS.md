@@ -21,6 +21,19 @@ Legend: ✅ implemented + tests green · 🟨 implemented, platform-gated / hard
 
 
 
+## Round 29 (2026-10-08) — the architecture round: console service layer, ProjectManager, canonical topology, the contract-debt register (ADR-0030/0031/0032)
+
+| Item | Status | Detail |
+|---|---|---|
+| Console service layer (ADR-0030) | ✅ | `cairn-cli/src/service/` (mod/views/actions): every dashboard behavior — RBAC-guarded attach/detach, snapshots/pins/recall/flags via the SAME ctl service impls gRPC serves, review publish/link/revoke, tl-merge, compress, files/team/search views, marker export, download policy — moved out of `dashboard.rs` into typed service functions (no axum types in signatures). dashboard.rs is now an HTTP adapter (~840 lines, was ~2050): router + security gate + parse/respond. Wire contract unchanged byte-for-byte; tray/panel/tests can call the service without HTTP |
+| ProjectManager owns lifecycle (ADR-0030) | ✅ | `pub static RUNTIMES` + `PRESENCE_TX` globals DELETED. `ProjectManager` (in projects.rs) is the explicit owner: attach/detach/resume are methods, readers take deterministic snapshots (`list` sorted by ns, `first`, `find_by_project`, `project_root`, `roots`), presence hub lives in the manager, each runtime carries its own sender clone. DaemonState holds the one `Arc<ProjectManager>`; RuntimesProvider (review portal) gets it injected instead of reaching into globals. Windows caches (CFAPI_CONNS/OVERLAY_FP) stay process-local BY DESIGN, documented |
+| Join-time flags rejoin live swarms (CONTRACT-DEBT #2 CLOSED) | ✅ | `set_flag` on live_presence/fec_parity/quic_relay now calls `ProjectManager::restart_swarms` — shutdown + rejoin with freshly-read flags, no re-attach, no daemon restart. The "applies at next swarm join" honesty note (ADR-0023) and both ctl error messages updated; the silent no-op users read as a broken toggle is gone |
+| Cross-device project state plan (ADR-0031) | ✅ plan | `.cairn*` is sync-ignored (`is_ignored`, SPEC §10) → review/member/audit state is machine-local while carrying project-level semantics. ADR-0031 names the truth, kills the contradictory doc claims (review.rs module doc said it "syncs to every peer" — it does not), and lays the 4-phase record-sync plan (roster LWW / audit union / review append+tombstone; Phase 2 = cross-device link revoke). No behavior change this round by design |
+| Canonical runtime topology (ADR-0032) | ✅ | One diagram: daemon owns sync; loopback console surfaces; two optional legs (plane, swarm); relay is degradation not mode; deviations table (each = exactly one axis) — new combos now require an ADR |
+| Contract-debt register (docs/CONTRACT-DEBT.md) | ✅ | The review's five "machinery exists, wiring doesn't" items each get exists/missing/acceptance: #1 conflict auto-offer (open), #2 flag restart (CLOSED), #3 real Premiere-host verification (open, CI-gated), #4 server-side waveform memory budget (open), #5 synced collaborative state (open, ADR-0031 Phases 1–3) |
+| Tests | ✅ | +4 new: `manager_tests::empty_manager_reads_are_honest` (registry API + presence hub round-trip + unknown-project detach no-panic), `service::tests::safe_join_refuses_traversal…` (incl. the ANY-ParentDir refusal contract), `file_badge…`; `probe_media`/review suites untouched. cargo check + clippy clean, fmt clean; 207 tests green across cairn-cli/core/store/sync/review |
+
+
 ## Round 26 (2026-09-05) — install-and-it-just-works: tray daemon supervision, the RUSTFLAGS release fix, real-daemon verification
 
 | Item | Status | Detail |
