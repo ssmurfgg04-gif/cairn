@@ -1,5 +1,16 @@
 # Cairn — content-addressed chunked sync & storage engine for professional video teams
 
+**What is Cairn? (plain language.)** It is version control for the folder
+your video editor already uses. You keep working in Premiere, Resolve, or
+Blender exactly as today; Cairn watches the project folder, and every save
+becomes a durable version — synced to your teammates and to a meeting-point
+server you (or we) host. Only the changed pieces move (files are split into
+content-addressed chunks, deduplicated, and compressed), a crash mid-save
+or mid-upload loses nothing, and opening a huge file that is not fully
+downloaded yet serves what the editor needs first (placeholder hydration).
+No check-in ritual, no "copy_final_v7_REAL" — save, and the other cut stays
+in sync with a conflict copy when two people genuinely collide.
+
 > Git-style versioning, FastCDC chunking, BLAKE3 integrity, placeholder hydration for NLE media.
 > Headless core: sync engine, storage server, local daemon, CLI. The ctl API is a deliverable.
 
@@ -36,16 +47,39 @@ proto/cairn/v4     .proto source of truth
 docs/              SPEC.md, adr/, ctl-api.md, runbooks/, STATUS.md
 ```
 
-## Install (Windows, one command)
+## Download & install
+
+**Windows (recommended):** grab `cairn-setup-<tag>.exe` from the
+[latest release](https://github.com/ssmurfgg04-gif/cairn/releases/latest)
+and double-click it — per-user NSIS installer (no admin), license page,
+Start-Menu shortcut, optional SHA256-pinned ffmpeg component, tray
+autostart, daemon starts hidden at the end; the finish page opens the
+dashboard at `http://127.0.0.1:17778`. The installer is built and
+gate-tested (silent install → live daemon → `status --json` → uninstall →
+autostart removed) on every `v*` tag by
+[.github/workflows/installer.yml](.github/workflows/installer.yml); the
+contract it shares with the scripted path is documented in
+[installer/windows/README.md](installer/windows/README.md). It is unsigned
+in this beta — SmartScreen's "More info → Run anyway" applies.
+
+**Windows (scripted):**
 
 ```powershell
 irm https://raw.githubusercontent.com/ssmurfgg04-gif/cairn/main/install.ps1 | iex
 ```
 
-Installs the engine + the system tray (tray icon in the notification area:
-connect a project folder, check status, open the project — no terminal
-needed; ADR-0016). SHA-verified downloads, per-user autostart, no admin
-rights. The CLI path below remains for servers and power users.
+**Self-hosting the meeting point** (two homes / two studios syncing through
+a server you control): `docs/runbook-meeting-point.md` — hardened systemd
+units (`deploy/`), a multi-stage Dockerfile + compose with TLS termination,
+the verified env-knob table, backups, and the honest admission-gap notes
+(what works today, what is still tracked debt).
+
+Both install paths lay down the SAME per-user layout
+(`%LOCALAPPDATA%\Programs\Cairn` + the `CairnTray` autostart key) and are
+interchangeable on the same machine. Either one puts the engine + system
+tray in place (tray icon in the notification area: connect a project
+folder, check status, open the project — no terminal needed; ADR-0016).
+The CLI path below remains for servers and power users.
 
 **What you're evaluating:** the merge is `cairn tl-merge --base b.otio
 --ours a.otio --theirs b2.otio` (exit 0 clean / 1 notes / 2 conflicts / 3
