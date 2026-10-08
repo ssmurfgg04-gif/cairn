@@ -91,7 +91,7 @@ missing, the acceptance test that closes it.
   re-run `scripts/bench_waveform.sh` on a production-class host and
   paste the row.
 
-## 5. Synced collaborative state (roster / review / audit across devices) — **Phase 1 + Phase 2 (cross-machine revoke) landed; Phase 3 is the last phase**
+## 5. Synced collaborative state (roster / review / audit across devices) — **CLOSED: Phases 1–3 all landed (round 31)**
 
 - **Existed:** the durable bindings, the engine's keyed append-only
   journal with tombstone semantics, and per-machine members/audit/review
@@ -117,8 +117,29 @@ missing, the acceptance test that closes it.
 - **Phase 2 (LANDED round 31, Task 2-a):** the RootProvider
   `link_revocations(project)` lookup now exists and is consulted before
   minting/validating — the revoke-anywhere-dead-everywhere behavior holds
-  within one sync pass. Phase 3 remains: `.cairn` as a materialized view
-  of the records.
+  within one sync pass.
+- **Phase 3 (LANDED round 31, main thread):** `.cairn` is now a
+  MATERIALIZED VIEW of the records (`cairn-cli/src/materialize.rs`, wired
+  via the `StateMaterializer` engine seam): after every sync pass that
+  applies state records, members.json follows member records (upsert per
+  device, tombstone removes), audit.jsonl unions by content id, and
+  review.json follows review_version/review_link/review_comment records —
+  so a cross-machine revoke removes the link from the FILE every local
+  reader (shell ext, CLI, offline machines) actually opens. LWW echo
+  guard (an apply-echo older than the file's own entry never regresses
+  it), corrupt cache files reported-never-clobbered, materializer failure
+  never fails the sync pass (records remain truth; the cache is
+  best-effort). rbac_guard untouched — it reads members.json, which now
+  follows the records; offline machines keep local authority until
+  records arrive (the honest boundary). Proxy caches stay outside the
+  record set permanently, per the ADR.
+- **Acceptance (met):** the three legs are covered — same roster as
+  authority (materialization + synced records, sim E2E), comments cross
+  devices (review_comment records + materialization, unit + sim), and a
+  link revoked on either machine is dead on both portals within one sync
+  pass (Phase 2 portal consult, `cross_machine_revoke_kills_the_link_on_
+  the_other_portal_e2e`) AND out of the local file everywhere (Phase 3
+  materialization, `review_link` tombstone unit + sim tests).
 - **Acceptance (Phase 1, met by tests):**
   `crates/cairn-sync/tests/state_records.rs` (two engines, one journal:
   LWW convergence, audit union, tombstone propagation) and
@@ -135,11 +156,10 @@ missing, the acceptance test that closes it.
 
 Ordering update (2026-10-08): #1 CLOSED (engine-offered merge behind
 `semantic_merge`), #4 landed (admission-gated server peaks + measured
-bench), #5 Phase 1 landed (`state_record` op family; enforcement still
-machine-local until Phase 3). #2 was closed last round. Remaining: #5
-Phase 2 (tombstone-backed revoke everywhere — the security payoff) and
-#3 (a real Premiere host run on a self-hosted runner; the CI scaffold
-and collector are ready).
+bench), #5 Phase 1 landed (`state_record` op family). #2 was closed last
+round. Superseded by the round-31 updates below — #5 is now CLOSED
+(Phases 1–3). Remaining open: #3 (a real Premiere host run on a
+self-hosted runner; the CI scaffold and collector are ready).
 
 ---
 

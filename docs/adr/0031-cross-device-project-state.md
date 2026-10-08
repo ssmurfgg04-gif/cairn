@@ -1,6 +1,6 @@
 # ADR-0031: Cross-device project state — what `.cairn*` holds, what syncs, and the path to synced collaboration
 
-Date: 2026-10-08 · Status: accepted (plan; Phase 0 groundwork landed; **Phase 1 landed 2026-10-08**) · Scope: cairn-sync, cairn-review, cairn-core, members/audit
+Date: 2026-10-08 · Status: accepted; **Phases 0–3 ALL landed 2026-10-08** (Phase 3: `.cairn` is a materialized view of the records — `cairn-cli/src/materialize.rs`) · Scope: cairn-sync, cairn-review, cairn-core, members/audit
 
 ## Context
 
