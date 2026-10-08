@@ -19,11 +19,12 @@ sha2 = { workspace = true }
 tempfile = { workspace = true }
 sqlx = { workspace = true }
 
-# state_and_offer_e2e.rs builds real OTIO fixtures + parses merged output
+# state_and_offer_e2e.rs builds real OTIO fixtures + parses merged output,
+# and drives the REAL portal (cairn-review::http::Portal) for the Phase-2
+# cross-machine revoke E2E
 [dev-dependencies]
 cairn-tl = { path = "../cairn-tl" }
-
-
+cairn-review = { path = "../cairn-review" }
 
 [lints]
 workspace = true

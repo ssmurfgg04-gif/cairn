@@ -496,3 +496,179 @@ async fn merge_offer_flow_through_real_server_e2e() {
     let bytes_0 = std::fs::read(ws(&world, 0).join("seq.otio")).unwrap();
     assert_eq!(bytes_0, merged_bytes, "byte-identical merged head on both");
 }
+
+// ---------------------------------------------------------------------------
+// 5. ADR-0031 Phase 2: cross-machine revoke through the REAL portal gate
+// ---------------------------------------------------------------------------
+
+use cairn_review::http::{Portal, RootProvider};
+use cairn_review::model::{GuestLink, GuestRole, ReviewFile, ReviewVersion};
+use cairn_review::store as review_store;
+
+/// The daemon-shaped RootProvider over ONE device (what `RuntimesProvider`
+/// does in cairn-cli): roots from the machine-local review.json of the
+/// attached workspace, revocations from the device's synced record table.
+struct SimProvider {
+    project: String,
+    root: PathBuf,
+    store: cairn_store::Store,
+}
+
+#[async_trait::async_trait]
+impl RootProvider for SimProvider {
+    async fn roots(&self) -> Vec<(String, PathBuf)> {
+        vec![(self.project.clone(), self.root.clone())]
+    }
+    async fn link_revocations(&self, project_id: &str) -> Vec<String> {
+        self.store
+            .list_state_records(project_id, "review_link")
+            .into_iter()
+            .filter(|r| r.tombstone)
+            .map(|r| r.key)
+            .collect()
+    }
+}
+
+fn portal_for(world: &World, i: usize) -> Portal {
+    let dev = &world.devices[i];
+    let store = cairn_store::Store::open(
+        &dev.root.path().join("store"),
+        std::sync::Arc::new(cairn_core::clock::WallClock),
+    )
+    .unwrap();
+    Portal::new(std::sync::Arc::new(SimProvider {
+        project: "p1".into(),
+        root: ws(world, i),
+        store,
+    }))
+}
+
+/// Mint the same guest link on BOTH machines' review.json (the shared-link
+/// shape: the token is a live link on A and B — e.g. re-minted from the
+/// synced record, or a folder reachable from both), return the token.
+fn seed_link(world: &World, i: usize, token: &str, created_at: i64) {
+    let mut f = ReviewFile {
+        title: "Brand Film".into(),
+        ..Default::default()
+    };
+    f.publish(ReviewVersion {
+        number: 0,
+        label: "v1".into(),
+        media_rel: "cuts/v1.mp4".into(),
+        proxy_rel: None,
+        fps_num: 24,
+        fps_den: 1,
+        frames: 100,
+        timeline_fingerprint: None,
+        snapshot: None,
+        published_by: "editor-a".into(),
+        published_at: created_at,
+    });
+    f.links.push(GuestLink {
+        token: token.to_string(),
+        role: GuestRole::Commenter,
+        note: "acme client".into(),
+        expires_at: 0, // never expires — only a revoke kills it
+        latest_only: false,
+        created_at,
+    });
+    review_store::Store::save(&ws(world, i), &f).unwrap();
+}
+
+/// THE Phase-2 security payoff, end to end over the real server journal:
+/// device A mints a guest link and publishes its record; BOTH portals
+/// (A's and B's) serve the token. A revokes; the tombstone rides ONE sync
+/// pass; the portal on the OTHER machine then refuses the token — answered
+/// exactly like an unknown one — even though B's review.json still lists
+/// the link as live.
+#[tokio::test]
+async fn cross_machine_revoke_kills_the_link_on_the_other_portal_e2e() {
+    let mut world = World::boot(59).await;
+    let token = "tok-phase2-e2e-revoke0000000000000000"; // 32 chars, link-shaped
+
+    // both machines hold the live link locally
+    seed_link(&world, 0, token, 100);
+    seed_link(&world, 1, token, 100);
+
+    // device A publishes the mint record through the durable enqueue path
+    enqueue_state_record(
+        engine_store(&world, 0),
+        PublishParams {
+            tenant_id: "t1",
+            project_id: "p1",
+            local_ns: "p1",
+            device_id: "dev-0",
+            family: "review_link",
+            key: token,
+            payload: br#"{"token":"tok-phase2-e2e-revoke0000000000000000","role":"commenter"}"#,
+            ts_ms: 100,
+            tombstone: false,
+        },
+    )
+    .unwrap();
+    pass(&mut world, 0).await;
+    pass(&mut world, 1).await;
+
+    // both portals serve the token (resolve == the gate the HTTP routes use)
+    assert!(
+        portal_for(&world, 0).resolve(token).await.is_some(),
+        "portal A serves the minted link"
+    );
+    assert!(
+        portal_for(&world, 1).resolve(token).await.is_some(),
+        "portal B (the OTHER machine) serves the same link"
+    );
+
+    // device A revokes NOW: tombstone, later ts (the dashboard's
+    // review_revoke publishes exactly this record)
+    enqueue_state_record(
+        engine_store(&world, 0),
+        PublishParams {
+            tenant_id: "t1",
+            project_id: "p1",
+            local_ns: "p1",
+            device_id: "dev-0",
+            family: "review_link",
+            key: token,
+            payload: br#"{"token":"tok-phase2-e2e-revoke0000000000000000","revoked":true}"#,
+            ts_ms: 200,
+            tombstone: true,
+        },
+    )
+    .unwrap();
+
+    // ONE sync pass each way: the tombstone reaches B's record table
+    pass(&mut world, 0).await;
+    pass(&mut world, 1).await;
+    let row = engine_store(&world, 1)
+        .get_state_record("p1", "review_link", token)
+        .expect("the tombstone reached device B");
+    assert!(row.tombstone, "B holds the revocation record");
+
+    // B's machine-local review.json STILL lists the link as live — the
+    // synced record is what kills it (this is the whole point of Phase 2)
+    let b_file = review_store::Store::load(&ws(&world, 1)).unwrap().unwrap();
+    assert!(
+        GuestLink::resolve(&b_file.links, token, 1_000).is_some(),
+        "B's local file is untouched: the synced record must decide"
+    );
+
+    // the portal on the OTHER machine now refuses the token, exactly like
+    // an unknown one (fresh portal = a fresh resolve; a warm portal picks
+    // the tombstone up within the 3s revocation cache TTL)
+    let p_b = portal_for(&world, 1);
+    assert!(
+        p_b.resolve(token).await.is_none(),
+        "revoked on A => dead on B's portal"
+    );
+    assert!(
+        p_b.resolve("never-a-token").await.is_none(),
+        "unknown stays unknown"
+    );
+    // ...and A's own portal refuses it too (local file still lists it; the
+    // synced tombstone decides)
+    assert!(
+        portal_for(&world, 0).resolve(token).await.is_none(),
+        "revoked is dead on the revoking machine as well"
+    );
+}
