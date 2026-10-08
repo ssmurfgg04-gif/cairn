@@ -110,6 +110,10 @@ pub struct ProjectRuntime {
     /// The project's swarm node (ADR-0017), lazily joined when the daemon runs
     /// with `--swarm-signal`; reused across sync-loop restarts, shut down on stop.
     pub swarm: Mutex<Option<Swarm>>,
+    /// This daemon's presence hub handle (ADR-0023 §2): the swarm
+    /// forwarder sends here without needing the manager. All runtimes of a
+    /// daemon share the ONE channel owned by [`ProjectManager`].
+    presence: tokio::sync::broadcast::Sender<LocalPresence>,
     abort: tokio::sync::watch::Sender<bool>,
 }
 
@@ -275,8 +279,9 @@ async fn ensure_swarm(
             stun: stun_server,
             force_relay: false,
             // ADR-0023: live presence rides the swarm ONLY when this device's
-            // editor flipped their own flag (default false — read per join so
-            // the flip takes effect on the next attach/swarm join).
+            // editor flipped their own flag (default false — read per join;
+            // a MID-SESSION flip re-joins immediately via
+            // ProjectManager::restart_swarms, docs/CONTRACT-DEBT.md #2).
             presence: presence_on,
             // Round 28: FEC parity emission, same per-device opt-in pattern
             // as live_presence (dashboard flag persists flag:fec_parity).
@@ -304,6 +309,7 @@ async fn ensure_swarm(
         // Arc alone would keep the channel — and this loop — alive).
         let swarm2 = swarm.clone();
         let ns = rt.local_ns.clone();
+        let presence_tx = rt.presence.clone();
         let mut stop = rt.abort_rx();
         tokio::spawn(async move {
             let mut rx = swarm2.subscribe_presence();
@@ -312,7 +318,7 @@ async fn ensure_swarm(
                     _ = stop.changed() => break,
                     r = rx.recv() => match r {
                         Ok(ev) => {
-                            let _ = PRESENCE_TX.send(LocalPresence {
+                            let _ = presence_tx.send(LocalPresence {
                                 from: ev.from,
                                 project: ns.clone(),
                                 payload: ev.payload,
@@ -343,164 +349,321 @@ async fn ensure_swarm(
     Some(swarm)
 }
 
-/// Attach a root: validate, bind workspace, ensure the project exists server-side, spawn
-/// the per-project sync task. Durable registration (meta) happens BEFORE the ack.
-#[allow(clippy::too_many_arguments)]
-pub async fn attach(
-    home: &Path,
-    root_path: &Path,
-    project_id: Option<String>,
-    server_override: Option<String>,
-) -> Result<String, CairnError> {
-    let store = Store::open(home, Arc::new(WallClock))?;
-    let identity = load_identity(&store).ok_or_else(|| {
-        CairnError::new(
-            ErrorKind::Unauthenticated,
-            "no device identity: run `cairn login` first",
-        )
-    })?;
-    let server_url = server_override.map_or(identity.server_url.clone(), |s| {
-        if s.starts_with("http://") || s.starts_with("https://") {
-            s
-        } else {
-            format!("http://{s}")
+/// Explicit owner of attached-project lifecycle (ADR-0030). The
+/// architecture review's "Lifecycle/state ownership 7.5/10" finding was
+/// the `pub static RUNTIMES` global: any code in the process could reach
+/// into the map, so lifecycle, identity, UI, syncing and networking became
+/// implicitly coupled through shared process state. The manager is now
+/// THE owner: attach/detach are its methods, readers ask it for a
+/// snapshot, and the daemon holds exactly one `Arc<ProjectManager>`
+/// (inside `DaemonState`). The presence hub moved here too — it is
+/// per-daemon state, not a process-wide constant.
+///
+/// Still process-local BY DESIGN (documented, not forgotten):
+/// * `CFAPI_CONNS` — Windows filter-driver connections that must outlive
+///   the attach; platform cache, not project state.
+/// * `OVERLAY_FP` — Windows overlay fingerprint memoization.
+pub struct ProjectManager {
+    /// Live runtimes keyed by local namespace (`pid` or `pid#root_id`).
+    runtimes: RwLock<HashMap<String, Arc<ProjectRuntime>>>,
+    /// The machine-wide presence fanout (ctl WatchPresence + dashboard SSE
+    /// subscribe; engine forwarders send). Capacity matches the swarm's
+    /// channel: lagging subscribers resync from per-project snapshots.
+    presence: tokio::sync::broadcast::Sender<LocalPresence>,
+}
+
+impl Default for ProjectManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ProjectManager {
+    pub fn new() -> Self {
+        ProjectManager {
+            runtimes: RwLock::new(HashMap::new()),
+            presence: tokio::sync::broadcast::channel(256).0,
         }
-    });
-    if !root_path.is_dir() {
-        return Err(CairnError::new(
-            ErrorKind::Io,
-            format!("attach root {} is not a directory", root_path.display()),
-        ));
-    }
-    let pid = project_id.unwrap_or_else(|| {
-        let name = root_path
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_else(|| "project".into());
-        cairn_sync::workspace::project_id_from_name(&name)
-    });
-
-    // durable binding first (I2: the ack reflects committed state).
-    // Round 15 multi-root (ADR-0019 §2): each attached directory gets a
-    // root_id; the FIRST (legacy) root keeps the plain namespace and plain
-    // device authorship (byte-compatible upgrade), additional roots get
-    // `pid#rid` namespaces + `dev#rid` authors so cross-root entries are
-    // applied, not suppressed as own-ops.
-    let root_id = cairn_sync::workspace::ensure_root_id(&store, &pid, root_path)?;
-    let ns = cairn_sync::workspace::local_ns(&pid, &root_id);
-    cairn_sync::workspace::set_workspace_ns(&store, &ns, root_path)?;
-    save_identity(
-        &store,
-        &Identity {
-            server_url: server_url.clone(),
-            ..identity.clone()
-        },
-    )?;
-
-    let ca_pem = identity.tls_ca.as_ref().map(|c| c.as_bytes().to_vec());
-
-    // ensure the project exists on the server (idempotent). BEST-EFFORT
-    // here on purpose (round 26): a brief server outage at attach/resume
-    // time must not fail the LOCAL binding — the runtime's sync loop is
-    // the re-entry point for server failures (5s backoff, spawn_loop's
-    // own contract) and run_loop re-runs this ensure after every
-    // successful (re)connect. Without this, a daemon restart while the
-    // server is unreachable (VPN blip, laptop wake, tray-supervised
-    // restart) resumed ZERO projects and sync died silently.
-    if let Err(e) = ensure_project(&server_url, &identity, &pid, ca_pem.as_deref()).await {
-        tracing::warn!(
-            project = %pid,
-            "server unreachable at attach (binding kept; the sync loop ensures the project once it is back): {e}"
-        );
     }
 
-    let ca_pem = identity.tls_ca.as_ref().map(|c| c.as_bytes().to_vec());
+    /// Snapshot of the live runtimes, deterministic order (by namespace).
+    pub async fn list(&self) -> Vec<Arc<ProjectRuntime>> {
+        let map = self.runtimes.read().await;
+        let mut v: Vec<Arc<ProjectRuntime>> = map.values().cloned().collect();
+        v.sort_by(|a, b| a.local_ns.cmp(&b.local_ns));
+        v
+    }
 
-    let existing = RUNTIMES.read().await.get(&ns).cloned();
-    if let Some(rt) = existing {
-        // already attached: just refresh the workspace binding + identity
-        rt.stop();
+    /// How many projects are live right now. Test-covered; the daemon's
+    /// own surfaces use `list`/`is_empty` today — this is the registry API
+    /// every future non-HTTP caller (tray, panel) reaches for.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub async fn len(&self) -> usize {
+        self.runtimes.read().await.len()
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub async fn is_empty(&self) -> bool {
+        self.len().await == 0
+    }
+
+    /// Runtime by local namespace (`pid` or `pid#root_id`).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub async fn get(&self, ns: &str) -> Option<Arc<ProjectRuntime>> {
+        self.runtimes.read().await.get(ns).cloned()
+    }
+
+    /// First runtime whose project id matches (any root of that project).
+    pub async fn find_by_project(&self, project_id: &str) -> Option<Arc<ProjectRuntime>> {
+        self.runtimes
+            .read()
+            .await
+            .values()
+            .find(|rt| rt.project_id == project_id)
+            .cloned()
+    }
+
+    /// The live workspace root of a project id (first runtime with it).
+    pub async fn project_root(&self, project_id: &str) -> Option<PathBuf> {
+        self.find_by_project(project_id)
+            .await
+            .map(|rt| rt.workspace.clone())
+    }
+
+    /// (project_id, workspace) pairs for every live runtime — the review
+    /// portal's root provider surface.
+    pub async fn roots(&self) -> Vec<(String, PathBuf)> {
+        self.runtimes
+            .read()
+            .await
+            .values()
+            .map(|rt| (rt.project_id.clone(), rt.workspace.clone()))
+            .collect()
+    }
+
+    /// The lexicographically-first project's (pid, root, files_synced,
+    /// pending) — Team/Review cards read one project's roster per call
+    /// site; multi-project machines get one card per project.
+    pub async fn first(&self) -> Option<(String, PathBuf, u64, u64)> {
+        let map = self.runtimes.read().await;
+        let mut best: Option<(String, PathBuf, u64, u64)> = None;
+        for rt in map.values() {
+            let v = rt.view.read().await;
+            let cand = (
+                rt.project_id.clone(),
+                rt.workspace.clone(),
+                v.files_synced,
+                v.pending_outbox,
+            );
+            best = match best {
+                None => Some(cand),
+                Some((pid, _, _, _)) if cand.0 < pid => Some(cand),
+                other => other,
+            };
+        }
+        best
+    }
+
+    /// Emit a presence event onto the daemon-wide hub.
+    pub fn send_presence(&self, ev: LocalPresence) -> usize {
+        self.presence.send(ev).unwrap_or(0)
+    }
+
+    /// Subscribe to the daemon-wide presence hub (ctl stream + SSE).
+    pub fn subscribe_presence(&self) -> tokio::sync::broadcast::Receiver<LocalPresence> {
+        self.presence.subscribe()
+    }
+
+    /// CONTRACT-DEBT #2 fix (docs/CONTRACT-DEBT.md): swarm-join-time flags
+    /// (`live_presence`, `fec_parity`, `quic_relay`) used to require an
+    /// attach/daemon restart to take effect — the UI flipped the flag, the
+    /// live swarm kept its old config, and the user read the silent no-op
+    /// as a broken toggle. Shutdown every live swarm and rejoin NOW:
+    /// `ensure_swarm` re-reads the flags per join, so the flip lands within
+    /// the same second. Non-fatal per project (no signal configured →
+    /// plane-only, the documented fallback).
+    pub async fn restart_swarms(&self, home: &Path) {
+        let Ok(store) = Store::open(home, Arc::new(WallClock)) else {
+            return;
+        };
+        let Some(identity) = load_identity(&store) else {
+            return;
+        };
+        for rt in self.list().await {
+            let old = { rt.swarm.lock().await.take() };
+            if let Some(sw) = &old {
+                sw.shutdown();
+            }
+            if ensure_swarm(&rt, &store, &identity).await.is_some() {
+                tracing::info!(
+                    project = %rt.project_id,
+                    "swarm rejoined (join-time flags re-read)"
+                );
+            }
+        }
+    }
+
+    /// Attach a root: validate, bind workspace, ensure the project exists
+    /// server-side, spawn the per-project sync task. Durable registration
+    /// (meta) happens BEFORE the ack.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn attach(
+        &self,
+        home: &Path,
+        root_path: &Path,
+        project_id: Option<String>,
+        server_override: Option<String>,
+    ) -> Result<String, CairnError> {
+        let store = Store::open(home, Arc::new(WallClock))?;
+        let identity = load_identity(&store).ok_or_else(|| {
+            CairnError::new(
+                ErrorKind::Unauthenticated,
+                "no device identity: run `cairn login` first",
+            )
+        })?;
+        let server_url = server_override.map_or(identity.server_url.clone(), |s| {
+            if s.starts_with("http://") || s.starts_with("https://") {
+                s
+            } else {
+                format!("http://{s}")
+            }
+        });
+        if !root_path.is_dir() {
+            return Err(CairnError::new(
+                ErrorKind::Io,
+                format!("attach root {} is not a directory", root_path.display()),
+            ));
+        }
+        let pid = project_id.unwrap_or_else(|| {
+            let name = root_path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "project".into());
+            cairn_sync::workspace::project_id_from_name(&name)
+        });
+
+        // durable binding first (I2: the ack reflects committed state).
+        // Round 15 multi-root (ADR-0019 §2): each attached directory gets a
+        // root_id; the FIRST (legacy) root keeps the plain namespace and plain
+        // device authorship (byte-compatible upgrade), additional roots get
+        // `pid#rid` namespaces + `dev#rid` authors so cross-root entries are
+        // applied, not suppressed as own-ops.
+        let root_id = cairn_sync::workspace::ensure_root_id(&store, &pid, root_path)?;
+        let ns = cairn_sync::workspace::local_ns(&pid, &root_id);
+        cairn_sync::workspace::set_workspace_ns(&store, &ns, root_path)?;
+        save_identity(
+            &store,
+            &Identity {
+                server_url: server_url.clone(),
+                ..identity.clone()
+            },
+        )?;
+
+        let ca_pem = identity.tls_ca.as_ref().map(|c| c.as_bytes().to_vec());
+
+        // ensure the project exists on the server (idempotent). BEST-EFFORT
+        // here on purpose (round 26): a brief server outage at attach/resume
+        // time must not fail the LOCAL binding — the runtime's sync loop is
+        // the re-entry point for server failures (5s backoff, spawn_loop's
+        // own contract) and run_loop re-runs this ensure after every
+        // successful (re)connect. Without this, a daemon restart while the
+        // server is unreachable (VPN blip, laptop wake, tray-supervised
+        // restart) resumed ZERO projects and sync died silently.
+        if let Err(e) = ensure_project(&server_url, &identity, &pid, ca_pem.as_deref()).await {
+            tracing::warn!(
+                project = %pid,
+                "server unreachable at attach (binding kept; the sync loop ensures the project once it is back): {e}"
+            );
+        }
+
+        let ca_pem = identity.tls_ca.as_ref().map(|c| c.as_bytes().to_vec());
+
+        let existing = self.runtimes.read().await.get(&ns).cloned();
+        if let Some(rt) = existing {
+            // already attached: just refresh the workspace binding + identity
+            rt.stop();
+            let root2 = root_path.to_path_buf();
+            let ns2 = cairn_sync::workspace::local_ns(&pid, &root_id);
+            let id2 = identity.clone();
+            let url2 = server_url.clone();
+            let store2 = store.clone();
+            let ca2 = ca_pem.clone();
+            let _ = cairn_shell_ext::core::RootInfo::write(root_path, &pid);
+            spawn_loop(Arc::clone(&rt), store, identity, server_url, ca_pem);
+            connect_cfapi(&store2, &root2, &ns2, &id2, &url2, ca2.as_deref()).await;
+            spawn_cfapi_watchdog(rt, store2, root2, ns2, id2, url2, ca2);
+            return Ok(pid);
+        }
+
+        let rt = Arc::new(ProjectRuntime {
+            project_id: pid.clone(),
+            local_ns: ns.clone(),
+            author_id: cairn_sync::workspace::author_id(&identity.device_id, &root_id),
+            workspace: workspace_dir(&store, &ns),
+            view: RwLock::new(ProjView {
+                state: "syncing".into(),
+                ..ProjView::default()
+            }),
+            hydrated_recently: Mutex::new(HashMap::new()),
+            rescan_requested: AtomicBool::new(false),
+            files_synced: AtomicU64::new(0),
+            sweep_counter: AtomicU64::new(0),
+            swarm: Mutex::new(None),
+            presence: self.presence.clone(),
+            abort: tokio::sync::watch::channel(false).0,
+        });
+        self.runtimes
+            .write()
+            .await
+            .insert(ns.clone(), Arc::clone(&rt));
         let root2 = root_path.to_path_buf();
-        let ns2 = cairn_sync::workspace::local_ns(&pid, &root_id);
+        let ns2 = ns.clone();
         let id2 = identity.clone();
         let url2 = server_url.clone();
         let store2 = store.clone();
         let ca2 = ca_pem.clone();
+        // shell-ext root marker (ADR-0019 §5): its presence marks a cairn root
+        // for the Explorer extension; the overlay state file lands per pass.
         let _ = cairn_shell_ext::core::RootInfo::write(root_path, &pid);
         spawn_loop(Arc::clone(&rt), store, identity, server_url, ca_pem);
         connect_cfapi(&store2, &root2, &ns2, &id2, &url2, ca2.as_deref()).await;
-        spawn_cfapi_watchdog(rt, store2, root2, ns2, id2, url2, ca2);
-        return Ok(pid);
+        spawn_cfapi_watchdog(Arc::clone(&rt), store2, root2, ns2, id2, url2, ca2);
+        Ok(pid)
     }
 
-    let rt = Arc::new(ProjectRuntime {
-        project_id: pid.clone(),
-        local_ns: ns.clone(),
-        author_id: cairn_sync::workspace::author_id(&identity.device_id, &root_id),
-        workspace: workspace_dir(&store, &ns),
-        view: RwLock::new(ProjView {
-            state: "syncing".into(),
-            ..ProjView::default()
-        }),
-        hydrated_recently: Mutex::new(HashMap::new()),
-        rescan_requested: AtomicBool::new(false),
-        files_synced: AtomicU64::new(0),
-        sweep_counter: AtomicU64::new(0),
-        swarm: Mutex::new(None),
-        abort: tokio::sync::watch::channel(false).0,
-    });
-    RUNTIMES.write().await.insert(ns.clone(), Arc::clone(&rt));
-    let root2 = root_path.to_path_buf();
-    let ns2 = ns.clone();
-    let id2 = identity.clone();
-    let url2 = server_url.clone();
-    let store2 = store.clone();
-    let ca2 = ca_pem.clone();
-    // shell-ext root marker (ADR-0019 §5): its presence marks a cairn root
-    // for the Explorer extension; the overlay state file lands per pass.
-    let _ = cairn_shell_ext::core::RootInfo::write(root_path, &pid);
-    spawn_loop(Arc::clone(&rt), store, identity, server_url, ca_pem);
-    connect_cfapi(&store2, &root2, &ns2, &id2, &url2, ca2.as_deref()).await;
-    spawn_cfapi_watchdog(Arc::clone(&rt), store2, root2, ns2, id2, url2, ca2);
-    Ok(pid)
-}
-
-/// Detach: stop the loop, clear the binding (files on disk are untouched).
-pub async fn detach(home: &Path, project_id: &str) -> Result<(), CairnError> {
-    let store = Store::open(home, Arc::new(WallClock))?;
-    // round 15: a project may carry several roots (pid + pid#rid keys) —
-    // detach stops them all and clears every root registration
-    let mut guard = RUNTIMES.write().await;
-    let keys: Vec<String> = guard
-        .keys()
-        .filter(|k| {
-            *k == project_id
-                || k.starts_with(&format!(
-                    "{project_id}{}",
-                    cairn_sync::workspace::ROOT_NS_SEP
-                ))
-        })
-        .cloned()
-        .collect();
-    for k in keys {
-        if let Some(rt) = guard.remove(&k) {
-            rt.stop();
+    /// Detach: stop the loop, clear the binding (files on disk are untouched).
+    pub async fn detach(&self, home: &Path, project_id: &str) -> Result<(), CairnError> {
+        let store = Store::open(home, Arc::new(WallClock))?;
+        // round 15: a project may carry several roots (pid + pid#rid keys) —
+        // detach stops them all and clears every root registration
+        let mut guard = self.runtimes.write().await;
+        let keys: Vec<String> = guard
+            .keys()
+            .filter(|k| {
+                *k == project_id
+                    || k.starts_with(&format!(
+                        "{project_id}{}",
+                        cairn_sync::workspace::ROOT_NS_SEP
+                    ))
+            })
+            .cloned()
+            .collect();
+        for k in keys {
+            if let Some(rt) = guard.remove(&k) {
+                rt.stop();
+            }
         }
+        drop(guard);
+        for b in cairn_sync::workspace::list_roots(&store, project_id) {
+            let _ = cairn_sync::workspace::clear_root(&store, project_id, &b.root_id);
+        }
+        #[cfg(windows)]
+        {
+            CFAPI_CONNS.lock().expect("cfapi conns").remove(project_id); // drop disconnects the sync root
+        }
+        cairn_sync::workspace::clear_workspace(&store, project_id)
     }
-    drop(guard);
-    for b in cairn_sync::workspace::list_roots(&store, project_id) {
-        let _ = cairn_sync::workspace::clear_root(&store, project_id, &b.root_id);
-    }
-    #[cfg(windows)]
-    {
-        CFAPI_CONNS.lock().expect("cfapi conns").remove(project_id); // drop disconnects the sync root
-    }
-    cairn_sync::workspace::clear_workspace(&store, project_id)
 }
-
-/// Registry of live runtimes for the daemon process (ctl status/list surface).
-pub static RUNTIMES: std::sync::LazyLock<RwLock<HashMap<String, Arc<ProjectRuntime>>>> =
-    std::sync::LazyLock::new(|| RwLock::new(HashMap::new()));
 
 /// One live-presence event flowing through the daemon (ADR-0023 §2):
 /// local echoes (SendPresence) and remote peers (swarm forwarder) land on
@@ -531,12 +694,6 @@ impl LocalPresence {
         })
     }
 }
-
-/// The machine-wide presence fanout (ctl WatchPresence + dashboard SSE both
-/// subscribe). Capacity matches the swarm's channel: lagging subscribers
-/// resync from the per-project swarm snapshots.
-pub static PRESENCE_TX: std::sync::LazyLock<tokio::sync::broadcast::Sender<LocalPresence>> =
-    std::sync::LazyLock::new(|| tokio::sync::broadcast::channel(256).0);
 
 /// Live CfAPI write-back connections (Windows only): the connection must outlive
 /// the attach — dropping it disconnects the root from the filter driver.
@@ -708,7 +865,7 @@ fn volume_alive(path: &Path) -> bool {
 /// onboarding never appeared — the console was stuck on a ghost. A
 /// binding on a MISSING VOLUME (external drive unplugged) is kept: the
 /// drive comes back, and keeping the binding is why resume exists.
-pub async fn resume_all(home: &Path) -> usize {
+pub async fn resume_all(home: &Path, mgr: &ProjectManager) -> usize {
     let Ok(store) = Store::open(home, Arc::new(WallClock)) else {
         return 0;
     };
@@ -744,11 +901,11 @@ pub async fn resume_all(home: &Path) -> usize {
             // folder deleted on a live volume (or a reparse that no
             // longer resolves): the binding is a ghost — heal it off
             tracing::warn!(project = %pid, root = %root, "bound workspace no longer exists; self-heal detach (re-attach it with `cairn attach` when the folder is back)");
-            let _ = detach(home, &pid).await;
+            let _ = mgr.detach(home, &pid).await;
             continue;
         }
         let _ = set_workspace(&store, &pid, &path);
-        match attach(home, &path, Some(pid.clone()), None).await {
+        match mgr.attach(home, &path, Some(pid.clone()), None).await {
             Ok(_) => count += 1,
             Err(e) => tracing::error!(project = %pid, "resume attach failed: {e}"),
         }
@@ -1372,6 +1529,48 @@ async fn run_loop(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod manager_tests {
+    use super::*;
+
+    /// The manager is the lifecycle owner (ADR-0030); an empty daemon has
+    /// no runtimes, no first project, no roots — the reads must be honest
+    /// empties, and detach of an unknown project must not panic.
+    #[tokio::test]
+    async fn empty_manager_reads_are_honest() {
+        let mgr = ProjectManager::new();
+        assert!(mgr.list().await.is_empty());
+        assert_eq!(mgr.len().await, 0);
+        assert!(mgr.is_empty().await);
+        assert!(mgr.get("no-such-ns").await.is_none());
+        assert!(mgr.find_by_project("no-such-project").await.is_none());
+        assert!(mgr.project_root("no-such-project").await.is_none());
+        assert!(mgr.first().await.is_none());
+        assert!(mgr.roots().await.is_empty());
+        // detach of an unknown project: durable-state clear runs, no panic
+        let home = tempfile::tempdir().unwrap().keep();
+        assert!(mgr.detach(&home, "no-such-project").await.is_ok());
+        // presence hub round-trip (no subscribers yet → 0 delivered)
+        let ev = LocalPresence {
+            from: "dev-1".into(),
+            project: "p".into(),
+            payload: b"{}".to_vec(),
+            seen_at_ms: 0,
+            local: true,
+        };
+        assert_eq!(mgr.send_presence(ev), 0);
+        let _rx = mgr.subscribe_presence();
+        let ev2 = LocalPresence {
+            from: "dev-1".into(),
+            project: "p".into(),
+            payload: b"{}".to_vec(),
+            seen_at_ms: 1,
+            local: true,
+        };
+        assert_eq!(mgr.send_presence(ev2), 1, "one subscriber got it");
     }
 }
 

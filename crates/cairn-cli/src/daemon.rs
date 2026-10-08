@@ -53,6 +53,11 @@ pub struct DaemonState {
     pub flags: RwLock<Vec<(String, String)>>,
     /// WO6-3: live recall jobs (ctl RecallStatus surface); shared with background tasks.
     pub recall_jobs: std::sync::Arc<RwLock<HashMap<String, crate::daemon::RecallJob>>>,
+    /// Explicit owner of attached-project lifecycle (ADR-0030): attach,
+    /// detach, snapshots of live runtimes, and the presence hub all live
+    /// behind this handle — no more process-wide `RUNTIMES` static for
+    /// every module to reach into.
+    pub projects: Arc<crate::projects::ProjectManager>,
     /// Doctor report cache (round 27, the nle-matrix W1 lesson): a full
     /// `doctor::collect` opens the store, samples the CAS, walks the
     /// outbox — running it on EVERY status RPC starved the ctl thread
@@ -70,6 +75,7 @@ impl DaemonState {
             started: Instant::now(),
             flags: RwLock::new(default_flags()),
             recall_jobs: Arc::new(RwLock::new(HashMap::new())),
+            projects: Arc::new(crate::projects::ProjectManager::new()),
             doctor_cache: RwLock::new(None),
         }
     }
@@ -136,8 +142,7 @@ impl CtlStatus for CtlStatusSvc {
         // window where the loop hasn't spawned yet)
         let mut list: Vec<ProjectStatus> = Vec::new();
         {
-            let map = projects::RUNTIMES.read().await;
-            for rt in map.values() {
+            for rt in self.state.projects.list().await {
                 let v = rt.view.read().await;
                 list.push(ProjectStatus {
                     project_id: rt.project_id.clone(),
@@ -203,8 +208,8 @@ impl CtlPresence for CtlPresenceSvc {
     ) -> Result<Response<Ack>, Status> {
         if !self.presence_on().await {
             return Err(Status::failed_precondition(
-                "live presence is OFF on this device — flip flag 'live_presence' (applies at \
-                 next swarm join/daemon start)",
+                "live presence is OFF on this device — flip flag 'live_presence' (the swarm \
+                 rejoins immediately; no restart needed)",
             ));
         }
         let req = request.into_inner();
@@ -232,7 +237,7 @@ impl CtlPresence for CtlPresenceSvc {
                 .map_err(|e| Status::failed_precondition(e.message))?;
             acting_device(&store)
         };
-        let _ = projects::PRESENCE_TX.send(projects::LocalPresence {
+        let _ = self.state.projects.send_presence(projects::LocalPresence {
             from,
             project: project.clone(),
             payload: req.payload.clone(),
@@ -242,9 +247,8 @@ impl CtlPresence for CtlPresenceSvc {
         // 2) relay into the project's swarm (encrypted sessions; no-op when
         //    the project has no swarm or the join predates the flag flip)
         let reached = {
-            let map = projects::RUNTIMES.read().await;
-            map.get(&project)
-                .and_then(|rt| rt.swarm.blocking_lock().clone())
+            let rt = self.state.projects.find_by_project(&project).await;
+            rt.and_then(|rt| rt.swarm.blocking_lock().clone())
                 .map(|sw| sw.broadcast_presence(&req.payload))
                 .unwrap_or(0)
         };
@@ -261,8 +265,8 @@ impl CtlPresence for CtlPresenceSvc {
     ) -> Result<Response<Self::WatchPresenceStream>, Status> {
         if !self.presence_on().await {
             return Err(Status::failed_precondition(
-                "live presence is OFF on this device — flip flag 'live_presence' (applies at \
-                 next swarm join/daemon start)",
+                "live presence is OFF on this device — flip flag 'live_presence' (the swarm \
+                 rejoins immediately; no restart needed)",
             ));
         }
         rbac_guard(
@@ -274,7 +278,7 @@ impl CtlPresence for CtlPresenceSvc {
         )
         .await?;
         let filter = request.into_inner().project;
-        let rx = projects::PRESENCE_TX.subscribe();
+        let rx = self.state.projects.subscribe_presence();
         // BroadcastStream: Lagged (slow consumer) yields Err items we skip —
         // presence is a signal, not a log; the next event resyncs.
         let stream =
@@ -324,8 +328,8 @@ async fn project_root(state: &DaemonState, project_id: &str) -> Option<PathBuf> 
             return Some(b.path);
         }
     }
-    let map = projects::RUNTIMES.read().await;
-    map.values()
+    let map = state.projects.list().await;
+    map.iter()
         .find(|rt| rt.project_id == project_id)
         .map(|rt| rt.workspace.clone())
 }
@@ -472,22 +476,25 @@ impl CtlProjects for CtlProjectsSvc {
             "ctl/attach-root",
         )
         .await?;
-        let pid = projects::attach(
-            &self.state.home,
-            &root,
-            if req.project_id.is_empty() {
-                None
-            } else {
-                Some(req.project_id)
-            },
-            if req.server_addr.is_empty() {
-                None
-            } else {
-                Some(req.server_addr)
-            },
-        )
-        .await
-        .map_err(|e| Status::failed_precondition(e.message))?;
+        let pid = self
+            .state
+            .projects
+            .attach(
+                &self.state.home,
+                &root,
+                if req.project_id.is_empty() {
+                    None
+                } else {
+                    Some(req.project_id)
+                },
+                if req.server_addr.is_empty() {
+                    None
+                } else {
+                    Some(req.server_addr)
+                },
+            )
+            .await
+            .map_err(|e| Status::failed_precondition(e.message))?;
         tracing::info!(project = %pid, root = %req.root_path, "attach_root accepted");
         Ok(Response::new(AttachRootResponse { project_id: pid }))
     }
@@ -508,7 +515,9 @@ impl CtlProjects for CtlProjectsSvc {
             "ctl/detach-root",
         )
         .await?;
-        projects::detach(&self.state.home, &req.project_id)
+        self.state
+            .projects
+            .detach(&self.state.home, &req.project_id)
             .await
             .map_err(|e| Status::failed_precondition(e.message))?;
         Ok(Response::new(Ack { ok: true }))
@@ -520,8 +529,7 @@ impl CtlProjects for CtlProjectsSvc {
     ) -> Result<Response<ListProjectsCtlResponse>, Status> {
         let mut list = Vec::new();
         {
-            let map = projects::RUNTIMES.read().await;
-            for rt in map.values() {
+            for rt in self.state.projects.list().await {
                 let state = rt.view.read().await.state.clone();
                 list.push(ProjectInfoCtl {
                     project_id: rt.project_id.clone(),
@@ -575,8 +583,13 @@ impl CtlDiagnostics for CtlDiagSvc {
         // ManageFlags against every attached project (any denial blocks;
         // no projects attached = nothing to enforce against)
         let mut pids: Vec<String> = {
-            let map = projects::RUNTIMES.read().await;
-            map.values().map(|rt| rt.project_id.clone()).collect()
+            self.state
+                .projects
+                .list()
+                .await
+                .iter()
+                .map(|rt| rt.project_id.clone())
+                .collect()
         };
         pids.sort();
         pids.dedup();
@@ -600,7 +613,21 @@ impl CtlDiagnostics for CtlDiagSvc {
                 if let Ok(store) = cairn_store::Store::open(&self.state.home, Arc::new(WallClock)) {
                     let _ = store.meta_set(&format!("flag:{}", req.name), &req.value);
                 }
-                tracing::info!(flag = %req.name, value = %req.value, "kill switch flipped (no restart)");
+                tracing::info!(flag = %req.name, value = %req.value, "kill switch flipped");
+                // CONTRACT-DEBT #2 (docs/CONTRACT-DEBT.md): swarm-join-time
+                // flags used to require a re-attach/daemon restart to take
+                // effect — the UI flipped the flag, the swarm kept the old
+                // config, and the user read the silent no-op as a broken
+                // toggle. These three rejoin every live swarm immediately
+                // (ensure_swarm re-reads the flags per join), so the flip
+                // lands within the same second. Non-fatal: a failure here
+                // leaves the project plane-only, the documented fallback.
+                if matches!(
+                    req.name.as_str(),
+                    "live_presence" | "fec_parity" | "quic_relay"
+                ) {
+                    self.state.projects.restart_swarms(&self.state.home).await;
+                }
                 Ok(Response::new(cairn_proto::pb::Ack { ok: true }))
             }
             None => Err(Status::not_found(format!("unknown flag {}", req.name))),
@@ -723,8 +750,9 @@ pub async fn run(
 
     // resume any durably-bound workspaces from a previous run (kill -9 safe, I2)
     let resume_home = state.home.clone();
+    let resume_mgr = Arc::clone(&state.projects);
     tokio::spawn(async move {
-        let n = projects::resume_all(&resume_home).await;
+        let n = projects::resume_all(&resume_home, &resume_mgr).await;
         if n > 0 {
             tracing::info!(resumed = n, "re-attached bound workspaces");
         }
@@ -748,6 +776,7 @@ pub async fn run(
     if let Some(addr) = review_addr {
         let portal = cairn_review::http::Portal::new(Arc::new(crate::review::RuntimesProvider {
             home: state.home.clone(),
+            projects: Arc::clone(&state.projects),
         }));
         tokio::spawn(async move {
             match cairn_review::http::serve(addr, portal).await {

@@ -1,8 +1,9 @@
 //! Review portal CLI (ADR-0020): publish versions, mint guest links,
 //! read comments, resolve notes — all against `<root>/.cairn/review.json`
-//! and the per-version note files, which the sync engine carries to every
-//! peer like any other project file.
-//!
+//! and the per-version note files. NOTE the honest scope (ADR-0031): those
+//! files live in the machine-local `.cairn` dir, which the sync engine
+//! IGNORES today (`is_ignored` skips every `.cairn*` path) — review state
+//! is per-machine until the cross-device state plan in ADR-0031 lands.
 //! The daemon side (`cairn daemon --review 0.0.0.0:17778`) serves the
 //! player; this module is the editor-side surface plus the root provider
 //! the daemon's portal uses.
@@ -13,20 +14,20 @@ use cairn_review::http::RootProvider;
 use cairn_review::model::{GuestRole, ReviewFile, ReviewVersion};
 use cairn_review::store::Store;
 
-/// The daemon's root provider: attached runtimes, live, plus the local
-/// CAS blob tree for annotation overlays (ADR-0028 §D).
+/// The daemon's root provider: attached runtimes (via the ProjectManager —
+/// ADR-0030; no global static reach-in), plus the local CAS blob tree for
+/// annotation overlays (ADR-0028 §D).
 pub struct RuntimesProvider {
     /// Daemon home (the store root whose `blobs/` tree the portal serves).
     pub home: PathBuf,
+    /// The daemon's project-lifecycle owner (ADR-0030).
+    pub projects: std::sync::Arc<crate::projects::ProjectManager>,
 }
 
 #[async_trait::async_trait]
 impl RootProvider for RuntimesProvider {
     async fn roots(&self) -> Vec<(String, PathBuf)> {
-        let map = crate::projects::RUNTIMES.read().await;
-        map.values()
-            .map(|rt| (rt.project_id.clone(), rt.workspace.clone()))
-            .collect()
+        self.projects.roots().await
     }
 
     fn blobs_root(&self) -> Option<PathBuf> {

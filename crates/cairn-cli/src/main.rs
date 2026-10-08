@@ -16,6 +16,7 @@ mod projects;
 mod proxy;
 mod review;
 mod search;
+mod service;
 mod tlbranch;
 mod win_attach;
 

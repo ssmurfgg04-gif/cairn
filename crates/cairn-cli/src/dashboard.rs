@@ -5,8 +5,13 @@
 //! attach/detach, snapshot create/list/restore, pin/unpin, recall with progress,
 //! leases, storage stats, kill switches, doctor — is surfaced here through the SAME
 //! ctl service implementations the gRPC side serves.
+//!
+//! ROUND 29 (ADR-0030) — this file is now an HTTP ADAPTER, nothing more:
+//! router + security gate + thin parse/respond handlers. The behavior —
+//! RBAC, store reads, review writes, merges, compression — lives in the
+//! `service` module, where the tray, the NLE panel, and tests can reach the
+//! same operations without an HTTP client.
 
-use std::path::Path;
 use std::sync::Arc;
 
 use axum::extract::{Path as UrlPath, State};
@@ -14,18 +19,9 @@ use axum::response::IntoResponse as _;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde_json::json;
-use tonic::Request;
 
-use cairn_core::clock::{SystemClock, WallClock};
-use cairn_store::Store;
-
-use crate::daemon::{CtlPinsSvc, CtlPresenceSvc, CtlRecallSvc, CtlSnapshotsSvc, DaemonState};
-use cairn_proto::pb::{
-    ctl_pins_server::CtlPins as _, ctl_presence_server::CtlPresence as _,
-    ctl_recall_server::CtlRecall as _, ctl_snapshots_server::CtlSnapshots as _,
-    CreateSnapshotRequest, ListPinsRequest, ListSnapshotsRequest, PinRequest, RecallStatusRequest,
-    RestoreSnapshotRequest, SendPresenceRequest, StartRecallRequest, UnpinRequest,
-};
+use crate::daemon::DaemonState;
+use crate::service;
 
 const INDEX_HTML: &str = include_str!("../assets/dashboard/index.html");
 const APP_CSS: &str = include_str!("../assets/dashboard/app.css");
@@ -44,7 +40,9 @@ struct DashToken(std::sync::Arc<String>);
 
 /// Serve the local dashboard + JSON gateway (loopback only; ADR-0009 policy).
 pub async fn serve(addr: String, state: Arc<DaemonState>) -> anyhow::Result<()> {
-    let token = DashToken(std::sync::Arc::new(uuid::Uuid::new_v4().simple().to_string()));
+    let token = DashToken(std::sync::Arc::new(
+        uuid::Uuid::new_v4().simple().to_string(),
+    ));
     let app = Router::new()
         .route("/", get(index))
         .route("/assets/app.css", get(css))
@@ -84,10 +82,7 @@ pub async fn serve(addr: String, state: Arc<DaemonState>) -> anyhow::Result<()> 
         .route("/api/v1/live", get(live_sse).post(live_send))
         .route("/api/v1/live/snapshot", get(live_snapshot))
         // round 27 (the "click, don't type" retro): the native folder
-        // picker — Attach's first instinct is a CLICK. The daemon runs in
-        // the user's interactive session, so the OS dialog shows on their
-        // desktop; loopback-only, RBAC-free (picking a folder leaks
-        // nothing — attaching it is still guarded).
+        // picker — Attach's first instinct is a CLICK.
         .route("/api/v1/pick-folder", get(pick_folder))
         // round 27: file quick-actions (hover row buttons)
         //   open      — reveal in Explorer/Finder/file manager
@@ -120,9 +115,7 @@ pub async fn serve(addr: String, state: Arc<DaemonState>) -> anyhow::Result<()> 
 /// The page itself: inject the per-launch token where app.js can read it
 /// (the `%%CAIRN_TOKEN%%` placeholder lives in index.html <head>). Static
 /// assets stay token-free so the page loads; every /api call carries it.
-async fn index(
-    axum::Extension(token): axum::Extension<DashToken>,
-) -> axum::response::Html<String> {
+async fn index(axum::Extension(token): axum::Extension<DashToken>) -> axum::response::Html<String> {
     axum::response::Html(INDEX_HTML.replace("%%CAIRN_TOKEN%%", &token.0))
 }
 
@@ -243,217 +236,37 @@ async fn js() -> impl axum::response::IntoResponse {
     )
 }
 
-fn open_store(home: &Path) -> Option<Store> {
-    Store::open(home, std::sync::Arc::new(WallClock)).ok()
-}
-
-fn project_id_of(rt: &crate::projects::ProjectRuntime) -> String {
-    rt.project_id.clone()
-}
+// ---------------------------------------------------------------------------
+// Thin adapters: parse → service → respond. No business logic here.
+// ---------------------------------------------------------------------------
 
 async fn status(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
-    let home = state.home.as_path();
-    let mut last_error: Option<String> = None;
-    let summary_projects;
-    let mut swarm_summary = Vec::new();
-    {
-        let map = crate::projects::RUNTIMES.read().await;
-        summary_projects = map.len() as u64;
-        for rt in map.values() {
-            let v = rt.view.read().await;
-            if let Some(e) = &v.last_error {
-                last_error.get_or_insert_with(|| e.clone());
-            }
-            drop(v);
-            // WAN leg (ADR-0022 §5): per-project NAT metrics — the punch
-            // success rate is the number the wan-p2p runbook reads off a
-            // VPS box. Missing swarm (no --swarm-signal) stays absent, not
-            // zeroed: honest absence over invented zeros.
-            if let Some(swarm) = rt.swarm.lock().await.as_ref() {
-                let s = swarm.stats();
-                swarm_summary.push(json!({
-                    "project": project_id_of(rt),
-                    "peers": s.peers,
-                    "direct_links": s.direct_links,
-                    "relay_links": s.relay_links,
-                    "stun_resolved": s.stun_resolved,
-                    "punch_attempts": s.punch_attempts,
-                    "punch_successes": s.punch_successes,
-                }));
-            }
-        }
-    }
-    let (healthy, files, conflicts, cursor, pending) = if let Some(store) = open_store(home) {
-        let outbox = cairn_store::Outbox::new(store.conn_handle());
-        let (files, conflicts) = store.all_files_summary();
-        (
-            true,
-            files,
-            conflicts,
-            store.max_cursor(),
-            outbox.pending_count_all(),
-        )
-    } else {
-        (false, 0, 0, 0, 0)
-    };
-    Json(json!({
-        "version": env!("CARGO_PKG_VERSION"),
-        "proto": cairn_proto::PROTO_VERSION,
-        "uptime_ms": state.started.elapsed().as_millis() as u64,
-        "projects": summary_projects,
-        "last_error": last_error,
-        "summary": {
-            "healthy": healthy,
-            "files": files,
-            "conflicts": conflicts,
-            "journal_cursor": cursor,
-            "outbox_pending": pending,
-            // I1 lives in the per-mount FsMetrics (CairnFs); with no active mount the
-            // daemon honestly reports null rather than inventing a number.
-            "hydration_first_byte_ms": serde_json::Value::Null,
-            "hydration_note": "no active FUSE/CfAPI mount on this daemon",
-        },
-        // per-project swarm/NAT metrics (empty array = no swarm on this daemon)
-        "swarm": swarm_summary,
-    }))
+    Json(service::views::status(&state).await)
 }
 
 async fn feed(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
-    let mut activity: Vec<serde_json::Value> = Vec::new();
-    let mut leases: Vec<serde_json::Value> = Vec::new();
-    if let Some(store) = open_store(state.home.as_path()) {
-        // real local leases (leases_local table — engine-written, expiry-filtered).
-        // A HELD lease is the "project opened" event (ADR-0014: NLEs lock on
-        // open), so it joins the activity timeline instead of existing in a
-        // separate zone only the settings view can see.
-        let now = WallClock.now_millis();
-        for (path, token, expires_at) in store.list_leases() {
-            leases.push(json!({
-                "path": path,
-                "token": token,
-                "expires_at": expires_at,
-                "expired": expires_at <= now,
-            }));
-            if expires_at > now {
-                activity.push(json!({
-                    "ts": now,
-                    "seq": now,
-                    "kind": "lease",
-                    "path": path,
-                    "project": "",
-                }));
-            }
-        }
-        // recent file events (mtime-ordered; the journal's file surface)
-        let rows: Vec<cairn_store::FileRow> = store.recent_file_rows(10);
-        for f in rows {
-            activity.push(json!({
-                "seq": f.mtime,
-                "ts": f.mtime,
-                "path": f.path,
-                "project": f.project_id,
-                "kind": if f.local_state == "conflict" { "conflict" } else { "upsert" },
-                "state": f.local_state,
-                "size": f.size,
-            }));
-        }
-        // real pin events (pins table — durable intent, WO6-2)
-        for (project, path, pinned_at) in store.recent_pins(6) {
-            activity.push(json!({
-                "ts": pinned_at,
-                "seq": pinned_at,
-                "path": path,
-                "project": project,
-                "kind": "pinned",
-            }));
-        }
-        // newest first, capped: a timeline, not a log viewer
-        activity.sort_by(|a, b| {
-            b["ts"]
-                .as_i64()
-                .unwrap_or(0)
-                .cmp(&a["ts"].as_i64().unwrap_or(0))
-        });
-        activity.truncate(12);
-    }
-    Json(json!({ "activity": activity, "leases": leases }))
+    Json(service::views::feed(&state))
 }
 
-/// GET /api/v1/activity?tz_offset=&days= — the dashboard chart's data:
-/// per-day byte totals for files touched in the window, day boundaries in
-/// the CALLER's timezone (JS `getTimezoneOffset` convention) so the chart's
-/// weekday labels match the user's clock. Reads the real store — no
-/// invented series, no stub shape: an empty project renders an honest
-/// empty chart, never a fake curve (round 25).
 async fn activity(
     State(state): State<Arc<DaemonState>>,
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Json<serde_json::Value> {
-    let days = i64::from(
-        q.get("days")
-            .and_then(|d| d.parse::<u32>().ok())
-            .unwrap_or(7)
-            .clamp(1, 31),
-    );
+    let days = q
+        .get("days")
+        .and_then(|d| d.parse::<u32>().ok())
+        .unwrap_or(7)
+        .clamp(1, 31);
     let tz_offset = q
         .get("tz_offset")
         .and_then(|t| t.parse::<i64>().ok())
         .unwrap_or(0)
         .clamp(-14 * 60, 14 * 60);
-    let now = WallClock.now_millis();
-    let cutoff = now.saturating_sub(days.saturating_mul(86_400_000));
-    let days_out: Vec<serde_json::Value> = if let Some(store) = open_store(state.home.as_path()) {
-        store
-                .daily_activity(cutoff, tz_offset)
-                .into_iter()
-                .map(|(start_ms, bytes, files)| {
-                    json!({ "start_ms": start_ms, "bytes": bytes, "files": files })
-                })
-                .collect()
-    } else {
-        Vec::new()
-    };
-    Json(json!({
-        "ok": true,
-        "days": days_out,
-        "window_days": days,
-        "generated_ms": now,
-    }))
+    Json(service::views::activity(&state, days, tz_offset))
 }
 
-async fn projects(State(_state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
-    let mut out = Vec::new();
-    {
-        let map = crate::projects::RUNTIMES.read().await;
-        for rt in map.values() {
-            let v = rt.view.read().await;
-            let root_path = rt.workspace.to_string_lossy().into_owned();
-            // display name: the folder editors named, not the slug they
-            // did not (audit #4 — "cairn-test2" is a DB id, "Brand Film"
-            // is what a human calls the project)
-            let display_name = std::path::Path::new(&root_path)
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| rt.project_id.clone());
-            out.push(json!({
-                "project_id": project_id_of(rt),
-                "display_name": display_name,
-                "root_path": root_path,
-                "state": v.state,
-                "files_synced": v.files_synced,
-                "cursor": v.cursor,
-                "pending_outbox": v.pending_outbox,
-                "last_error": v.last_error,
-            }));
-        }
-    }
-    out.sort_by(|a, b| {
-        a["project_id"]
-            .as_str()
-            .unwrap_or("")
-            .cmp(b["project_id"].as_str().unwrap_or(""))
-    });
-    Json(json!({ "projects": out }))
+async fn projects(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
+    Json(service::views::projects(&state).await)
 }
 
 async fn attach(
@@ -465,36 +278,9 @@ async fn attach(
     };
     let root = v["root_path"].as_str().unwrap_or("").to_string();
     let project = v["project_id"].as_str().unwrap_or("").to_string();
-    if root.is_empty() {
-        return Json(json!({"ok": false, "error": "root_path required"}));
-    }
-    // RBAC parity with the ctl surface (the members file in the root
-    // being attached is the authority)
-    if let Err(s) = crate::daemon::rbac_guard(
-        &state,
-        &project,
-        Some(std::path::Path::new(&root)),
-        cairn_core::rbac::Permission::AttachRoot,
-        "dash/attach",
-    )
-    .await
-    {
-        return Json(json!({"ok": false, "error": s.message()}));
-    }
-    match crate::projects::attach(
-        &state.home,
-        std::path::Path::new(&root),
-        if project.is_empty() {
-            None
-        } else {
-            Some(project)
-        },
-        None,
-    )
-    .await
-    {
-        Ok(pid) => Json(json!({"ok": true, "project_id": pid})),
-        Err(e) => Json(json!({"ok": false, "error": e.message})),
+    match service::actions::attach_root(&state, &root, &project).await {
+        Ok(j) => Json(j),
+        Err(j) => Json(j),
     }
 }
 
@@ -506,94 +292,18 @@ async fn detach(
         return Json(json!({"ok": false, "error": "body required: {project_id}"}));
     };
     let project = v["project_id"].as_str().unwrap_or("").to_string();
-    // RBAC parity with the ctl surface — the detach guard lives in the
-    // daemon, the dashboard is just another client
-    if let Err(s) = crate::daemon::rbac_guard(
-        &state,
-        &project,
-        None,
-        cairn_core::rbac::Permission::DetachRoot,
-        "dash/detach",
-    )
-    .await
-    {
-        return Json(json!({"ok": false, "error": s.message()}));
-    }
-    match crate::projects::detach(&state.home, &project).await {
-        Ok(()) => Json(json!({"ok": true})),
-        Err(e) => Json(json!({"ok": false, "error": e.message})),
+    match service::actions::detach_project(&state, &project).await {
+        Ok(j) => Json(j),
+        Err(j) => Json(j),
     }
 }
 
 async fn leases(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
-    let mut out = Vec::new();
-    if let Some(store) = open_store(state.home.as_path()) {
-        let now = WallClock.now_millis();
-        for (path, token, expires_at) in store.list_leases() {
-            out.push(json!({
-                "path": path, "token": token, "expires_at": expires_at,
-                "expired": expires_at <= now,
-            }));
-        }
-    }
-    Json(json!({ "leases": out }))
+    Json(service::views::leases(&state))
 }
 
 async fn storage(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
-    let home = state.home.as_path();
-    let Some(store) = open_store(home) else {
-        return Json(json!({"ok": false, "error": "store unavailable"}));
-    };
-    let conn = store.conn_handle();
-    let (blob_count, blob_bytes, pinned_count, pinned_bytes) =
-        match cairn_store::Cas::open(&store.root().join("blobs"), conn) {
-            Ok(cas) => cas.blob_stats().unwrap_or((0, 0, 0, 0)),
-            Err(_) => (0, 0, 0, 0),
-        };
-    let disk = cairn_store::eviction::disk_space(store.root()).ok();
-    let (files, conflicts) = store.all_files_summary();
-
-    // round 27: the meter is REAL per volume — the home store's disk AND
-    // every attached workspace's disk (a video studio's project drive is
-    // rarely the system drive; "260/476 GB" with no volume label read as
-    // a static mock). The UI labels which volume it is showing.
-    let mut volumes = Vec::new();
-    if let Some(d) = &disk {
-        volumes.push(json!({
-            "label": "store",
-            "free_bytes": d.free,
-            "total_bytes": d.total,
-        }));
-    }
-    {
-        let map = crate::projects::RUNTIMES.read().await;
-        let mut seen = std::collections::HashSet::new();
-        for rt in map.values() {
-            if seen.insert(rt.workspace.clone()) {
-                if let Ok(d) = cairn_store::eviction::disk_space(&rt.workspace) {
-                    volumes.push(json!({
-                        "label": rt.project_id,
-                        "free_bytes": d.free,
-                        "total_bytes": d.total,
-                    }));
-                }
-            }
-        }
-    }
-    Json(json!({
-        "ok": true,
-        "store_root": store.root().to_string_lossy(),
-        "files": files,
-        "conflicts": conflicts,
-        "blobs": {
-            "count": blob_count,
-            "bytes": blob_bytes,
-            "pinned_count": pinned_count,
-            "pinned_bytes": pinned_bytes,
-        },
-        "disk": disk.map(|d| json!({"free_bytes": d.free, "total_bytes": d.total})),
-        "volumes": volumes,
-    }))
+    Json(service::views::storage(&state).await)
 }
 
 async fn snapshots(
@@ -604,32 +314,9 @@ async fn snapshots(
     if project.is_empty() {
         return Json(json!({"ok": false, "error": "?project= required"}));
     }
-    let svc = CtlSnapshotsSvc { state };
-    match svc
-        .list_snapshots(Request::new(ListSnapshotsRequest {
-            project_id: project,
-        }))
-        .await
-    {
-        Ok(resp) => {
-            let snaps: Vec<serde_json::Value> = resp
-                .into_inner()
-                .snapshots
-                .into_iter()
-                .map(|s| {
-                    json!({
-                        "commit_hash": s.commit_hash,
-                        "parent": s.parent,
-                        "label": s.label,
-                        "author": s.author,
-                        "snapshot_seq": s.snapshot_seq,
-                        "server_ts": s.server_ts,
-                    })
-                })
-                .collect();
-            Json(json!({"ok": true, "snapshots": snaps}))
-        }
-        Err(s) => Json(json!({"ok": false, "error": s.message()})),
+    match service::actions::list_snapshots(&state, &project).await {
+        Ok(j) => Json(j),
+        Err(e) => Json(json!({"ok": false, "error": e})),
     }
 }
 
@@ -640,15 +327,15 @@ async fn create_snapshot(
     let Some(Json(v)) = body else {
         return Json(json!({"ok": false, "error": "body required: {project_id, label?}"}));
     };
-    let project = v["project_id"].as_str().unwrap_or("").to_string();
-    let svc = CtlSnapshotsSvc { state };
-    let req = Request::new(CreateSnapshotRequest {
-        project_id: project,
-        label: v["label"].as_str().unwrap_or_default().to_string(),
-    });
-    match svc.create_snapshot(req).await {
-        Ok(resp) => Json(json!({"ok": true, "commit_hash": resp.into_inner().commit_hash})),
-        Err(s) => Json(json!({"ok": false, "error": s.message()})),
+    match service::actions::create_snapshot(
+        &state,
+        v["project_id"].as_str().unwrap_or_default(),
+        v["label"].as_str().unwrap_or_default(),
+    )
+    .await
+    {
+        Ok(j) => Json(j),
+        Err(e) => Json(json!({"ok": false, "error": e})),
     }
 }
 
@@ -659,18 +346,16 @@ async fn restore_snapshot(
     let Some(Json(v)) = body else {
         return Json(json!({"ok": false, "error": "body required: {project_id, commit_hash}"}));
     };
-    let svc = CtlSnapshotsSvc { state };
-    let req = Request::new(RestoreSnapshotRequest {
-        project_id: v["project_id"].as_str().unwrap_or_default().to_string(),
-        commit_hash: v["commit_hash"].as_str().unwrap_or_default().to_string(),
-        target_path: v["target_path"].as_str().unwrap_or_default().to_string(),
-    });
-    match svc.restore_snapshot(req).await {
-        Ok(resp) => {
-            let r = resp.into_inner();
-            Json(json!({"ok": true, "restored_files": r.restored_files, "bytes": r.bytes}))
-        }
-        Err(s) => Json(json!({"ok": false, "error": s.message()})),
+    match service::actions::restore_snapshot(
+        &state,
+        v["project_id"].as_str().unwrap_or_default(),
+        v["commit_hash"].as_str().unwrap_or_default(),
+        v["target_path"].as_str().unwrap_or_default(),
+    )
+    .await
+    {
+        Ok(j) => Json(j),
+        Err(e) => Json(json!({"ok": false, "error": e})),
     }
 }
 
@@ -682,23 +367,9 @@ async fn pins(
     if project.is_empty() {
         return Json(json!({"ok": false, "error": "?project= required"}));
     }
-    let svc = CtlPinsSvc { state };
-    match svc
-        .list_pins(Request::new(ListPinsRequest {
-            project_id: project,
-        }))
-        .await
-    {
-        Ok(resp) => {
-            let pins: Vec<serde_json::Value> = resp
-                .into_inner()
-                .pins
-                .into_iter()
-                .map(|p| json!({"path": p.path, "size": p.size, "state": p.state}))
-                .collect();
-            Json(json!({"ok": true, "pins": pins}))
-        }
-        Err(s) => Json(json!({"ok": false, "error": s.message()})),
+    match service::actions::list_pins(&state, &project).await {
+        Ok(j) => Json(j),
+        Err(e) => Json(json!({"ok": false, "error": e})),
     }
 }
 
@@ -709,14 +380,15 @@ async fn pin(
     let Some(Json(v)) = body else {
         return Json(json!({"ok": false, "error": "body required: {project_id, path}"}));
     };
-    let svc = CtlPinsSvc { state };
-    let req = Request::new(PinRequest {
-        project_id: v["project_id"].as_str().unwrap_or_default().to_string(),
-        path: v["path"].as_str().unwrap_or_default().to_string(),
-    });
-    match svc.pin(req).await {
-        Ok(_) => Json(json!({"ok": true})),
-        Err(s) => Json(json!({"ok": false, "error": s.message()})),
+    match service::actions::pin_path(
+        &state,
+        v["project_id"].as_str().unwrap_or_default(),
+        v["path"].as_str().unwrap_or_default(),
+    )
+    .await
+    {
+        Ok(j) => Json(j),
+        Err(e) => Json(json!({"ok": false, "error": e})),
     }
 }
 
@@ -727,14 +399,15 @@ async fn unpin(
     let Some(Json(v)) = body else {
         return Json(json!({"ok": false, "error": "body required: {project_id, path}"}));
     };
-    let svc = CtlPinsSvc { state };
-    let req = Request::new(UnpinRequest {
-        project_id: v["project_id"].as_str().unwrap_or_default().to_string(),
-        path: v["path"].as_str().unwrap_or_default().to_string(),
-    });
-    match svc.unpin(req).await {
-        Ok(_) => Json(json!({"ok": true})),
-        Err(s) => Json(json!({"ok": false, "error": s.message()})),
+    match service::actions::unpin_path(
+        &state,
+        v["project_id"].as_str().unwrap_or_default(),
+        v["path"].as_str().unwrap_or_default(),
+    )
+    .await
+    {
+        Ok(j) => Json(j),
+        Err(e) => Json(json!({"ok": false, "error": e})),
     }
 }
 
@@ -745,14 +418,15 @@ async fn start_recall(
     let Some(Json(v)) = body else {
         return Json(json!({"ok": false, "error": "body required: {project_id, path?}"}));
     };
-    let svc = CtlRecallSvc { state };
-    let req = Request::new(StartRecallRequest {
-        project_id: v["project_id"].as_str().unwrap_or_default().to_string(),
-        path: v["path"].as_str().unwrap_or_default().to_string(),
-    });
-    match svc.start_recall(req).await {
-        Ok(resp) => Json(json!({"ok": true, "job_id": resp.into_inner().job_id})),
-        Err(s) => Json(json!({"ok": false, "error": s.message()})),
+    match service::actions::start_recall(
+        &state,
+        v["project_id"].as_str().unwrap_or_default(),
+        v["path"].as_str().unwrap_or_default(),
+    )
+    .await
+    {
+        Ok(j) => Json(j),
+        Err(e) => Json(json!({"ok": false, "error": e})),
     }
 }
 
@@ -760,125 +434,25 @@ async fn recall_status(
     State(state): State<Arc<DaemonState>>,
     UrlPath(job_id): UrlPath<String>,
 ) -> Json<serde_json::Value> {
-    let svc = CtlRecallSvc { state };
-    match svc
-        .recall_status(Request::new(RecallStatusRequest { job_id }))
-        .await
-    {
-        Ok(resp) => {
-            let r = resp.into_inner();
-            Json(json!({
-                "ok": true,
-                "state": r.state,
-                "progress": r.progress,
-                "bytes_done": r.bytes_done,
-                "bytes_total": r.bytes_total,
-                "eta_ms": r.eta_ms,
-            }))
-        }
-        Err(s) => Json(json!({"ok": false, "error": s.message()})),
+    match service::actions::recall_status(&state, &job_id).await {
+        Ok(j) => Json(j),
+        Err(e) => Json(json!({"ok": false, "error": e})),
     }
 }
 
-/// GET /api/v1/review — the review portal state per attached project:
-/// version stack, live links, comment counts. Read-only; minting links
-/// stays on the CLI (`cairn review link`).
-async fn review_summary(State(_state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
-    let mut out = Vec::new();
-    {
-        let map = crate::projects::RUNTIMES.read().await;
-        for rt in map.values() {
-            let root = rt.workspace.clone();
-            let entry = match cairn_review::store::Store::load(&root) {
-                Ok(Some(f)) => {
-                    let now = cairn_core::clock::WallClock.now_millis();
-                    let comments: u64 = f
-                        .versions
-                        .iter()
-                        .map(|v| {
-                            cairn_review::store::Store::load_comments(&root, v.number)
-                                .map(|s| s.len() as u64)
-                                .unwrap_or(0)
-                        })
-                        .sum();
-                    json!({
-                        "project_id": rt.project_id,
-                        "root_path": root.to_string_lossy(),
-                        "title": f.title,
-                        "versions": f.versions.iter().map(|v| json!({
-                            "number": v.number,
-                            "label": v.label,
-                            "frames": v.frames,
-                            "fps_num": v.fps_num,
-                            "fps_den": v.fps_den,
-                            "duration": v.timecode(v.frames.saturating_sub(1)),
-                            "has_proxy": v.proxy_rel.is_some(),
-                            "published_by": v.published_by,
-                        })).collect::<Vec<_>>(),
-                        "live_links": f.links.iter().filter(|l| !l.is_expired(now)).count(),
-                        "expired_links": f.links.iter().filter(|l| l.is_expired(now)).count(),
-                        // mom-test round: the surface that makes revoke real —
-                        // a user cannot kill a link they cannot see.
-                        "links": f.links.iter().map(|l| json!({
-                            "token": l.token,
-                            "note": l.note,
-                            "role": l.role.as_str(),
-                            "expired": l.is_expired(now),
-                            "expires_at": l.expires_at,
-                        })).collect::<Vec<_>>(),
-                        "open_notes": comments,
-                    })
-                }
-                _ => json!({
-                    "project_id": rt.project_id,
-                    "root_path": root.to_string_lossy(),
-                    "title": null,
-                }),
-            };
-            out.push(entry);
-        }
-    }
-    out.sort_by(|a, b| {
-        a["project_id"]
-            .as_str()
-            .unwrap_or("")
-            .cmp(b["project_id"].as_str().unwrap_or(""))
-    });
-    Json(json!({ "review": out }))
+async fn review_summary(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
+    Json(service::views::review_summary(&state).await)
 }
 
-/// GET /api/v1/markers?project=&version=&format=fcpxml|otio|csv — the NLE
-/// marker bridge over the loopback gateway. The same body the CLI exports
-/// (`cairn review export-markers`), so the Premiere UXP panel and the
-/// terminal can never disagree. Read-only: comments live in the root's
-/// machine-local `.cairn` dir (ADR-0022's honest-scope note); RBAC's write
-/// boundary (attach/detach/flags) is untouched by a read.
 async fn markers(
+    State(state): State<Arc<DaemonState>>,
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> axum::response::Response {
     use axum::http::{header, StatusCode};
-    use axum::response::IntoResponse;
 
     let project = q.get("project").cloned().unwrap_or_default();
     let version: u32 = q.get("version").and_then(|v| v.parse().ok()).unwrap_or(0);
     let format = q.get("format").cloned().unwrap_or_else(|| "fcpxml".into());
-
-    // resolve the root: the named project's runtime, else the first (the
-    // panel always names the project; the fallback keeps manual URL fetch
-    // on single-project machines working)
-    let root: Option<std::path::PathBuf> = {
-        let map = crate::projects::RUNTIMES.read().await;
-        map.values()
-            .find(|rt| project.is_empty() || rt.project_id == project)
-            .map(|rt| rt.workspace.clone())
-    };
-    let Some(root) = root else {
-        return (
-            StatusCode::NOT_FOUND,
-            Json(json!({"ok": false, "error": format!("no attached project matches '{project}'")})),
-        )
-            .into_response();
-    };
     // ADR-0028 §E: the panel exports "what the client gets" by default;
     // ?visibility=all is the studio's own view
     let vis = match q.get("visibility").map(String::as_str) {
@@ -886,49 +460,37 @@ async fn markers(
         Some("internal") => Some(cairn_tl::notes::NoteVisibility::Internal),
         _ => Some(cairn_tl::notes::NoteVisibility::Public),
     };
-    match crate::handoff::markers_payload(&root, version, &format, None, vis) {
-        Ok((body, ctype)) => {
-            let ext = match format.as_str() {
-                "otio" => "otio",
-                "csv" => "csv",
-                _ => "fcpxml",
-            };
+    match service::views::markers_export(&state, &project, version, &format, vis).await {
+        service::Export::Ready {
+            body,
+            content_type,
+            filename,
+        } => {
             let headers = [
-                (header::CONTENT_TYPE, ctype.to_string()),
+                (header::CONTENT_TYPE, content_type),
                 (
                     header::CONTENT_DISPOSITION,
-                    format!("attachment; filename=\"markers-v{version}.{ext}\""),
+                    format!("attachment; filename=\"{filename}\""),
                 ),
             ];
             (StatusCode::OK, headers, body).into_response()
         }
-        Err(e) => (
+        service::Export::NotFound(e) => (
             StatusCode::NOT_FOUND,
-            Json(json!({"ok": false, "error": e.to_string()})),
+            Json(json!({"ok": false, "error": e})),
         )
             .into_response(),
     }
 }
 
 async fn flags(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
-    let flags = state.flags.read().await;
-    Json(json!({
-        "flags": flags.iter().map(|(n, v)| json!({"name": n, "value": v})).collect::<Vec<_>>(),
-    }))
+    Json(service::views::flags(&state).await)
 }
 
 async fn set_flag(
     State(state): State<Arc<DaemonState>>,
     body: Option<Json<serde_json::Value>>,
 ) -> axum::response::Response {
-    // Round 20: DELEGATE to the ctl service (same code the gRPC surface
-    // runs) — the local re-implementation drifted: unknown flag / missing
-    // body returned {ok:true} on HTTP while gRPC answered NOT_FOUND, and the
-    // store mirror ran inside the flags write lock.
-    use cairn_proto::pb::ctl_diagnostics_server::CtlDiagnostics as _;
-    let svc = crate::daemon::CtlDiagSvc {
-        state: Arc::clone(&state),
-    };
     let Some(Json(v)) = body else {
         return (
             axum::http::StatusCode::BAD_REQUEST,
@@ -938,312 +500,43 @@ async fn set_flag(
     };
     let name = v["name"].as_str().unwrap_or("").to_string();
     let value = v["value"].as_str().unwrap_or("").to_string();
-    match svc
-        .set_flag(tonic::Request::new(cairn_proto::pb::SetFlagRequest {
-            name,
-            value,
-        }))
-        .await
-    {
-        Ok(_) => Json(json!({"ok": true})).into_response(),
-        Err(st) => (
+    match service::actions::set_flag(&state, &name, &value).await {
+        Ok(j) => Json(j).into_response(),
+        Err(e) => (
             axum::http::StatusCode::NOT_FOUND,
-            Json(json!({"ok": false, "error": st.message()})),
+            Json(json!({"ok": false, "error": e})),
         )
             .into_response(),
     }
 }
 
 async fn doctor(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
-    // cached (round 27): the dashboard polls this at 15s; the status RPC
-    // shares the same 5s-fresh cache, so neither starves the ctl thread
-    let report = state.cached_doctor().await;
-    Json(json!({
-        "healthy": report.healthy(),
-        "checks": report.checks.iter().map(|c| json!({
-            "name": c.name, "ok": c.ok, "detail": c.detail, "latency_ms": c.latency_ms
-        })).collect::<Vec<_>>(),
-    }))
+    Json(service::views::doctor(&state).await)
 }
 
-// ---------- round 18: files / team / search / update ----------
-
-fn now_ms_i64() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as i64)
-        .unwrap_or(0)
-}
-
-/// The first runtime's (project, root) — Team reads one project's
-/// members/audit; multi-project machines get one card per call site.
-async fn first_runtime() -> Option<(String, std::path::PathBuf, u64, u64)> {
-    let map = crate::projects::RUNTIMES.read().await;
-    let mut best: Option<(String, std::path::PathBuf, u64, u64)> = None;
-    for rt in map.values() {
-        let v = rt.view.read().await;
-        let cand = (
-            rt.project_id.clone(),
-            rt.workspace.clone(),
-            v.files_synced,
-            v.pending_outbox,
-        );
-        best = match best {
-            None => Some(cand),
-            Some((pid, _, _, _)) if cand.0 < pid => Some(cand),
-            other => other,
-        };
-    }
-    best
-}
-
-/// Map a file row's raw local_state to the badge vocabulary editors
-/// already know from cloud drives: local / syncing / synced / conflict.
-fn file_badge(row: &cairn_store::FileRow) -> &'static str {
-    match row.local_state.as_str() {
-        "conflict" => "conflict",
-        "synced" => "synced",
-        "dirty" => "syncing",
-        _ => "syncing",
-    }
-}
-
-/// GET /api/v1/files?project=&q= — per-file rows with sync + pin badges
-/// (audit #7: "clip1.braw 8.3 MB synced / placeholder / pinned" — a file
-/// list, not `ls`). `q` filters client-side cheaply server-side here.
 async fn files(
     State(state): State<Arc<DaemonState>>,
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Json<serde_json::Value> {
     let project = q.get("project").cloned().unwrap_or_default();
-    let needle = q.get("q").map(|s| s.to_lowercase()).unwrap_or_default();
-    let Some(store) = open_store(state.home.as_path()) else {
-        return Json(json!({"ok": false, "error": "store unavailable"}));
-    };
-    let mut rows_out = Vec::new();
-    let mut summary = serde_json::Map::new();
-    let mut total_files = 0u64;
-    let mut synced_n = 0u64;
-    let mut dirty_n = 0u64;
-    let mut conflict_n = 0u64;
-    let pins: std::collections::HashSet<String> = if project.is_empty() {
-        Default::default()
-    } else {
-        store
-            .list_pins(&project)
-            .into_iter()
-            .map(|(p, _)| p)
-            .collect()
-    };
-    for row in store.list_files(&project) {
-        if row.mode != "file" {
-            continue;
-        }
-        if !needle.is_empty() && !row.path.to_lowercase().contains(&needle) {
-            continue;
-        }
-        total_files += 1;
-        match file_badge(&row) {
-            "synced" => synced_n += 1,
-            "conflict" => conflict_n += 1,
-            _ => dirty_n += 1,
-        }
-        rows_out.push(json!({
-            "path": row.path,
-            "size": row.size,
-            "mtime": row.mtime,
-            "state": file_badge(&row),
-            "pinned": pins.contains(&row.path),
-            "placeholder": row.manifest_hash.is_some(),
-        }));
-    }
-    rows_out.sort_by(|a, b| {
-        a["path"]
-            .as_str()
-            .unwrap_or("")
-            .cmp(b["path"].as_str().unwrap_or(""))
-    });
-    summary.insert("files".into(), json!(total_files));
-    summary.insert("synced".into(), json!(synced_n));
-    summary.insert("syncing".into(), json!(dirty_n));
-    summary.insert("conflict".into(), json!(conflict_n));
-    summary.insert("pinned".into(), json!(pins.len()));
-    Json(json!({"ok": true, "project": project, "summary": summary, "files": rows_out}))
+    let needle = q.get("q").cloned().unwrap_or_default();
+    Json(service::views::files(&state, &project, &needle))
 }
 
-/// GET /api/v1/team — members, the acting device's role, the swarm join
-/// code (invite), and the newest audit decisions (audit #5: RBAC was in
-/// the CLI only; now the studio roster is a first-class surface).
 async fn team(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
-    let Some((pid, root, files_synced, pending)) = first_runtime().await else {
-        return Json(json!({"ok": true, "projects": []}));
-    };
-    let store = match open_store(state.home.as_path()) {
-        Some(s) => s,
-        None => return Json(json!({"ok": false, "error": "store unavailable"})),
-    };
-    let device = crate::projects::load_identity(&store)
-        .map(|i| i.device_id)
-        .filter(|d| !d.is_empty())
-        .unwrap_or_else(|| "local".into());
-    let members = crate::members::load(&root)
-        .map(|f| {
-            f.members
-                .values()
-                .map(|m| {
-                    json!({
-                        "device_id": m.device_id,
-                        "name": m.name,
-                        "role": m.role.as_str(),
-                        "added_at_ms": m.added_at_ms,
-                        "is_me": m.device_id == device,
-                    })
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    let my_role = crate::members::load(&root)
-        .map(|f| cairn_core::rbac::Role::as_str(f.role_of(&device)).to_string())
-        .unwrap_or_else(|_| "editor".into());
-    let join_code = store.meta_get("swarm/join-code").unwrap_or_default();
-    let signal = store.meta_get("swarm/signal").unwrap_or_default();
-    let audit = crate::audit::AuditFile::load(&root)
-        .map(|rows| {
-            rows.iter()
-                .rev()
-                .take(12)
-                .map(|(_, e)| {
-                    json!({
-                        "ts_ms": e.ts_ms,
-                        "device": e.device,
-                        "role": e.role,
-                        "action": e.action,
-                        "allowed": e.allowed,
-                    })
-                })
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    Json(json!({
-        "ok": true,
-        "projects": [{
-            "project_id": pid,
-            "display_name": root
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| pid.clone()),
-            "root_path": root.to_string_lossy(),
-            "files_synced": files_synced,
-            "pending_outbox": pending,
-            "my_device": device,
-            "my_role": my_role,
-            "members": members,
-            "join_code": if join_code.is_empty() { serde_json::Value::Null } else { json!(join_code) },
-            "signal": if signal.is_empty() { serde_json::Value::Null } else { json!(signal) },
-            "audit": audit,
-            "now_ms": now_ms_i64(),
-        }],
-    }))
+    Json(service::views::team(&state).await)
 }
 
-/// GET /api/v1/search?q= — substring search across file paths, project
-/// ids/display names, review session titles, and audit actions (audit
-/// #9: search existed only as a CLI; editors live in the dashboard).
 async fn search(
     State(state): State<Arc<DaemonState>>,
     axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
 ) -> Json<serde_json::Value> {
-    let needle = q.get("q").cloned().unwrap_or_default().to_lowercase();
-    if needle.trim().is_empty() {
-        return Json(json!({"ok": true, "results": []}));
-    }
-    let mut out = Vec::new();
-    // attached projects: (project_id, workspace, display name)
-    let attached: Vec<(String, std::path::PathBuf, String)> = {
-        let map = crate::projects::RUNTIMES.read().await;
-        map.values()
-            .map(|rt| {
-                let display = rt
-                    .workspace
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_else(|| rt.project_id.clone());
-                (rt.project_id.clone(), rt.workspace.clone(), display)
-            })
-            .collect()
-    };
-    for (pid, _root, display) in &attached {
-        if pid.to_lowercase().contains(&needle) || display.to_lowercase().contains(&needle) {
-            out.push(json!({
-                "kind": "project",
-                "project": pid,
-                "label": display,
-                "sub": pid,
-                "target": "#projects",
-            }));
-        }
-    }
-    if let Some(store) = open_store(state.home.as_path()) {
-        // file paths (first 40 hits across attached projects)
-        let mut file_hits = 0;
-        for (pid, _root, _display) in &attached {
-            for row in store.list_files(pid) {
-                if row.mode != "file" {
-                    continue;
-                }
-                if row.path.to_lowercase().contains(&needle) {
-                    out.push(json!({
-                        "kind": "file",
-                        "project": pid,
-                        "label": row.path,
-                        "sub": file_badge(&row),
-                        "target": "#files",
-                    }));
-                    file_hits += 1;
-                    if file_hits >= 40 {
-                        break;
-                    }
-                }
-            }
-        }
-        // review sessions
-        for (pid, root, _display) in &attached {
-            if let Ok(Some(f)) = cairn_review::store::Store::load(root) {
-                if f.title.to_lowercase().contains(&needle) {
-                    out.push(json!({
-                        "kind": "review",
-                        "project": pid,
-                        "label": f.title,
-                        "sub": format!("{} versions", f.versions.len()),
-                        "target": "#review",
-                    }));
-                }
-            }
-        }
-    }
-    out.truncate(60);
-    Json(json!({"ok": true, "results": out}))
+    let needle = q.get("q").cloned().unwrap_or_default();
+    Json(service::views::search(&state, &needle).await)
 }
 
-/// GET /api/v1/update — honest update state. The daemon never phones
-/// home; `cairn update check` (CLI) writes its verdict into the store and
-/// this surfaces it: null = never checked, false = checked-current,
-/// true = an update is offered. check_failed marks a failed check.
 async fn update_state(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
-    let offered = open_store(state.home.as_path())
-        .and_then(|s| s.meta_get("update/offered"))
-        .map(|v| v == "true")
-        .unwrap_or(false);
-    let check_failed = open_store(state.home.as_path())
-        .and_then(|s| s.meta_get("update/check-failed"))
-        .map(|v| v == "true")
-        .unwrap_or(false);
-    Json(json!({
-        "ok": true,
-        "current_version": env!("CARGO_PKG_VERSION"),
-        "update_offered": offered,
-        "check_failed": check_failed,
-    }))
+    Json(service::views::update_state(&state))
 }
 
 // ---------- live presence (ADR-0023 §2) ----------
@@ -1266,9 +559,6 @@ fn default_action() -> String {
 }
 
 /// POST /api/v1/live — submit a presence event (playhead/drag/selection).
-/// Delegates to the ctl service: same flag gate, same RBAC ledger entry,
-/// same swarm relay. The payload is BUILT here (editor/frame/rate/action)
-/// so JS callers stay schema-simple; the wire bound (1200 B) still applies.
 async fn live_send(
     State(state): State<Arc<DaemonState>>,
     axum::Json(body): axum::Json<LiveSendBody>,
@@ -1279,18 +569,11 @@ async fn live_send(
         "rate": body.rate,
         "action": body.action,
     });
-    let svc = CtlPresenceSvc {
-        state: Arc::clone(&state),
-    };
-    let req = tonic::Request::new(SendPresenceRequest {
-        project: body.project,
-        payload: serde_json::to_vec(&payload).unwrap_or_default(),
-    });
-    match svc.send_presence(req).await {
-        Ok(_) => axum::Json(json!({ "ok": true })).into_response(),
-        Err(st) => (
+    match service::actions::live_send(&state, &body.project, payload).await {
+        Ok(()) => axum::Json(json!({ "ok": true })).into_response(),
+        Err(e) => (
             axum::http::StatusCode::PRECONDITION_FAILED,
-            axum::Json(json!({ "ok": false, "error": st.message() })),
+            axum::Json(json!({ "ok": false, "error": e })),
         )
             .into_response(),
     }
@@ -1319,7 +602,7 @@ async fn live_sse(State(state): State<Arc<DaemonState>>) -> axum::response::Resp
             .into_response();
     }
     use tokio_stream::StreamExt as _;
-    let rx = crate::projects::PRESENCE_TX.subscribe();
+    let rx = state.projects.subscribe_presence();
     let stream = tokio_stream::wrappers::BroadcastStream::new(rx).filter_map(|res| match res {
         Ok(ev) => {
             let data = ev.to_json().to_string();
@@ -1335,116 +618,19 @@ async fn live_sse(State(state): State<Arc<DaemonState>>) -> axum::response::Resp
         .into_response()
 }
 
-/// GET /api/v1/live/snapshot — the current presence view per project
-/// (remote peers from each swarm's last-event-wins map; local events are
-/// stream-only). Honest `enabled` field so the UI can show the off state.
 async fn live_snapshot(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
-    let on = {
-        state
-            .flags
-            .read()
-            .await
-            .iter()
-            .any(|(k, v)| k == "live_presence" && v == "true")
-    };
-    let mut projects_out = Vec::new();
-    {
-        let map = crate::projects::RUNTIMES.read().await;
-        for rt in map.values() {
-            if let Some(swarm) = rt.swarm.lock().await.as_ref() {
-                let events: Vec<serde_json::Value> = swarm
-                    .presence_snapshot()
-                    .into_iter()
-                    .map(|ev| {
-                        json!({
-                            "from": ev.from,
-                            "payload": String::from_utf8_lossy(&ev.payload),
-                        })
-                    })
-                    .collect();
-                projects_out.push(json!({
-                    "project": project_id_of(rt),
-                    "events": events,
-                }));
-            }
-        }
-    }
-    Json(json!({ "enabled": on, "projects": projects_out }))
+    Json(service::views::live_snapshot(&state).await)
 }
 
 // ---------------------------------------------------------------------------
 // round 27 — "click, don't type": the native folder picker + file
-// quick-actions. The install retro's sharpest finding: a user's first
-// instinct on the attach scene is to CLICK a button, not to paste a
-// path. The daemon serves loopback-only; the OS dialog belongs to the
-// user's interactive session (installer/tray both start it there).
+// quick-actions (policy in the service; the OS-side effects too).
 // ---------------------------------------------------------------------------
 
-/// GET /api/v1/pick-folder — open the OS folder dialog, return the chosen
-/// path. `cancelled: true` when the user closes it without choosing (NOT
-/// an error — the UI falls back to the text input). `unsupported: true`
-/// on hosts with no session dialog (the UI keeps the text field front
-/// and center instead of offering a dead button). A dialog cannot run
-/// on the async runtime's thread (STA COM + modal), so it runs on the
-/// blocking pool; the request stays open until the user decides.
 async fn pick_folder() -> Json<serde_json::Value> {
-    // cairn-fs-win owns the FFI (the badge/cfapi boundary pattern);
-    // cairn-cli stays forbid(unsafe_code) — the dialog is a SAFE call
-    let picked = tokio::task::spawn_blocking(cairn_fs_win::dialog::pick_folder).await;
-    match picked {
-        Ok(cairn_fs_win::dialog::Picked::Folder(path)) => Json(json!({"ok": true, "path": path})),
-        // user closed the dialog — not an error
-        Ok(cairn_fs_win::dialog::Picked::Cancelled) => Json(json!({"ok": true, "cancelled": true})),
-        Ok(cairn_fs_win::dialog::Picked::Unsupported) => {
-            Json(json!({"ok": true, "unsupported": true}))
-        }
-        Err(e) => Json(json!({"ok": false, "error": format!("picker failed: {e}")})),
-    }
+    Json(service::actions::pick_folder().await)
 }
 
-/// Resolve a project-relative path inside the project's attached root,
-/// refusing traversal (`..`, absolute paths, drive letters, UNC). The
-/// quick-actions must never become an arbitrary-file-read primitive.
-fn safe_join(root: &Path, rel: &str) -> Option<std::path::PathBuf> {
-    if rel.is_empty() {
-        return None;
-    }
-    let rel_path = std::path::Path::new(rel);
-    if rel_path.is_absolute() {
-        return None;
-    }
-    // components like "..", reserved device names, drive-letter colons
-    for comp in rel_path.components() {
-        match comp {
-            std::path::Component::Normal(_) => {}
-            std::path::Component::CurDir => {}
-            _ => return None, // ParentDir, Prefix (C:), RootDir, UNC
-        }
-    }
-    let joined = root.join(rel_path);
-    // belt and braces: canonicalize (when it exists) and re-check prefix
-    if let Ok(canon) = joined.canonicalize() {
-        let root_canon = root.canonicalize().ok()?;
-        if !canon.starts_with(&root_canon) {
-            return None;
-        }
-        Some(canon)
-    } else {
-        Some(joined)
-    }
-}
-
-/// The live root of a project id (first runtime with that id).
-async fn project_root_path(_state: &DaemonState, project_id: &str) -> Option<std::path::PathBuf> {
-    let map = crate::projects::RUNTIMES.read().await;
-    map.values()
-        .find(|rt| rt.project_id == project_id)
-        .map(|rt| rt.workspace.clone())
-}
-
-/// POST /api/v1/file/open {project_id, path} — reveal the file in the OS
-/// file manager (Explorer /select on Windows, xdg-open the parent dir
-/// elsewhere). Errors are honest JSON, not silent.
 async fn file_open(
     State(state): State<Arc<DaemonState>>,
     body: Option<Json<serde_json::Value>>,
@@ -1452,44 +638,14 @@ async fn file_open(
     let Some(Json(v)) = body else {
         return Json(json!({"ok": false, "error": "body required: {project_id, path}"}));
     };
-    let project = v["project_id"].as_str().unwrap_or("").to_string();
-    let path = v["path"].as_str().unwrap_or("").to_string();
-    let Some(root) = project_root_path(&state, &project).await else {
-        return Json(json!({"ok": false, "error": "project not attached"}));
-    };
-    let Some(full) = safe_join(&root, &path) else {
-        return Json(json!({"ok": false, "error": "path refused (traversal)"}));
-    };
-    // platform reveal; the bool/str pair keeps one return site so both
-    // cfg targets compile identically
-    let (shown, why) = reveal_in_file_manager(&full, &root);
-    Json(json!({"ok": shown, "error": why}))
-}
-
-/// Reveal a file in the OS file manager. Windows: `explorer /select`
-/// highlights the file in its folder. Others: open the parent directory
-/// (the file may be a placeholder — the folder is still the useful view).
-fn reveal_in_file_manager(full: &Path, root: &Path) -> (bool, &'static str) {
-    #[cfg(windows)]
-    {
-        let _ = root; // reveal-by-select needs only the file itself
-        let ok = std::process::Command::new("explorer.exe")
-            .arg(format!("/select,\"{}\"", full.display()))
-            .spawn()
-            .is_ok();
-        (ok, if ok { "" } else { "explorer failed to start" })
-    }
-    #[cfg(not(windows))]
-    {
-        // xdg-open the parent directory (the file may be a placeholder —
-        // opening the folder is still the useful view)
-        let dir = full.parent().unwrap_or(root).to_path_buf();
-        let ok = std::process::Command::new("xdg-open")
-            .arg(&dir)
-            .spawn()
-            .is_ok();
-        (ok, if ok { "" } else { "xdg-open failed" })
-    }
+    Json(
+        service::actions::file_open(
+            &state,
+            v["project_id"].as_str().unwrap_or_default(),
+            v["path"].as_str().unwrap_or_default(),
+        )
+        .await,
+    )
 }
 
 /// GET /api/v1/file/download?project=..&path=.. — stream the LOCAL
@@ -1509,24 +665,23 @@ async fn file_download(
     let err = |code: StatusCode, msg: &str| {
         (code, Json(json!({"ok": false, "error": msg}))).into_response()
     };
-    let Some(root) = project_root_path(&state, &project).await else {
-        return err(StatusCode::NOT_FOUND, "project not attached");
-    };
-    let Some(full) = safe_join(&root, &path) else {
-        return err(StatusCode::BAD_REQUEST, "path refused (traversal)");
-    };
-    let meta = match tokio::fs::metadata(&full).await {
-        Ok(m) => m,
-        Err(_) => {
+    let (full, name, len) = match service::actions::resolve_download(&state, &project, &path).await
+    {
+        service::Download::Ready { full, name, len } => (full, name, len),
+        service::Download::ProjectNotAttached => {
+            return err(StatusCode::NOT_FOUND, "project not attached")
+        }
+        service::Download::TraversalRefused => {
+            return err(StatusCode::BAD_REQUEST, "path refused (traversal)")
+        }
+        service::Download::NotMaterialized => {
             return err(
                 StatusCode::CONFLICT,
                 "file is not materialized on this machine — recall it first, then download",
             )
         }
+        service::Download::NotAFile => return err(StatusCode::BAD_REQUEST, "not a file"),
     };
-    if !meta.is_file() {
-        return err(StatusCode::BAD_REQUEST, "not a file");
-    }
     let f = match tokio::fs::File::open(&full).await {
         Ok(f) => f,
         Err(_) => return err(StatusCode::INTERNAL_SERVER_ERROR, "open failed"),
@@ -1540,10 +695,6 @@ async fn file_download(
             Err(e) => Some((Err(std::io::Error::other(e)), f)),
         }
     });
-    let name = std::path::Path::new(&path)
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "file".into());
     let mut resp = axum::response::Response::new(Body::from_stream(stream));
     *resp.status_mut() = StatusCode::OK;
     let headers = resp.headers_mut();
@@ -1557,17 +708,12 @@ async fn file_download(
     )) {
         headers.insert(header::CONTENT_DISPOSITION, cd);
     }
-    if let Ok(cl) = HeaderValue::from_str(&meta.len().to_string()) {
+    if let Ok(cl) = HeaderValue::from_str(&len.to_string()) {
         headers.insert(header::CONTENT_LENGTH, cl);
     }
     resp
 }
 
-/// POST /api/v1/file/duplicate {project_id, path} — local copy beside the
-/// original (`name (copy).ext`), never synced until the watcher picks it
-/// up like any other new file (it IS a new file — the explicit-action
-/// semantics the retro asked for). Placeholders answer the recall hint:
-/// duplicating a 0-byte placeholder would create a 0-byte file.
 async fn file_duplicate(
     State(state): State<Arc<DaemonState>>,
     body: Option<Json<serde_json::Value>>,
@@ -1575,78 +721,20 @@ async fn file_duplicate(
     let Some(Json(v)) = body else {
         return Json(json!({"ok": false, "error": "body required: {project_id, path}"}));
     };
-    let project = v["project_id"].as_str().unwrap_or("").to_string();
-    let path = v["path"].as_str().unwrap_or("").to_string();
-    let Some(root) = project_root_path(&state, &project).await else {
-        return Json(json!({"ok": false, "error": "project not attached"}));
-    };
-    let Some(full) = safe_join(&root, &path) else {
-        return Json(json!({"ok": false, "error": "path refused (traversal)"}));
-    };
-    if !tokio::fs::metadata(&full)
-        .await
-        .map(|m| m.is_file())
-        .unwrap_or(false)
-    {
-        return Json(
-            json!({"ok": false, "error": "file is not materialized on this machine — recall it first"}),
-        );
-    }
-    // `clip.braw` -> `clip (copy).braw`; `README` -> `README (copy)`
-    let stem = full.with_extension("");
-    let ext = full
-        .extension()
-        .map(|e| e.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let dest = stem;
-    let mut n = 1;
-    let mut candidate = {
-        let base = format!("{} (copy)", dest.display());
-        if ext.is_empty() {
-            std::path::PathBuf::from(base)
-        } else {
-            std::path::PathBuf::from(format!("{base}.{ext}"))
-        }
-    };
-    while tokio::fs::metadata(&candidate).await.is_ok() && n < 100 {
-        n += 1;
-        let base = format!("{} (copy {})", dest.display(), n);
-        candidate = if ext.is_empty() {
-            std::path::PathBuf::from(base)
-        } else {
-            std::path::PathBuf::from(format!("{base}.{ext}"))
-        };
-    }
-    match tokio::fs::copy(&full, &candidate).await {
-        Ok(bytes) => {
-            let rel = candidate
-                .strip_prefix(&root)
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_else(|_| candidate.to_string_lossy().into_owned());
-            Json(json!({"ok": true, "path": rel, "bytes": bytes}))
-        }
-        Err(e) => Json(json!({"ok": false, "error": format!("copy failed: {e}")})),
-    }
+    Json(
+        service::actions::file_duplicate(
+            &state,
+            v["project_id"].as_str().unwrap_or_default(),
+            v["path"].as_str().unwrap_or_default(),
+        )
+        .await,
+    )
 }
 
-/// POST /api/v1/team/regenerate — mint a fresh single-use join code (600s TTL).
-/// Production: uses the server auth when reachable, else a local `enr-` code
-/// stored in meta for the WS rendezvous. Owner/Lead only via ctl guard parity.
 async fn team_regenerate(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
-    let code = format!("enr-{}", uuid::Uuid::now_v7().simple());
-    if let Some(store) = open_store(state.home.as_path()) {
-        let _ = store.meta_set("swarm/join-code", &code);
-        let _ = store.meta_set(
-            "swarm/join-code-exp",
-            &(cairn_core::clock::WallClock.now_millis() + 600_000).to_string(),
-        );
-    }
-    Json(json!({"ok": true, "join_code": code, "ttl_ms": 600_000}))
+    Json(service::actions::team_regenerate(&state))
 }
 
-/// POST /api/v1/team/join {code} — accept a teammate code, persist peer intent.
-/// Full enroll still runs via `cairn login --server … --code …`; this records
-/// intent + validates shape so the UI can guide (join-code gated admission).
 async fn team_join(
     State(state): State<Arc<DaemonState>>,
     body: Option<Json<serde_json::Value>>,
@@ -1654,29 +742,12 @@ async fn team_join(
     let Some(Json(v)) = body else {
         return Json(json!({"ok": false, "error": "body required: {code}"}));
     };
-    let code = v["code"].as_str().unwrap_or("").trim().to_string();
-    if !(code.starts_with("enr-") && code.len() > 8) {
-        return Json(json!({"ok": false, "error": "invalid join code shape (expected enr-…)"}));
-    }
-    if let Some(store) = open_store(state.home.as_path()) {
-        let _ = store.meta_set("swarm/peer-join", &code);
-    }
-    Json(
-        json!({"ok": true, "code": code, "next": "run: cairn dev-enroll-code --server <server>, then cairn login --server <server> --code <code>"}),
-    )
+    Json(service::actions::team_join(
+        &state,
+        v["code"].as_str().unwrap_or(""),
+    ))
 }
 
-/// POST /api/v1/review/publish {project_id, media, title?, frames?, fps?} —
-/// append a version to the review stack (same store the CLI uses).
-///
-/// P0 (mom-test round): the backend OWNS the media truth. The dashboard
-/// used to publish whatever the UI guessed ("first .mp4", 100 frames,
-/// 24 fps), which shipped a 25 fps / 8400-frame cut with a wrong
-/// timecode end to end. Now: frames/fps arrive only from callers that
-/// already know them (the CLI path), everything else is probed from the
-/// file itself (ffprobe) — fail closed on an honest error, never on a
-/// guess. The old `root.join(media)` fallback on a refused path is also
-/// gone: that silently defeated the traversal guard.
 async fn review_publish(
     State(state): State<Arc<DaemonState>>,
     body: Option<Json<serde_json::Value>>,
@@ -1684,120 +755,36 @@ async fn review_publish(
     let Some(Json(v)) = body else {
         return Json(json!({"ok": false, "error": "body required: {project_id, media}"}));
     };
-    let project = v["project_id"].as_str().unwrap_or("").to_string();
-    let media = v["media"].as_str().unwrap_or("").to_string();
-    let title: String = v["title"].as_str().unwrap_or("").to_string();
-    if project.is_empty() || media.is_empty() {
-        return Json(json!({"ok": false, "error": "project_id, media required"}));
-    }
-    let Some(root) = project_root_path(&state, &project).await else {
-        return Json(json!({"ok": false, "error": "project not attached"}));
-    };
-    let Some(full) = safe_join(&root, &media) else {
-        return Json(json!({"ok": false, "error": "path refused (traversal)"}));
-    };
-    if !full.is_file() {
-        return Json(
-            json!({"ok": false, "error": "media not found on this machine — attach or materialize first"}),
-        );
-    }
-    // Explicit frames/fps (CLI callers that already know the truth) or
-    // probe. The probe reuses the CLI's dogfood-fixed path (crate::review):
-    // ONE implementation of media truth, never two that drift.
-    let (frames, num, den) = match (v["frames"].as_u64(), v["fps"].as_str()) {
-        (Some(count), Some(rate)) if count > 0 => match crate::review::parse_fps(rate) {
-            Ok(parsed) => (count, parsed.0, parsed.1),
-            Err(e) => {
-                return Json(json!({ "ok": false, "error": format!("unparseable fps: {e}") }))
-            }
-        },
-        _ => match crate::review::probe_media(&full) {
-            Some(probed) => (probed.2, probed.0, probed.1),
-            None => {
-                return Json(json!({"ok": false, "error": "could not probe this media (ffprobe missing or file unreadable) - install ffmpeg, or publish with explicit frames/fps"}))
-            }
-        },
-    };
-    let mut file = match cairn_review::store::Store::load(&root) {
-        Ok(Some(f)) => f,
-        _ => cairn_review::model::ReviewFile {
-            title: if title.is_empty() {
-                project.clone()
-            } else {
-                title.clone()
-            },
-            ..Default::default()
-        },
-    };
-    let ver = cairn_review::model::ReviewVersion {
-        number: 0,
-        label: String::new(),
-        media_rel: media.clone(),
-        proxy_rel: None,
-        fps_num: num,
-        fps_den: den,
-        frames,
-        timeline_fingerprint: None,
-        snapshot: None,
-        published_by: String::from("dashboard"),
-        published_at: cairn_core::clock::WallClock.now_millis(),
-    };
-    let n = file.publish(ver);
-    match cairn_review::store::Store::save(&root, &file) {
-        Ok(()) => Json(json!({"ok": true, "version": n, "frames": frames, "fps": format!("{num}/{den}")})),
-        Err(e) => Json(json!({"ok": false, "error": e})),
-    }
+    Json(
+        service::actions::review_publish(
+            &state,
+            v["project_id"].as_str().unwrap_or_default(),
+            v["media"].as_str().unwrap_or_default(),
+            v["title"].as_str().unwrap_or_default(),
+            v["frames"].as_u64(),
+            v["fps"].as_str(),
+        )
+        .await,
+    )
 }
 
-/// POST /api/v1/review/link {project_id?, note?, role?, ttl_hours?} —
-/// mint a guest link (token is identity, no account). Studio role sees internal.
 async fn review_link(
     State(state): State<Arc<DaemonState>>,
     body: Option<Json<serde_json::Value>>,
 ) -> Json<serde_json::Value> {
     let v = body.map(|Json(j)| j).unwrap_or(json!({}));
-    let project = v["project_id"].as_str().unwrap_or("").to_string();
-    let note = v["note"].as_str().unwrap_or("Client").to_string();
-    let role_s = v["role"].as_str().unwrap_or("commenter").to_string();
-    let ttl_h: i64 = v["ttl_hours"].as_i64().unwrap_or(72);
-    let root = if project.is_empty() {
-        match first_runtime().await {
-            Some((_, r, _, _)) => r,
-            None => return Json(json!({"ok": false, "error": "no attached project"})),
-        }
-    } else {
-        match project_root_path(&state, &project).await {
-            Some(r) => r,
-            None => return Json(json!({"ok": false, "error": "project not attached"})),
-        }
-    };
-    let mut file = match cairn_review::store::Store::load(&root) {
-        Ok(Some(f)) => f,
-        _ => {
-            return Json(json!({"ok": false, "error": "no versions published yet — publish first"}))
-        }
-    };
-    let role = match role_s.as_str() {
-        "viewer" => cairn_review::model::GuestRole::Viewer,
-        "studio" => cairn_review::model::GuestRole::Studio,
-        _ => cairn_review::model::GuestRole::Commenter,
-    };
-    let token = file.add_link(
-        role,
-        note,
-        ttl_h * 3_600_000,
-        false,
-        cairn_core::clock::WallClock.now_millis(),
-    );
-    match cairn_review::store::Store::save(&root, &file) {
-        Ok(()) => Json(json!({"ok": true, "token": token, "link": format!("/r/{token}")})),
-        Err(e) => Json(json!({"ok": false, "error": e})),
-    }
+    Json(
+        service::actions::review_link(
+            &state,
+            v["project_id"].as_str().unwrap_or_default(),
+            v["note"].as_str().unwrap_or("Client"),
+            v["role"].as_str().unwrap_or("commenter"),
+            v["ttl_hours"].as_i64().unwrap_or(72),
+        )
+        .await,
+    )
 }
 
-/// POST /api/v1/review/revoke {project_id?, token} — kill a guest link
-/// NOW. Expiry was never revocation: the "that link leaked" path needs a
-/// same-day kill switch (mom-test P0 follow-up).
 async fn review_revoke(
     State(state): State<Arc<DaemonState>>,
     body: Option<Json<serde_json::Value>>,
@@ -1805,93 +792,30 @@ async fn review_revoke(
     let Some(Json(v)) = body else {
         return Json(json!({"ok": false, "error": "body required: {token}"}));
     };
-    let project = v["project_id"].as_str().unwrap_or("").to_string();
-    let token = v["token"].as_str().unwrap_or("").trim().to_string();
-    if token.is_empty() {
-        return Json(json!({"ok": false, "error": "token required"}));
-    }
-    let root = if project.is_empty() {
-        match first_runtime().await {
-            Some((_, r, _, _)) => r,
-            None => return Json(json!({"ok": false, "error": "no attached project"})),
-        }
-    } else {
-        match project_root_path(&state, &project).await {
-            Some(r) => r,
-            None => return Json(json!({"ok": false, "error": "project not attached"})),
-        }
-    };
-    let mut file = match cairn_review::store::Store::load(&root) {
-        Ok(Some(f)) => f,
-        _ => return Json(json!({"ok": false, "error": "no review session for this project"})),
-    };
-    if !file.revoke_link(&token) {
-        return Json(json!({"ok": false, "error": "unknown link"}));
-    }
-    match cairn_review::store::Store::save(&root, &file) {
-        Ok(()) => Json(json!({"ok": true})),
-        Err(e) => Json(json!({"ok": false, "error": e})),
-    }
+    Json(
+        service::actions::review_revoke(
+            &state,
+            v["project_id"].as_str().unwrap_or_default(),
+            v["token"].as_str().unwrap_or_default(),
+        )
+        .await,
+    )
 }
 
-/// POST /api/v1/tl-merge {base_otio, ours_otio, theirs_otio, semantic?} —
-/// thin wrapper over cairn-tl three-way merge (C0-C10 classifier).
-/// Bodies are raw OTIO JSON strings (small timelines); large media stays in CAS.
 async fn tl_merge(body: Option<Json<serde_json::Value>>) -> Json<serde_json::Value> {
     let Some(Json(v)) = body else {
         return Json(
             json!({"ok": false, "error": "body required: {base_otio, ours_otio, theirs_otio}"}),
         );
     };
-    let base = v["base_otio"].as_str().unwrap_or("").to_string();
-    let ours = v["ours_otio"].as_str().unwrap_or("").to_string();
-    let theirs = v["theirs_otio"].as_str().unwrap_or("").to_string();
-    let semantic = v["semantic"].as_bool().unwrap_or(false);
-    if base.is_empty() || ours.is_empty() || theirs.is_empty() {
-        return Json(
-            json!({"ok": false, "error": "base_otio, ours_otio, theirs_otio required (OTIO JSON strings)"}),
-        );
-    }
-    // Write to temp, reuse CLI merge path semantics via cairn_tl directly.
-    let dir = std::env::temp_dir().join(format!("cairn-merge-{}", uuid::Uuid::now_v7().simple()));
-    if std::fs::create_dir_all(&dir).is_err() {
-        return Json(json!({"ok": false, "error": "tmpdir failed"}));
-    }
-    let bp = dir.join("base.otio");
-    let op = dir.join("ours.otio");
-    let tp = dir.join("theirs.otio");
-    if std::fs::write(&bp, base.as_bytes()).is_err()
-        || std::fs::write(&op, ours.as_bytes()).is_err()
-        || std::fs::write(&tp, theirs.as_bytes()).is_err()
-    {
-        return Json(json!({"ok": false, "error": "tmp write failed"}));
-    }
-    let opts = cairn_tl::merge::MergeOptions { semantic };
-    let parse = |p: &std::path::PathBuf| -> Result<cairn_tl::model::Timeline, String> {
-        let s = std::fs::read_to_string(p).map_err(|e| format!("read: {e}"))?;
-        // Try OTIO first, then FCPXML bridge.
-        cairn_tl::parse::parse_otio(&s)
-            .map_err(|e| format!("parse: {e}"))
-            .or_else(|_| cairn_tl::fcpxml::parse_fcpxml(&s).map_err(|e| format!("parse: {e}")))
-    };
-    let (base_t, ours_t, theirs_t) = match (parse(&bp), parse(&op), parse(&tp)) {
-        (Ok(b), Ok(o), Ok(t)) => (b, o, t),
-        _ => {
-            return Json(
-                json!({"ok": false, "error": "parse failed: base/ours/theirs must be OTIO or FCPXML"}),
-            )
-        }
-    };
-    match cairn_tl::merge::merge_with(&base_t, &ours_t, &theirs_t, &opts) {
-        Ok((_merged, report)) => Json(report.to_json()),
-        Err(e) => Json(json!({"ok": false, "error": e.0})),
-    }
+    Json(service::actions::tl_merge(
+        v["base_otio"].as_str().unwrap_or_default(),
+        v["ours_otio"].as_str().unwrap_or_default(),
+        v["theirs_otio"].as_str().unwrap_or_default(),
+        v["semantic"].as_bool().unwrap_or(false),
+    ))
 }
 
-/// POST /api/v1/compress {project_id, media, preset} — production compression ladder.
-/// Local-first FFmpeg (H264 CRF23 → H265 CRF28 ~40% smaller → SVT-AV1 ~50%+),
-/// optional Cloudinary-via-Composio when CLOUDINARY_* env present (q_auto/f_auto).
-/// Presets: proxy360 | proxy540 | web720 | archive. Returns bytes + recipe used.
 async fn compress(
     State(state): State<Arc<DaemonState>>,
     body: Option<Json<serde_json::Value>>,
@@ -1899,88 +823,16 @@ async fn compress(
     let Some(Json(v)) = body else {
         return Json(json!({"ok": false, "error": "body required: {project_id, media, preset?}"}));
     };
-    let project = v["project_id"].as_str().unwrap_or("").to_string();
-    let media = v["media"].as_str().unwrap_or("").to_string();
-    let preset = v["preset"].as_str().unwrap_or("proxy540").to_string();
-    if project.is_empty() || media.is_empty() {
-        return Json(json!({"ok": false, "error": "project_id, media required"}));
-    }
-    let Some(root) = project_root_path(&state, &project).await else {
-        return Json(json!({"ok": false, "error": "project not attached"}));
-    };
-    let Some(full) = safe_join(&root, &media) else {
-        return Json(json!({"ok": false, "error": "path refused (traversal)"}));
-    };
-    if !full.is_file() {
-        return Json(json!({"ok": false, "error": "media not materialized — recall first"}));
-    }
-    // Cloud path: Composio Cloudinary (109 tools) when creds present — q_auto/f_auto.
-    let cloud = std::env::var("CLOUDINARY_CLOUD_NAME").is_ok()
-        && std::env::var("CLOUDINARY_API_KEY").is_ok();
-    if v["via"].as_str() == Some("cloudinary") {
-        if !cloud {
-            return Json(
-                json!({"ok": false, "error": "CLOUDINARY_CLOUD_NAME/API_KEY/SECRET required (Composio handles refresh)"}),
-            );
-        }
-        return Json(
-            json!({"ok": true, "via": "cloudinary", "recipe": "q_auto,f_auto,sp_auto (20-40% smaller, 26.6MB→3.9MB class)", "next": "POST eager w720/q_auto via Composio CLOUDINARY toolkit"}),
-        );
-    }
-    // Local FFmpeg ladder (proxy-maker pattern: intra-frame for scrub, H264 short-GOP for size).
-    let (height, crf, codec_args): (u32, u32, Vec<&str>) = match preset.as_str() {
-        "proxy360" => (360, 23, vec!["-c:v", "libx264", "-preset", "veryfast"]),
-        "web720" => (720, 23, vec!["-c:v", "libx264", "-preset", "medium"]),
-        "archive" => (
-            1080,
-            28,
-            vec!["-c:v", "libx265", "-preset", "medium", "-tag:v", "hvc1"],
-        ),
-        _ => (540, 23, vec!["-c:v", "libx264", "-preset", "fast"]),
-    };
-    let out_name = format!(
-        ".cairn/proxy-cache/{}-{}p.mp4",
-        blake3::hash(media.as_bytes()).to_hex(),
-        height
-    );
-    let out_full = root.join(&out_name);
-    if let Some(p) = out_full.parent() {
-        let _ = std::fs::create_dir_all(p);
-    }
-    let status = std::process::Command::new("ffmpeg")
-        .arg("-y")
-        .arg("-i")
-        .arg(&full)
-        .args(["-vf", &format!("scale=-2:{height}")])
-        .args(codec_args)
-        .args([
-            "-crf",
-            &crf.to_string(),
-            "-c:a",
-            "aac",
-            "-b:a",
-            "128k",
-            "-movflags",
-            "+faststart",
-            "-pix_fmt",
-            "yuv420p",
-        ])
-        .arg(&out_full)
-        .output();
-    match status {
-        Ok(o) if o.status.success() => {
-            let bytes = std::fs::metadata(&out_full).map(|m| m.len()).unwrap_or(0);
-            Json(
-                json!({"ok": true, "via": "ffmpeg", "out": out_name, "bytes": bytes, "preset": preset, "note": "H265 ~40% smaller than H264; SVT-AV1 ~50%+ when available (libsvtav1 -crf 30 -preset 6)"}),
-            )
-        }
-        Ok(o) => Json(
-            json!({"ok": false, "error": format!("ffmpeg failed: {}", String::from_utf8_lossy(&o.stderr).chars().take(300).collect::<String>())}),
-        ),
-        Err(e) => Json(
-            json!({"ok": false, "error": format!("ffmpeg missing: {e} — winget install Gyan.FFmpeg")}),
-        ),
-    }
+    Json(
+        service::actions::compress(
+            &state,
+            v["project_id"].as_str().unwrap_or_default(),
+            v["media"].as_str().unwrap_or_default(),
+            v["preset"].as_str().unwrap_or("proxy540"),
+            v["via"].as_str(),
+        )
+        .await,
+    )
 }
 
 #[cfg(test)]
