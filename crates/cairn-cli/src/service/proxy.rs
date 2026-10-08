@@ -13,12 +13,11 @@
 //!   | 400 {"ok":false,"error":"..."}
 //! * GET /api/v1/proxy/status?project= →
 //!   {"proxies":[{"media_rel","proxy_rel","state":"ready|stale|failed",
-//!                "bytes","generated_at_ms"}]}
+//!   "bytes","generated_at_ms"}]}
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
-use once_cell::sync::Lazy;
 use serde_json::json;
 
 use crate::daemon::DaemonState;
@@ -33,8 +32,8 @@ type Json = serde_json::Value;
 /// never wedges the media. Same guard shape as the daemon's recall_jobs
 /// (a mutex'd map of in-flight jobs). #42-adjacent: idempotency where it is
 /// cheap — here it costs one map entry per running ffmpeg.
-static IN_FLIGHT: Lazy<std::sync::Mutex<HashMap<(String, String), std::time::Instant>>> =
-    Lazy::new(|| std::sync::Mutex::new(HashMap::new()));
+static IN_FLIGHT: LazyLock<std::sync::Mutex<HashMap<(String, String), std::time::Instant>>> =
+    LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
 
 /// Test/inspection hook: is a generation for this (project, path) running?
 #[cfg(test)]
@@ -193,7 +192,10 @@ pub async fn proxy_status(state: &Arc<DaemonState>, project: &str) -> Json {
         })
         .collect();
     rows.sort_by(|a, b| {
-        let media = a["media_rel"].as_str().unwrap_or("").cmp(b["media_rel"].as_str().unwrap_or(""));
+        let media = a["media_rel"]
+            .as_str()
+            .unwrap_or("")
+            .cmp(b["media_rel"].as_str().unwrap_or(""));
         let ts = a["generated_at_ms"]
             .as_i64()
             .unwrap_or(0)
@@ -300,9 +302,20 @@ mod tests {
         let src = root.join("cuts/v1.mov");
         assert!(std::process::Command::new("ffmpeg")
             .args([
-                "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi",
-                "-i", "testsrc=size=320x180:rate=24", "-t", "1",
-                "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                "-y",
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=size=320x180:rate=24",
+                "-t",
+                "1",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
             ])
             .arg(&src)
             .output()
@@ -395,11 +408,7 @@ mod tests {
         assert_eq!(st["proxies"].as_array().unwrap().len(), 0);
         // a corrupt index answers as empty (fail-open read, like the CLI list)
         std::fs::create_dir_all(root.join(".cairn")).unwrap();
-        std::fs::write(
-            root.join(".cairn/proxies.json"),
-            b"{ corrupt",
-        )
-        .unwrap();
+        std::fs::write(root.join(".cairn/proxies.json"), b"{ corrupt").unwrap();
         let st = proxy_status(&state, "p-empty").await;
         assert_eq!(st["proxies"].as_array().unwrap().len(), 0);
     }

@@ -508,7 +508,8 @@ pub async fn file_duplicate(state: &Arc<DaemonState>, project: &str, path: &str)
             .await
         {
             Ok(f) => break (candidate, f),
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue, // taken: next name
+            // taken: try the next name
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(e) => {
                 return json!({"ok": false, "error": format!("copy failed: {e}")});
             }
@@ -882,8 +883,9 @@ pub async fn tl_merge(base: &str, ours: &str, theirs: &str, semantic: bool) -> J
     let base = base.to_string();
     let ours = ours.to_string();
     let theirs = theirs.to_string();
-    let joined = tokio::task::spawn_blocking(move || tl_merge_blocking(&base, &ours, &theirs, semantic))
-        .await;
+    let joined =
+        tokio::task::spawn_blocking(move || tl_merge_blocking(&base, &ours, &theirs, semantic))
+            .await;
     match joined {
         Ok(j) => j,
         Err(e) => json!({"ok": false, "error": format!("merge task failed: {e}")}),
@@ -1139,7 +1141,11 @@ mod tests {
         // clobbered unconditionally
         std::fs::write(root.join("clip (copy).braw"), b"KEEP-1").unwrap();
         for n in 2..=150 {
-            std::fs::write(root.join(format!("clip (copy {n}).braw")), format!("KEEP-{n}")).unwrap();
+            std::fs::write(
+                root.join(format!("clip (copy {n}).braw")),
+                format!("KEEP-{n}"),
+            )
+            .unwrap();
         }
         state
             .projects
@@ -1202,9 +1208,7 @@ mod tests {
     /// ports) — the same shape crates/cairn-server/tests/cold_fetch.rs uses.
     /// The accept loop feeds `serve_with_incoming` via a channel so the
     /// test needs no extra tokio-stream features.
-    async fn spin_server(
-        dir: &std::path::Path,
-    ) -> (Arc<cairn_server::ServerState>, String) {
+    async fn spin_server(dir: &std::path::Path) -> (Arc<cairn_server::ServerState>, String) {
         let obj_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let obj_port = obj_listener.local_addr().unwrap().port();
         let base = format!("http://127.0.0.1:{obj_port}/");
@@ -1216,8 +1220,12 @@ mod tests {
         )
         .unwrap();
         let store = Arc::new(
-            cairn_server::storage::LocalFsStore::open(&dir.join("objects"), b"test-object-key", &base)
-                .unwrap(),
+            cairn_server::storage::LocalFsStore::open(
+                &dir.join("objects"),
+                b"test-object-key",
+                &base,
+            )
+            .unwrap(),
         );
         let state = Arc::new(cairn_server::ServerState {
             db,
@@ -1236,14 +1244,9 @@ mod tests {
         let grpc_port = grpc_listener.local_addr().unwrap().port();
         let (tx, rx) = tokio::sync::mpsc::channel::<tokio::net::TcpStream>(64);
         tokio::spawn(async move {
-            loop {
-                match grpc_listener.accept().await {
-                    Ok((sock, _)) => {
-                        if tx.send(sock).await.is_err() {
-                            break;
-                        }
-                    }
-                    Err(_) => break,
+            while let Ok((sock, _)) = grpc_listener.accept().await {
+                if tx.send(sock).await.is_err() {
+                    break;
                 }
             }
         });
@@ -1254,22 +1257,34 @@ mod tests {
                 tokio_stream::wrappers::ReceiverStream::new(rx).map(Ok::<_, std::io::Error>);
             let _ = tonic::transport::Server::builder()
                 .add_service(cairn_proto::pb::journal_server::JournalServer::new(
-                    cairn_server::services::JournalSvc { state: serve_state.clone() },
+                    cairn_server::services::JournalSvc {
+                        state: serve_state.clone(),
+                    },
                 ))
                 .add_service(cairn_proto::pb::lease_server::LeaseServer::new(
-                    cairn_server::services::LeaseSvc { state: serve_state.clone() },
+                    cairn_server::services::LeaseSvc {
+                        state: serve_state.clone(),
+                    },
                 ))
                 .add_service(cairn_proto::pb::upload_server::UploadServer::new(
-                    cairn_server::services::UploadSvc { state: serve_state.clone() },
+                    cairn_server::services::UploadSvc {
+                        state: serve_state.clone(),
+                    },
                 ))
                 .add_service(cairn_proto::pb::download_server::DownloadServer::new(
-                    cairn_server::services::DownloadSvc { state: serve_state.clone() },
+                    cairn_server::services::DownloadSvc {
+                        state: serve_state.clone(),
+                    },
                 ))
                 .add_service(cairn_proto::pb::auth_server::AuthServer::new(
-                    cairn_server::services::AuthSvc { state: serve_state.clone() },
+                    cairn_server::services::AuthSvc {
+                        state: serve_state.clone(),
+                    },
                 ))
                 .add_service(cairn_proto::pb::project_server::ProjectServer::new(
-                    cairn_server::services::ProjectSvc { state: serve_state.clone() },
+                    cairn_server::services::ProjectSvc {
+                        state: serve_state.clone(),
+                    },
                 ))
                 .add_service(cairn_proto::pb::snapshot_server::SnapshotServer::new(
                     cairn_server::services::SnapshotSvc { state: serve_state },
@@ -1391,7 +1406,9 @@ mod tests {
         // fold the pushed state into commit1 (the restore target). NOTE: the
         // ctl restore path is Owner-only; the members file above (written
         // BEFORE attach) makes the enrolled device the root owner.
-        let target = create_snapshot(&state, "p-restore", "restore target").await.unwrap();
+        let target = create_snapshot(&state, "p-restore", "restore target")
+            .await
+            .unwrap();
         let commit1 = target["commit_hash"].as_str().unwrap().to_string();
         // workspace drifts AFTER the commit — the restore must bring it back
         std::fs::write(root.join("media/notes.txt"), b"DRIFTED-BEYOND-RECOGNITION").unwrap();
@@ -1404,7 +1421,9 @@ mod tests {
             .await
             .unwrap();
 
-        let r = restore_snapshot(&state, "p-restore", &commit1, "").await.unwrap();
+        let r = restore_snapshot(&state, "p-restore", &commit1, "")
+            .await
+            .unwrap();
         assert_eq!(r["ok"], true, "{r}");
         // historical contract fields unchanged
         assert_eq!(r["restored_files"], 1);
@@ -1412,8 +1431,14 @@ mod tests {
         // #44/#88: the checkpoint of the CURRENT state, reported for the UI
         assert!(r["checkpoint_version"].as_i64().unwrap() >= 1);
         let checkpoint = r["checkpoint_commit"].as_str().unwrap();
-        assert!(checkpoint.len() == 64, "commit hash is 64 hex: {checkpoint}");
-        assert_ne!(checkpoint, commit1, "checkpoint is a NEW commit, not the restore target");
+        assert!(
+            checkpoint.len() == 64,
+            "commit hash is 64 hex: {checkpoint}"
+        );
+        assert_ne!(
+            checkpoint, commit1,
+            "checkpoint is a NEW commit, not the restore target"
+        );
         assert_eq!(r["checkpoint_label"], RESTORE_CHECKPOINT_LABEL);
         // and the checkpoint is a REAL commit in the snapshot list
         let snaps = list_snapshots(&state, "p-restore").await.unwrap();
@@ -1439,7 +1464,10 @@ mod tests {
         let home = tmp();
         let state = enrolled_state(&home, "http://127.0.0.1:1", "dev-offline");
         let r = restore_snapshot(&state, "p-any", "deadbeef", "").await;
-        assert!(r.is_err(), "no checkpoint possible offline → restore refused");
+        assert!(
+            r.is_err(),
+            "no checkpoint possible offline → restore refused"
+        );
         let msg = r.err().unwrap();
         assert!(
             !msg.is_empty(),

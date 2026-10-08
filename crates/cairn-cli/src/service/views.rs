@@ -401,8 +401,10 @@ pub async fn files(state: &DaemonState, project: &str, needle: &str) -> serde_js
         if let Some(root) = state.projects.project_root(project).await {
             if let Ok(bytes) = std::fs::read(cairn_proxy::pipeline::index_path(&root)) {
                 if let Ok(idx) = cairn_proxy::model::ProxyIndex::from_json(&bytes) {
-                    let mut latest: std::collections::HashMap<&str, &cairn_proxy::model::ProxyEntry> =
-                        Default::default();
+                    let mut latest: std::collections::HashMap<
+                        &str,
+                        &cairn_proxy::model::ProxyEntry,
+                    > = Default::default();
                     for e in idx.proxies.values() {
                         match latest.get(e.media_rel.as_str()) {
                             Some(cur) if cur.generated_at_ms >= e.generated_at_ms => {}
