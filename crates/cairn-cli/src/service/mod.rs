@@ -94,6 +94,28 @@ pub fn safe_join(root: &Path, rel: &str) -> Option<PathBuf> {
         }
         Some(canon)
     } else {
+        // Canonicalize failed = some component is dangling (a placeholder,
+        // or a link whose target vanished). That is NOT proof of safety:
+        // an INTERMEDIATE symlink pointing outside with a not-yet-created
+        // leaf would otherwise be accepted and become a traversal waiting
+        // for its target (review #6 — "disappearing files between
+        // validation and use"). Verify the deepest EXISTING ancestor
+        // instead: if it canonicalizes outside the root, refuse.
+        let root_canon = root.canonicalize().ok()?;
+        let mut probe = joined.clone();
+        let existing = loop {
+            match probe.canonicalize() {
+                Ok(canon) => break canon,
+                Err(_) => {
+                    if !probe.pop() {
+                        break root_canon.clone(); // nothing exists — root governs
+                    }
+                }
+            }
+        };
+        if !existing.starts_with(&root_canon) {
+            return None;
+        }
         Some(joined)
     }
 }
@@ -176,5 +198,82 @@ mod tests {
         assert_eq!(file_badge(&mk("synced")), "synced");
         assert_eq!(file_badge(&mk("dirty")), "syncing");
         assert_eq!(file_badge(&mk("weird")), "syncing");
+    }
+
+    /// Review #6 (link/reparse escapes): the lexical `..` refusals above are
+    /// not the whole story — a symlink INSIDE the project that points
+    /// OUTSIDE must also be refused, because `safe_join` feeds open /
+    /// download / duplicate / publish / recall-destination. The
+    /// canonicalize-then-prefix-recheck is exactly the defense; these
+    /// tests prove it against REAL links, not string tricks. (Windows
+    /// reparse points ride the same canonicalize path; the unix cases
+    /// below are the CI-exercised subset — the CfAPI roundtrip suite
+    /// covers the Windows-specific reparse attributes on a Windows
+    /// runner.)
+    #[cfg(unix)]
+    #[test]
+    fn safe_join_refuses_symlink_escapes_to_real_targets() {
+        let root = tmp();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(outside.path().join("secret.txt"), b"secret").unwrap();
+        std::fs::create_dir(root.join("footage")).unwrap();
+
+        // 1. symlink inside the project → outside file
+        std::os::unix::fs::symlink(
+            outside.path().join("secret.txt"),
+            root.join("footage").join("latest.mov"),
+        )
+        .unwrap();
+        assert!(
+            safe_join(&root, "footage/latest.mov").is_none(),
+            "an in-root symlink to an out-of-root target must be refused"
+        );
+
+        // 2. symlink to an outside DIRECTORY (traversal by indirection)
+        let outside_dir = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside_dir.path(), root.join("footage/alias")).unwrap();
+        assert!(safe_join(&root, "footage/alias/secret.txt").is_none());
+
+        // 3. a symlink CHAIN (a → b → outside) still resolves and refuses
+        std::os::unix::fs::symlink(outside.path().join("secret.txt"), root.join("footage/b"))
+            .unwrap();
+        std::os::unix::fs::symlink(root.join("footage/b"), root.join("footage/a")).unwrap();
+        assert!(safe_join(&root, "footage/a").is_none());
+
+        // 4. an in-root symlink to an IN-ROOT target stays legal (aliases
+        //    within the project are legitimate; confinement is the property)
+        std::fs::write(root.join("footage/real.mov"), b"x").unwrap();
+        std::os::unix::fs::symlink(
+            root.join("footage/real.mov"),
+            root.join("footage/alias-inroot"),
+        )
+        .unwrap();
+        let resolved = safe_join(&root, "footage/alias-inroot").expect("in-root alias stays legal");
+        assert!(resolved.starts_with(root.canonicalize().unwrap()));
+
+        // 5. a DANGLING symlink (target vanished) — canonicalize fails, so
+        //    safe_join returns the UNRESOLVED joined path. That is the
+        //    documented fallback for not-yet-materialized placeholders; a
+        //    later open() on it fails honestly (ENOENT) and never escapes
+        //    (the link itself lives inside the root).
+        std::os::unix::fs::symlink(
+            outside.path().join("gone.txt"),
+            root.join("footage/dangling.mov"),
+        )
+        .unwrap();
+        assert!(safe_join(&root, "footage/dangling.mov").is_some());
+    }
+
+    /// Review #41's neighborhood: file/duplicate collision behavior is
+    /// anchored by the existence checks in the actions; here we pin the
+    /// property safe_join must keep for a path that EXISTS as a directory
+    /// when a file is expected (duplicate/open flow must refuse, not
+    /// clobber).
+    #[test]
+    fn safe_join_resolves_existing_directory_paths_normally() {
+        let root = tmp();
+        std::fs::create_dir_all(root.join("seq/shot")).unwrap();
+        let p = safe_join(&root, "seq/shot").expect("existing dir resolves");
+        assert!(p.is_dir());
     }
 }

@@ -280,7 +280,7 @@ const STR = {
   "connect.copied": { en: "Join code copied", "de-DE": "Join-Code kopiert", "ja-JP": "参加コードをコピーしました", "zh-CN": "已复制加入代码" },
   "connect.generated": { en: "New code: {c}", "de-DE": "Neuer Code: {c}", "ja-JP": "新しいコード: {c}", "zh-CN": "新代码：{c}" },
   "connect.joinFirst": { en: "Paste a join code first", "de-DE": "Zuerst einen Join-Code einfügen", "ja-JP": "まず参加コードを貼り付けてください", "zh-CN": "请先粘贴加入代码" },
-  "connect.joined": { en: "Joined! Check Dashboard.", "de-DE": "Beigetreten! Siehe Übersicht.", "ja-JP": "参加しました！ダッシュボードを確認。", "zh-CN": "已加入！请查看总览。" },
+  "connect.joined": { en: "Code saved — not joined yet. Finish setup:", "de-DE": "Code gespeichert — noch nicht beigetreten. Einrichtung fortsetzen:", "ja-JP": "コードを保存しました — まだ参加していません。セットアップを完了してください：", "zh-CN": "代码已保存 — 尚未加入。请完成设置：" },
   "connect.joinFailed": { en: "Join failed: {e}", "de-DE": "Beitritt fehlgeschlagen: {e}", "ja-JP": "参加に失敗: {e}", "zh-CN": "加入失败：{e}" },
   "connect.needProject": { en: "Attach a project first", "de-DE": "Zuerst ein Projekt hinzufügen", "ja-JP": "先にプロジェクトを追加してください", "zh-CN": "请先添加项目" },
 
@@ -2718,8 +2718,12 @@ document.getElementById("connect-join")?.addEventListener("click", async () => {
   try {
     const r = await postJSON("/api/v1/team/join", { code });
     const out = document.getElementById("connect-join-result");
-    if (out) out.textContent = r.ok ? t("connect.joined") : t("connect.joinFailed", { e: r.error || "unknown" });
-    toast(r.ok ? t("connect.joined") : t("connect.joinFailed", { e: r.error || "unknown" }), !r.ok);
+    // honest-join (review #3): the backend records intent and returns the
+    // real next step — the enroll + login commands. Saying "Joined!" there
+    // was a UX lie; show the saved + next-step truth instead.
+    const joinedMsg = r.ok ? t("connect.joined") + " " + (r.next || "") : t("connect.joinFailed", { e: r.error || "unknown" });
+    if (out) out.textContent = joinedMsg;
+    toast(joinedMsg, !r.ok);
     if (r.ok) refreshAll();
   } catch (e) { toast(t("connect.joinFailed", { e }), true); }
 });

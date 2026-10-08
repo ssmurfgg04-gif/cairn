@@ -123,8 +123,31 @@ pub async fn serve(addr: String, state: Arc<DaemonState>) -> anyhow::Result<()> 
 /// The page itself: inject the per-launch token where app.js can read it
 /// (the `%%CAIRN_TOKEN%%` placeholder lives in index.html <head>). Static
 /// assets stay token-free so the page loads; every /api call carries it.
-async fn index(axum::Extension(token): axum::Extension<DashToken>) -> axum::response::Html<String> {
-    axum::response::Html(INDEX_HTML.replace("%%CAIRN_TOKEN%%", &token.0))
+///
+/// Response hardening (review #62/#63): the page embeds a per-launch
+/// secret, so it is `no-store` (a cached page would outlive its token's
+/// daemon and never re-mint) and carries a self-hosted CSP — the fonts
+/// beacon is gone, so everything resolves from 'self' and the policy
+/// blocks any future injected remote host. `frame-ancestors 'none'` keeps
+/// other local apps from iframing the console; `nosniff`/`no-referrer`
+/// are the cheap belt-and-braces.
+async fn index(axum::Extension(token): axum::Extension<DashToken>) -> axum::response::Response {
+    use axum::http::{header, StatusCode};
+    let body = INDEX_HTML.replace("%%CAIRN_TOKEN%%", &token.0);
+    (
+        StatusCode::OK,
+        [
+            (header::CACHE_CONTROL, "no-store"),
+            (
+                header::CONTENT_SECURITY_POLICY,
+                "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; base-uri 'self'",
+            ),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            (header::REFERRER_POLICY, "no-referrer"),
+        ],
+        body,
+    )
+        .into_response()
 }
 
 /// True for the loopback Host forms the dashboard accepts: `127.0.0.1`
@@ -792,8 +815,15 @@ async fn merge_offer_decline(
     ))
 }
 
-async fn team_regenerate(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
-    Json(service::actions::team_regenerate(&state))
+async fn team_regenerate(
+    State(state): State<Arc<DaemonState>>,
+    body: Option<Json<serde_json::Value>>,
+) -> Json<serde_json::Value> {
+    // optional {project_id} — empty falls back to the first attached project
+    let project = body
+        .and_then(|Json(v)| v["project_id"].as_str().map(str::to_string))
+        .unwrap_or_default();
+    Json(service::actions::team_regenerate(&state, &project).await)
 }
 
 async fn team_join(

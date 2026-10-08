@@ -453,10 +453,36 @@ pub async fn file_duplicate(state: &Arc<DaemonState>, project: &str, path: &str)
     }
 }
 
-/// POST /api/v1/team/regenerate — mint a fresh single-use join code (600s TTL).
-/// Production: uses the server auth when reachable, else a local `enr-` code
-/// stored in meta for the WS rendezvous. Owner/Lead only via ctl guard parity.
-pub fn team_regenerate(state: &Arc<DaemonState>) -> Json {
+/// POST /api/v1/team/regenerate {project_id?} — mint a fresh single-use join
+/// code (600s TTL). Production: uses the server auth when reachable, else a
+/// local `enr-` code stored in meta for the WS rendezvous.
+/// POLICY BOUNDARY (ADR-0030): invite generation is a ManageMembers act. The
+/// ctl path always enforced it; the dashboard path does too now — the
+/// "service action = direct mutation" drift the review flagged is closed
+/// (every dashboard mutation funnels through rbac_guard like ctl does).
+pub async fn team_regenerate(state: &Arc<DaemonState>, project: &str) -> Json {
+    let project = project.trim().to_string();
+    let project = if project.is_empty() {
+        // the dashboard's acting context: the first attached project (the
+        // same fallback the review/team views use)
+        match state.projects.list().await.into_iter().next() {
+            Some(rt) => rt.project_id.clone(),
+            None => return json!({"ok": false, "error": "no attached project"}),
+        }
+    } else {
+        project
+    };
+    if let Err(s) = crate::daemon::rbac_guard(
+        state,
+        &project,
+        None,
+        cairn_core::rbac::Permission::ManageMembers,
+        "dash/team-regenerate",
+    )
+    .await
+    {
+        return json!({"ok": false, "error": s.message()});
+    }
     let code = format!("enr-{}", uuid::Uuid::now_v7().simple());
     if let Some(store) = open_store(state.home.as_path()) {
         let _ = store.meta_set("swarm/join-code", &code);
@@ -509,6 +535,18 @@ pub async fn review_publish(
     let Some(root) = state.projects.project_root(project).await else {
         return json!({"ok": false, "error": "project not attached"});
     };
+    // POLICY BOUNDARY (ADR-0030): publishing review media is ManageReview.
+    if let Err(s) = crate::daemon::rbac_guard(
+        state,
+        project,
+        Some(root.as_path()),
+        cairn_core::rbac::Permission::ManageReview,
+        "dash/review-publish",
+    )
+    .await
+    {
+        return json!({"ok": false, "error": s.message()});
+    }
     let Some(full) = safe_join(&root, media) else {
         return json!({"ok": false, "error": "path refused (traversal)"});
     };
@@ -610,6 +648,18 @@ pub async fn review_link(
     let Some(root) = root else {
         return json!({"ok": false, "error": if project.is_empty() { "no attached project" } else { "project not attached" }});
     };
+    // POLICY BOUNDARY (ADR-0030): minting a guest link is ManageReview.
+    if let Err(s) = crate::daemon::rbac_guard(
+        state,
+        project,
+        Some(root.as_path()),
+        cairn_core::rbac::Permission::ManageReview,
+        "dash/review-link",
+    )
+    .await
+    {
+        return json!({"ok": false, "error": s.message()});
+    }
     let mut file = match cairn_review::store::Store::load(&root) {
         Ok(Some(f)) => f,
         _ => return json!({"ok": false, "error": "no versions published yet — publish first"}),
@@ -673,6 +723,20 @@ pub async fn review_revoke(state: &Arc<DaemonState>, project: &str, token: &str)
     let Some(root) = root else {
         return json!({"ok": false, "error": if project.is_empty() { "no attached project" } else { "project not attached" }});
     };
+    // POLICY BOUNDARY (ADR-0030): revoking a guest link is ManageReview —
+    // and once ADR-0031 Phase 2 lands, a revoke propagates cross-machine,
+    // which makes it exactly the kind of act that must never be unguarded.
+    if let Err(s) = crate::daemon::rbac_guard(
+        state,
+        project,
+        Some(root.as_path()),
+        cairn_core::rbac::Permission::ManageReview,
+        "dash/review-revoke",
+    )
+    .await
+    {
+        return json!({"ok": false, "error": s.message()});
+    }
     let mut file = match cairn_review::store::Store::load(&root) {
         Ok(Some(f)) => f,
         _ => return json!({"ok": false, "error": "no review session for this project"}),

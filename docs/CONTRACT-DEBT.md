@@ -135,3 +135,45 @@ machine-local until Phase 3). #2 was closed last round. Remaining: #5
 Phase 2 (tombstone-backed revoke everywhere — the security payoff) and
 #3 (a real Premiere host run on a self-hosted runner; the CI scaffold
 and collector are ready).
+
+---
+
+## From the second product review (2026-10-08 paste) — accepted, tracked
+
+The full paste lives at the repo root (`pasted contnet by ai reviewer`).
+What this round already closed from it: **#1** cross-device state Phase 1
+(= register #5 above), **#90** contract-debt #1 (closed above), **#91**
+Premiere scaffold (#3), **#92** waveform admission control (#4), **#2**
+RBAC holes — team_regenerate / review_publish / review_link /
+review_revoke now funnel through `rbac_guard` at the service boundary
+(actions tagged "POLICY BOUNDARY (ADR-0030)"), **#3** honest join copy
+("Code saved — not joined yet" + the real next step, no more "Joined!"),
+**#62/#63/#64** index.html is `no-store` with a self-hosted CSP,
+nosniff + no-referrer, and the Google Fonts beacon is gone (system
+stacks carry until fonts are vendored), **#6** symlink containment
+proven against REAL links (in-root→outside file, outside dir,
+symlink chain, in-root alias stays legal) — which surfaced and fixed a
+real escape: a dangling leaf over an outside-pointing intermediate
+symlink used to be accepted; safe_join now canonicalizes the deepest
+existing ancestor before falling back.
+
+Tracked next (not started, ordered by the review's own P0-first logic):
+
+- **#4/#5 (P0):** join codes → single-use, expiring, revocable (today:
+  TTL only, no single-use burn, no revocation list); unknown-device
+  fail-open `Editor` → make the default explicit and configurable
+  (fail-closed pending state) — more urgent now that rosters sync.
+- **#7–#12 (P0/P1):** eliminate `first()`-style fallbacks for mutations;
+  project context + project-scoped Team/review/markers/link surfaces.
+- **#41–#44 (P1):** duplicate-collision guard, idempotent mutations,
+  disable-during-mutation buttons, restore confirmation hardening.
+- **#45–#51 (P1):** move ffmpeg/ffprobe out of the async runtime;
+  bundle-or-drop media tooling.
+- **#52–#56 (P1):** polling cost (visibility-aware expensive views),
+  telemetry caching, fetch timeouts.
+- **#57–#60, #61, #65–#72 (P1):** desktop lifecycle, token-in-URL
+  reduction, secret-log audit, review-endpoint rate limiting,
+  cargo-deny/SBOM/provenance/signing.
+- **#73–#78 (P1):** user-facing error language, a11y finishes, i18n
+  audit; **#79+ (P2)** polish, storage language, versions/restore
+  wording, diagnostics/correlation IDs.

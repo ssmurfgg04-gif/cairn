@@ -15,14 +15,12 @@
   document.documentElement.dataset.theme = dark ? "dark" : "light";
 })();
 </script>
-<!-- webfonts: preconnect both origins, the stylesheet itself loads
-     non-blocking (media=print flips to all on load). First paint rides
-     the system stack, identity fonts swap in ~200 ms, offline never
-     arrives (fallbacks carry). -->
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400..700&family=Google+Sans+Code:wght@400..600&display=swap" media="print" onload="this.media='all'">
-<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400..700&family=Google+Sans+Code:wght@400..600&display=swap"></noscript>
+<!-- webfonts: REMOVED (review hardening #64). The dashboard is a
+     loopback-only tool that must work offline and never phone home:
+     a third-party stylesheet request leaked a per-install beacon to
+     Google on every launch and violated the CSP below. The system
+     font stacks in app.css (--font-sans / --font-mono fallbacks)
+     carry the identity until fonts are vendored into /assets. -->
 <link rel="stylesheet" href="/assets/app.css">
 <!-- per-launch dashboard token: the daemon replaces %%CAIRN_TOKEN%% at
      serve time; app.js carries it on every /api call (header for fetch,
