@@ -29,6 +29,15 @@
 //!   429 + Retry-After, content-addressed cache) so guests render a
 //!   scrub waveform without downloading and decoding the whole media
 //!   file; the player falls back to its own decoder on any refusal.
+//! * **Cross-machine revoke** — a guest link revoked on ANY attached
+//!   machine is dead on every portal within one sync pass (ADR-0031
+//!   Phase 2): the portal consults the synced `review_link` tombstones
+//!   through [`http::RootProvider::link_revocations`] before honoring a
+//!   token, and a revoked token is answered exactly like an unknown one
+//!   (no existence leak).
+//! * **Rate limiting** — [`rate_limit`] backs a light fixed-window budget
+//!   on the token-validating routes (review #66/#67): 429 + Retry-After,
+//!   generous-but-real, no new dependencies.
 //!
 //! The session file `.cairn/review.json` and the per-version note files
 //! are plain deterministic JSON in the project root. HONEST (ADR-0022
@@ -41,9 +50,11 @@
 
 pub mod http;
 pub mod model;
+pub mod rate_limit;
 pub mod store;
 pub mod waveform;
 
 pub use model::{GuestLink, GuestRole, ReviewFile, ReviewVersion};
+pub use rate_limit::Limiter;
 pub use store::{comment_path, session_path, Store};
 pub use waveform::{WaveConfig, WaveError, WaveformResponse, WaveformService};

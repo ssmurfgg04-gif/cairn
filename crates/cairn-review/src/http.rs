@@ -8,13 +8,28 @@
 //! (`cairn daemon --review 0.0.0.0:17778`). Every route resolves the
 //! token first and fails closed; the only identity is the link token
 //! itself (122 CSPRNG bits) plus its role and expiry.
+//!
+//! ADR-0031 Phase 2: resolution also consults the SYNCED revocations
+//! (`RootProvider::link_revocations`) — a revoke issued on any attached
+//! machine kills the link on every portal within one sync pass, answered
+//! exactly like an unknown token (no existence leak). The machine-local
+//! `review.json` revoke path keeps working unchanged (belt and
+//! suspenders: a local revoke is honored offline, instantly).
+//!
+//! Review #66/#67 (light version): the token-validating routes sit behind
+//! a fixed-window rate limiter ([`crate::rate_limit`]) — 429 +
+//! `Retry-After` on breach, keyed per source IP (per IP+token for comment
+//! floods). The waveform route keeps its own lane-based admission control
+//! and is deliberately not gated here. Tokens are never logged.
 
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use axum::body::Body;
-use axum::extract::{Path as UrlPath, Query, State};
+use axum::extract::{ConnectInfo, Path as UrlPath, Query, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{Html, IntoResponse, Response};
 use axum::routing::{get, post};
@@ -27,6 +42,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
 use cairn_tl::notes::NoteStatus;
 
 use crate::model::{GuestLink, ReviewFile};
+use crate::rate_limit::Limiter;
 use crate::store::Store;
 use crate::waveform::{WaveError, WaveformService};
 
@@ -37,6 +53,18 @@ const REVIEW_JS: &str = include_str!("../assets/review.js");
 /// Media chunks per range response (8 MiB — browsers issue follow-up
 /// range fetches; a capped 206 keeps memory flat for any file size).
 const CHUNK: u64 = 8 * 1024 * 1024;
+
+/// Rate budgets (review #66/#67 light version — see the rate_limit module
+/// doc): generous-but-real per-minute ceilings. The waveform route keeps
+/// its own admission control and is NOT gated here.
+const RATE_RESOLVE_PER_MIN: u32 = 60;
+/// Comment floods: per IP+token (one hostile reviewer cannot out-shout a
+/// note set even from a valid link).
+const RATE_COMMENT_PER_MIN: u32 = 30;
+
+/// TTL of the synced-revocation cache (ADR-0031 Phase 2 — see the
+/// `revocations` field on [`Portal`]).
+const REVOCATION_TTL: Duration = Duration::from_secs(3);
 
 /// A live reviewer signal (ephemeral by design — never persisted, never
 /// synced: presence is "who is watching right now", not state).
@@ -67,6 +95,18 @@ pub trait RootProvider: Send + Sync {
             .map(|d| d.as_millis() as i64)
             .unwrap_or(0)
     }
+
+    /// ADR-0031 Phase 2 (the security payoff): tokens whose SYNCED
+    /// `review_link` record is a tombstone for `project_id` — a revoke
+    /// published on ANY attached machine lands here after one sync pass.
+    /// The portal treats every returned token exactly like an unknown one
+    /// (no existence leak). Default: empty — providers without a record
+    /// store (tests, fixed providers) keep compiling; the daemon's
+    /// `RuntimesProvider` returns the real synced set.
+    async fn link_revocations(&self, project_id: &str) -> Vec<String> {
+        let _ = project_id;
+        Vec::new()
+    }
 }
 
 /// Shared portal state: root provider + waveform service + in-memory
@@ -78,6 +118,20 @@ pub struct Portal {
     /// Bounded, admission-gated waveform peaks (CONTRACT-DEBT #4). Built
     /// from env by `new`; `with_waveform` overrides it for tests.
     waveform: Arc<WaveformService>,
+    /// Fixed-window rate limiter behind the token-validating routes
+    /// (review #66/#67): 429 + Retry-After on breach. Bucket keys may
+    /// embed token strings — the map is memory-only and never logged
+    /// (portal rule: tokens stay out of logs).
+    limiter: Arc<Limiter>,
+    /// ADR-0031 Phase 2 cache: project_id → (tombstoned tokens, fetched
+    /// at). The `link_revocations` read is a cheap SQLite family scan,
+    /// but `resolve` runs on EVERY portal request, so results are cached
+    /// for [`REVOCATION_TTL`] (3s): repeated requests stay off the store
+    /// while cross-machine revoke staleness stays bounded far below one
+    /// sync pass (≤1s engine cadence + network). A LOCAL revoke never
+    /// waits on this cache — it removes the link from review.json, which
+    /// the resolve loop re-reads on every request (belt and suspenders).
+    revocations: Arc<Mutex<HashMap<String, (Vec<String>, Instant)>>>,
 }
 impl Portal {
     pub fn new(provider: Arc<dyn RootProvider>) -> Portal {
@@ -92,22 +146,81 @@ impl Portal {
             provider,
             presence: Arc::new(Mutex::new(HashMap::new())),
             waveform: Arc::new(waveform),
+            limiter: Arc::new(Limiter::default()),
+            revocations: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
     /// Resolve a token to (root, session, link), failing closed on
-    /// unknown/expired tokens.
-    async fn resolve(&self, token: &str) -> Option<(PathBuf, ReviewFile, GuestLink)> {
+    /// unknown/expired/REVOKED tokens. PUBLIC so the cross-machine sim E2E
+    /// drives the same gate the HTTP handlers use
+    /// (crates/cairn-sim/tests/state_and_offer_e2e.rs).
+    ///
+    /// ADR-0031 Phase 2: the synced `review_link` tombstones are consulted
+    /// for the project whose machine-local review.json matched — when the
+    /// portal serves multiple attached projects, each root is checked with
+    /// ITS OWN record scope (no first-project shortcut). Revoked answers
+    /// exactly like unknown: the caller's 404 path, same body, no
+    /// existence leak.
+    pub async fn resolve(&self, token: &str) -> Option<(PathBuf, ReviewFile, GuestLink)> {
         let now = self.provider.now_ms();
-        for (_pid, root) in self.provider.roots().await {
+        for (pid, root) in self.provider.roots().await {
             if let Ok(Some(f)) = Store::load(&root) {
                 if let Some(l) = GuestLink::resolve(&f.links, token, now) {
                     let link = l.clone(); // end the borrow before moving f
+                    if self.revocations_for(&pid).await.iter().any(|t| t == token) {
+                        return None; // revoked anywhere = dead everywhere
+                    }
                     return Some((root, f, link));
                 }
             }
         }
         None
+    }
+
+    /// The synced revocations for one project, behind the short TTL cache
+    /// (see the `revocations` field). A provider failure degrades to an
+    /// empty set (fail-open, logged): the machine-local review.json still
+    /// governs, and a broken record store must not kill every link on the
+    /// machine. Bounded like the presence map (stale entries pruned).
+    async fn revocations_for(&self, project_id: &str) -> Vec<String> {
+        if let Some(hit) = self
+            .revocations
+            .lock()
+            .expect("revocation cache lock")
+            .get(project_id)
+            .filter(|(_, at)| at.elapsed() < REVOCATION_TTL)
+            .map(|(tokens, _)| tokens.clone())
+        {
+            return hit;
+        }
+        let tokens = self.provider.link_revocations(project_id).await;
+        let mut guard = self.revocations.lock().expect("revocation cache lock");
+        if guard.len() > 256 {
+            guard.retain(|_, (_, at)| at.elapsed() < REVOCATION_TTL);
+        }
+        guard.insert(
+            project_id.to_string(),
+            (tokens.clone(), Instant::now()),
+        );
+        tokens
+    }
+
+    /// Rate-limit gate ([`crate::rate_limit`]): `Err` carries the 429 +
+    /// Retry-After response to return verbatim (the same RATE_LIMITED
+    /// shape the waveform service answers with). Never logs: bucket keys
+    /// may embed tokens.
+    fn rate_gate(&self, bucket: &str, ident: &str, limit: u32) -> Result<(), Response> {
+        match self.limiter.check(&format!("{bucket}|{ident}"), limit) {
+            Ok(()) => Ok(()),
+            Err(retry_after_secs) => {
+                let mut r = err(StatusCode::TOO_MANY_REQUESTS, "RATE_LIMITED");
+                if let Ok(v) = HeaderValue::from_str(&retry_after_secs.to_string()) {
+                    r.headers_mut().insert(header::RETRY_AFTER, v);
+                }
+                Err(r)
+            }
+        }
     }
 
     /// Presence for one token, freshest first, stale entries dropped
@@ -143,7 +256,12 @@ pub async fn serve(addr: String, portal: Portal) -> std::io::Result<()> {
     let app = router(portal);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!(%addr, "review portal listening (token-gated routes only)");
-    axum::serve(listener, app).await?;
+    // ConnectInfo: the rate limiter budgets per source IP (review #66/#67).
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
 
@@ -199,7 +317,14 @@ fn err(status: StatusCode, msg: &str) -> Response {
 }
 
 /// GET /r/:token/api/session — everything the player needs in one call.
-async fn session(State(p): State<Portal>, UrlPath(token): UrlPath<String>) -> Response {
+async fn session(
+    State(p): State<Portal>,
+    ConnectInfo(ip): ConnectInfo<SocketAddr>,
+    UrlPath(token): UrlPath<String>,
+) -> Response {
+    if let Err(resp) = p.rate_gate("resolve", &ip.to_string(), RATE_RESOLVE_PER_MIN) {
+        return resp;
+    }
     let Some((root, file, link)) = p.resolve(&token).await else {
         return err(StatusCode::NOT_FOUND, "link not found or expired");
     };
@@ -309,9 +434,13 @@ async fn session(State(p): State<Portal>, UrlPath(token): UrlPath<String>) -> Re
 /// POST /r/:token/api/presence — heartbeat.
 async fn presence(
     State(p): State<Portal>,
+    ConnectInfo(ip): ConnectInfo<SocketAddr>,
     UrlPath(token): UrlPath<String>,
     body: Option<Json<serde_json::Value>>,
 ) -> Response {
+    if let Err(resp) = p.rate_gate("resolve", &ip.to_string(), RATE_RESOLVE_PER_MIN) {
+        return resp;
+    }
     let Some(Json(v)) = body else {
         return err(
             StatusCode::BAD_REQUEST,
@@ -344,12 +473,26 @@ async fn presence(
         .into_response()
 }
 
-/// POST /r/:token/api/comment — frame-anchored, content-deduped.
+/// POST /r/:token/api/comment — frame-anchored, content-deduped,
+/// rate-limited (resolve budget per IP, comment budget per IP+token).
 async fn comment(
     State(p): State<Portal>,
+    ConnectInfo(ip): ConnectInfo<SocketAddr>,
     UrlPath(token): UrlPath<String>,
     body: Option<Json<serde_json::Value>>,
 ) -> Response {
+    if let Err(resp) = p.rate_gate("resolve", &ip.to_string(), RATE_RESOLVE_PER_MIN) {
+        return resp;
+    }
+    // per-IP+token flood budget; the key embeds the token but lives only
+    // inside the in-memory limiter (never logged)
+    if let Err(resp) = p.rate_gate(
+        "comment",
+        &format!("{ip}|{token}"),
+        RATE_COMMENT_PER_MIN,
+    ) {
+        return resp;
+    }
     let Some(Json(v)) = body else {
         return err(
             StatusCode::BAD_REQUEST,
@@ -477,9 +620,13 @@ async fn comment(
 /// POST /r/:token/api/resolve — mark resolved / reopened.
 async fn resolve(
     State(p): State<Portal>,
+    ConnectInfo(ip): ConnectInfo<SocketAddr>,
     UrlPath(token): UrlPath<String>,
     body: Option<Json<serde_json::Value>>,
 ) -> Response {
+    if let Err(resp) = p.rate_gate("resolve", &ip.to_string(), RATE_RESOLVE_PER_MIN) {
+        return resp;
+    }
     let Some(Json(v)) = body else {
         return err(
             StatusCode::BAD_REQUEST,
@@ -530,8 +677,12 @@ async fn resolve(
 ///    affordance, the note text still renders.
 async fn attachment(
     State(p): State<Portal>,
+    ConnectInfo(ip): ConnectInfo<SocketAddr>,
     UrlPath((token, hash)): UrlPath<(String, String)>,
 ) -> Response {
+    if let Err(resp) = p.rate_gate("resolve", &ip.to_string(), RATE_RESOLVE_PER_MIN) {
+        return resp;
+    }
     let Some((root, file, link)) = p.resolve(&token).await else {
         return err(StatusCode::NOT_FOUND, "link not found or expired");
     };
@@ -641,10 +792,14 @@ fn parse_range(h: Option<&HeaderValue>, len: u64) -> Option<(u64, u64)> {
 /// serves the original media.
 async fn media(
     State(p): State<Portal>,
+    ConnectInfo(ip): ConnectInfo<SocketAddr>,
     UrlPath((token, version_str)): UrlPath<(String, String)>,
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
+    if let Err(resp) = p.rate_gate("resolve", &ip.to_string(), RATE_RESOLVE_PER_MIN) {
+        return resp;
+    }
     let Some((root, file, link)) = p.resolve(&token).await else {
         return err(StatusCode::NOT_FOUND, "link not found or expired");
     };
@@ -854,6 +1009,26 @@ mod tests {
         roots: Vec<(String, PathBuf)>,
         blobs: Option<PathBuf>,
         now: std::sync::atomic::AtomicI64,
+        /// ADR-0031 Phase 2: synced `review_link` tombstones, keyed by
+        /// project (what the daemon's RuntimesProvider reports).
+        revoked: Vec<String>,
+    }
+
+    impl FixedProvider {
+        fn new(roots: Vec<(String, PathBuf)>) -> Self {
+            FixedProvider {
+                roots,
+                blobs: None,
+                now: std::sync::atomic::AtomicI64::new(1_000),
+                revoked: Vec::new(),
+            }
+        }
+    }
+
+    /// The limiter's identity extractor in tests: handlers take
+    /// `ConnectInfo<SocketAddr>`; direct calls pass one explicitly.
+    fn caller() -> ConnectInfo<SocketAddr> {
+        ConnectInfo("127.0.0.1:45000".parse().unwrap())
     }
 
     #[async_trait::async_trait]
@@ -866,6 +1041,10 @@ mod tests {
         }
         fn now_ms(&self) -> i64 {
             self.now.load(std::sync::atomic::Ordering::Relaxed)
+        }
+        async fn link_revocations(&self, project_id: &str) -> Vec<String> {
+            let _ = project_id;
+            self.revoked.clone()
         }
     }
 
@@ -892,11 +1071,7 @@ mod tests {
         Store::save(&root, &f).unwrap();
         let token = f.add_link(GuestRole::Commenter, "jane".into(), 0, false, 1);
         Store::save(&root, &f).unwrap();
-        let provider = Arc::new(FixedProvider {
-            roots: vec![("p1".into(), root.clone())],
-            blobs: None,
-            now: std::sync::atomic::AtomicI64::new(1_000),
-        });
+        let provider = Arc::new(FixedProvider::new(vec![("p1".into(), root.clone())]));
         (Portal::new(provider), root, token)
     }
 
@@ -926,9 +1101,8 @@ mod tests {
         let studio = f.add_link(GuestRole::Studio, "team".into(), 0, false, 1);
         Store::save(&root, &f).unwrap();
         let provider = Arc::new(FixedProvider {
-            roots: vec![("p1".into(), root.clone())],
             blobs: Some(blobs.clone()),
-            now: std::sync::atomic::AtomicI64::new(1_000),
+            ..FixedProvider::new(vec![("p1".into(), root.clone())])
         });
         (Portal::new(provider), root, token, studio)
     }
@@ -945,9 +1119,9 @@ mod tests {
     #[tokio::test]
     async fn session_resolves_valid_token_and_fails_closed() {
         let (p, _root, token) = setup();
-        let r = session(State(p.clone()), UrlPath(token.clone())).await;
+        let r = session(State(p.clone()), caller(), UrlPath(token.clone())).await;
         assert_eq!(r.status(), StatusCode::OK);
-        let bad = session(State(p), UrlPath("nope".into())).await;
+        let bad = session(State(p), caller(), UrlPath("nope".into())).await;
         assert_eq!(bad.status(), StatusCode::NOT_FOUND);
     }
 
@@ -956,13 +1130,20 @@ mod tests {
         let (p, root, token) = setup();
         // happy path
         let body = json!({"version": 1, "frame": 10, "body": "tighten here", "author": "jane"});
-        let r = comment(State(p.clone()), UrlPath(token.clone()), Some(Json(body))).await;
+        let r = comment(
+            State(p.clone()),
+            caller(),
+            UrlPath(token.clone()),
+            Some(Json(body)),
+        )
+        .await;
         assert_eq!(r.status(), StatusCode::OK);
         assert_eq!(Store::load_comments(&root, 1).unwrap().len(), 1);
         // frame beyond cut
         let bad_frame = json!({"version": 1, "frame": 1000, "body": "x", "author": "j"});
         let r2 = comment(
             State(p.clone()),
+            caller(),
             UrlPath(token.clone()),
             Some(Json(bad_frame)),
         )
@@ -972,6 +1153,7 @@ mod tests {
         let bad_body = json!({"version": 1, "frame": 5, "body": "  ", "author": "j"});
         let r3 = comment(
             State(p.clone()),
+            caller(),
             UrlPath(token.clone()),
             Some(Json(bad_body)),
         )
@@ -982,7 +1164,7 @@ mod tests {
         let vt = f.add_link(GuestRole::Viewer, "v".into(), 0, false, 1);
         Store::save(&root, &f).unwrap();
         let vbody = json!({"version": 1, "frame": 5, "body": "hi", "author": "v"});
-        let r4 = comment(State(p), UrlPath(vt), Some(Json(vbody))).await;
+        let r4 = comment(State(p), caller(), UrlPath(vt), Some(Json(vbody))).await;
         assert_eq!(r4.status(), StatusCode::FORBIDDEN);
     }
 
@@ -1024,7 +1206,7 @@ mod tests {
         )
         .unwrap();
 
-        let body = body_json(session(State(p.clone()), UrlPath(client_token)).await).await;
+        let body = body_json(session(State(p.clone()), caller(), UrlPath(client_token)).await).await;
         let comments = body["comments"].as_array().unwrap();
         assert_eq!(
             comments.len(),
@@ -1037,7 +1219,7 @@ mod tests {
             "no bytes of the internal note ship"
         );
 
-        let body2 = body_json(session(State(p), UrlPath(studio_token)).await).await;
+        let body2 = body_json(session(State(p), caller(), UrlPath(studio_token)).await).await;
         let comments2 = body2["comments"].as_array().unwrap();
         assert_eq!(comments2.len(), 2, "the studio link sees both");
         assert!(comments2.iter().any(|c| c["visibility"] == "internal"));
@@ -1059,6 +1241,7 @@ mod tests {
         });
         let r = comment(
             State(p.clone()),
+            caller(),
             UrlPath(client_token.clone()),
             Some(Json(pin)),
         )
@@ -1072,6 +1255,7 @@ mod tests {
         });
         let r2 = comment(
             State(p.clone()),
+            caller(),
             UrlPath(client_token.clone()),
             Some(Json(range)),
         )
@@ -1085,6 +1269,7 @@ mod tests {
         });
         let r3 = comment(
             State(p.clone()),
+            caller(),
             UrlPath(client_token.clone()),
             Some(Json(bad)),
         )
@@ -1096,7 +1281,7 @@ mod tests {
             "version": 1, "frame": 14, "author": "team", "body": "recut this",
             "visibility": "internal",
         });
-        let r4 = comment(State(p.clone()), UrlPath(studio_token), Some(Json(ok))).await;
+        let r4 = comment(State(p.clone()), caller(), UrlPath(studio_token), Some(Json(ok))).await;
         assert_eq!(r4.status(), StatusCode::OK);
 
         // the store carries the v2 shapes (the 403'd note never wrote)
@@ -1126,6 +1311,7 @@ mod tests {
         ] {
             let r = comment(
                 State(p.clone()),
+                caller(),
                 UrlPath(client_token.clone()),
                 Some(Json(bad_body)),
             )
@@ -1195,6 +1381,7 @@ mod tests {
         // client: public overlay serves, internal overlay 404s
         let r = attachment(
             State(p.clone()),
+            caller(),
             UrlPath((client_token.clone(), hash.clone())),
         )
         .await;
@@ -1205,6 +1392,7 @@ mod tests {
         assert_eq!(&bytes[..], overlay);
         let r2 = attachment(
             State(p.clone()),
+            caller(),
             UrlPath((client_token.clone(), hash2.clone())),
         )
         .await;
@@ -1217,6 +1405,7 @@ mod tests {
         // studio: both serve
         let r3 = attachment(
             State(p.clone()),
+            caller(),
             UrlPath((studio_token.clone(), hash2.clone())),
         )
         .await;
@@ -1225,6 +1414,7 @@ mod tests {
         // unreferenced hash: 404 (never confirm what exists)
         let r4 = attachment(
             State(p.clone()),
+            caller(),
             UrlPath((studio_token.clone(), "ab".repeat(32))),
         )
         .await;
@@ -1235,6 +1425,7 @@ mod tests {
         std::fs::write(blobs.join(&hash[..2]).join(&hash), b"tampered bytes").unwrap();
         let r5 = attachment(
             State(p.clone()),
+            caller(),
             UrlPath((studio_token.clone(), hash.clone())),
         )
         .await;
@@ -1242,7 +1433,7 @@ mod tests {
 
         // missing blob entirely: 404
         std::fs::remove_file(blobs.join(&hash2[..2]).join(&hash2)).unwrap();
-        let r6 = attachment(State(p), UrlPath((studio_token, hash2))).await;
+        let r6 = attachment(State(p), caller(), UrlPath((studio_token, hash2))).await;
         assert_eq!(r6.status(), StatusCode::NOT_FOUND);
     }
 
@@ -1256,6 +1447,7 @@ mod tests {
         h.insert(header::RANGE, HeaderValue::from_static("bytes=0-999"));
         let r = media(
             State(p.clone()),
+            caller(),
             UrlPath((token.clone(), "1".into())),
             Query(HashMap::new()),
             h,
@@ -1270,6 +1462,7 @@ mod tests {
         // plain request: 200 + full length
         let r2 = media(
             State(p.clone()),
+            caller(),
             UrlPath((token.clone(), "1".into())),
             Query(HashMap::new()),
             HeaderMap::new(),
@@ -1280,6 +1473,7 @@ mod tests {
         // unknown version
         let r3 = media(
             State(p.clone()),
+            caller(),
             UrlPath((token.clone(), "9".into())),
             Query(HashMap::new()),
             HeaderMap::new(),
@@ -1292,9 +1486,15 @@ mod tests {
     async fn presence_heartbeats_and_session_lists() {
         let (p, _root, token) = setup();
         let body = json!({"reviewer": "jane", "version": 1, "frame": 42});
-        let r = presence(State(p.clone()), UrlPath(token.clone()), Some(Json(body))).await;
+        let r = presence(
+            State(p.clone()),
+            caller(),
+            UrlPath(token.clone()),
+            Some(Json(body)),
+        )
+        .await;
         assert_eq!(r.status(), StatusCode::OK);
-        let s = session(State(p), UrlPath(token)).await;
+        let s = session(State(p), caller(), UrlPath(token)).await;
         let body = serde_json::from_slice::<serde_json::Value>(
             &axum::body::to_bytes(s.into_body(), 1024 * 1024)
                 .await
@@ -1333,7 +1533,7 @@ mod tests {
         Store::save(&root, &f).unwrap();
 
         // session: only v2 visible
-        let s = session(State(p.clone()), UrlPath(t_latest.clone())).await;
+        let s = session(State(p.clone()), caller(), UrlPath(t_latest.clone())).await;
         let body = serde_json::from_slice::<serde_json::Value>(
             &axum::body::to_bytes(s.into_body(), 1024 * 1024)
                 .await
@@ -1346,6 +1546,7 @@ mod tests {
         // media for hidden v1: 404
         let r = media(
             State(p.clone()),
+            caller(),
             UrlPath((t_latest.clone(), "1".into())),
             Query(HashMap::new()),
             HeaderMap::new(),
@@ -1355,6 +1556,7 @@ mod tests {
         // media for visible v2: 200
         let r2 = media(
             State(p.clone()),
+            caller(),
             UrlPath((t_latest.clone(), "2".into())),
             Query(HashMap::new()),
             HeaderMap::new(),
@@ -1366,6 +1568,7 @@ mod tests {
         let body1 = json!({"version": 1, "frame": 5, "body": "x", "author": "j"});
         let r3 = comment(
             State(p.clone()),
+            caller(),
             UrlPath(t_latest.clone()),
             Some(Json(body1)),
         )
@@ -1373,7 +1576,7 @@ mod tests {
         assert_eq!(r3.status(), StatusCode::NOT_FOUND);
         // resolve on hidden v1: 404
         let body2 = json!({"version": 1, "id": "nope", "status": "RESOLVED"});
-        let r4 = resolve(State(p), UrlPath(t_latest), Some(Json(body2))).await;
+        let r4 = resolve(State(p), caller(), UrlPath(t_latest), Some(Json(body2))).await;
         assert_eq!(r4.status(), StatusCode::NOT_FOUND);
     }
 
@@ -1391,7 +1594,7 @@ mod tests {
         Store::save(&root, &f).unwrap();
 
         // session reports proxy not ready
-        let s = session(State(p.clone()), UrlPath(token.clone())).await;
+        let s = session(State(p.clone()), caller(), UrlPath(token.clone())).await;
         let body = serde_json::from_slice::<serde_json::Value>(
             &axum::body::to_bytes(s.into_body(), 1024 * 1024)
                 .await
@@ -1404,6 +1607,7 @@ mod tests {
         // media still serves (the original), with the original's bytes
         let r = media(
             State(p),
+            caller(),
             UrlPath((token, "1".into())),
             Query(HashMap::new()),
             HeaderMap::new(),
@@ -1473,11 +1677,7 @@ mod tests {
         Store::save(&root, &f).unwrap();
         let version = publish_wav_version(&root, 8_000, 1.0);
         let cache_dir = tempfile::tempdir().unwrap().keep().join("waveform-cache");
-        let provider = Arc::new(FixedProvider {
-            roots: vec![("p1".into(), root.clone())],
-            blobs: None,
-            now: std::sync::atomic::AtomicI64::new(1_000),
-        });
+        let provider = Arc::new(FixedProvider::new(vec![("p1".into(), root.clone())]));
         (
             Portal::with_waveform(
                 provider,
@@ -1587,5 +1787,253 @@ mod tests {
         )
         .await;
         assert_eq!(r4.status(), StatusCode::BAD_REQUEST);
+    }
+
+    // ---- ADR-0031 Phase 2: cross-machine revoke ----------------------------
+
+    /// A guest-link token tombstoned in the SYNCED records (the revoke
+    /// happened on ANOTHER machine and arrived through the journal) is
+    /// dead on this portal — while the machine-local review.json still
+    /// lists it — and is answered EXACTLY like an unknown token (no
+    /// existence leak). The belt-and-suspenders local path (the link
+    /// removed from review.json) stays honored when the synced set is
+    /// silent.
+    #[tokio::test]
+    async fn synced_revocation_answers_like_an_unknown_token() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.keep();
+        std::fs::create_dir_all(root.join("cuts")).unwrap();
+        std::fs::write(root.join("cuts/v1.mp4"), vec![7u8; 50_000]).unwrap();
+        let mut f = crate::model::ReviewFile {
+            title: "Brand Film".into(),
+            ..Default::default()
+        };
+        f.publish(ReviewVersion {
+            number: 0,
+            label: "v1".into(),
+            media_rel: "cuts/v1.mp4".into(),
+            proxy_rel: None,
+            fps_num: 24,
+            fps_den: 1,
+            frames: 100,
+            timeline_fingerprint: None,
+            snapshot: None,
+            published_by: "editor".into(),
+            published_at: 1,
+        });
+        Store::save(&root, &f).unwrap();
+        let token = f.add_link(GuestRole::Commenter, "jane".into(), 0, false, 1);
+        Store::save(&root, &f).unwrap();
+
+        // before the tombstone is seen: the link serves (session 200, media 200)
+        let p = Portal::new(Arc::new(FixedProvider::new(vec![(
+            "p1".into(),
+            root.clone(),
+        )])));
+        let r = session(State(p.clone()), caller(), UrlPath(token.clone())).await;
+        assert_eq!(r.status(), StatusCode::OK);
+        let m = media(
+            State(p.clone()),
+            caller(),
+            UrlPath((token.clone(), "1".into())),
+            Query(HashMap::new()),
+            HeaderMap::new(),
+        )
+        .await;
+        assert_eq!(m.status(), StatusCode::OK);
+        // the unknown-token response body — the shape revoked must match
+        let unknown = session(State(p.clone()), caller(), UrlPath("nope".into())).await;
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+        let unknown_body = body_json(unknown).await;
+
+        // the tombstone lands (fresh portal: what a fresh daemon/first
+        // uncached resolution sees — a warm portal picks it up within the
+        // 3s revocation-cache TTL, bounded well below one sync pass)
+        let p2 = Portal::new(Arc::new(FixedProvider {
+            revoked: vec![token.clone()],
+            ..FixedProvider::new(vec![("p1".into(), root.clone())])
+        }));
+        let revoked = session(State(p2.clone()), caller(), UrlPath(token.clone())).await;
+        assert_eq!(revoked.status(), StatusCode::NOT_FOUND, "revoked is dead");
+        let revoked_body = body_json(revoked).await;
+        assert_eq!(
+            revoked_body, unknown_body,
+            "no existence leak: revoked shares the unknown-token body"
+        );
+        // every token-validating route refuses the same way
+        let c = comment(
+            State(p2.clone()),
+            caller(),
+            UrlPath(token.clone()),
+            Some(Json(json!({"version": 1, "frame": 5, "body": "x", "author": "j"}))),
+        )
+        .await;
+        assert_eq!(c.status(), StatusCode::NOT_FOUND);
+        let m2 = media(
+            State(p2.clone()),
+            caller(),
+            UrlPath((token.clone(), "1".into())),
+            Query(HashMap::new()),
+            HeaderMap::new(),
+        )
+        .await;
+        assert_eq!(m2.status(), StatusCode::NOT_FOUND);
+        // ...and the revocation cache TTL means the CACHED (pre-revoke)
+        // answer can persist at most REVOCATION_TTL — the local review.json
+        // governs instantly either way (below), so staleness is bounded.
+
+        // belt and suspenders: the LOCAL revoke (review.json removal) is
+        // honored even when the synced record set is silent.
+        let mut f = Store::load(&root).unwrap().unwrap();
+        assert!(f.revoke_link(&token));
+        Store::save(&root, &f).unwrap();
+        let p3 = Portal::new(Arc::new(FixedProvider::new(vec![(
+            "p1".into(),
+            root.clone(),
+        )])));
+        let local = session(State(p3), caller(), UrlPath(token)).await;
+        assert_eq!(local.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// A provider that scopes revocations per project, exactly like the
+    /// real record store does (records are project-scoped rows).
+    struct ScopedProvider {
+        roots: Vec<(String, PathBuf)>,
+        now: std::sync::atomic::AtomicI64,
+        revoked_by_project: HashMap<String, Vec<String>>,
+    }
+
+    #[async_trait::async_trait]
+    impl RootProvider for ScopedProvider {
+        async fn roots(&self) -> Vec<(String, PathBuf)> {
+            self.roots.clone()
+        }
+        fn now_ms(&self) -> i64 {
+            self.now.load(std::sync::atomic::Ordering::Relaxed)
+        }
+        async fn link_revocations(&self, project_id: &str) -> Vec<String> {
+            self.revoked_by_project
+                .get(project_id)
+                .cloned()
+                .unwrap_or_default()
+        }
+    }
+
+    /// The revocation consult uses the MATCHED project's record scope: a
+    /// token tombstoned under project p1 does not kill the same token
+    /// string resolving under project p2 (and vice versa) — each root is
+    /// checked with its own scope, no first-project shortcut, no
+    /// cross-project kill.
+    #[tokio::test]
+    async fn revocation_consult_is_scoped_per_project() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.keep();
+        let mut f = crate::model::ReviewFile {
+            title: "Brand Film".into(),
+            ..Default::default()
+        };
+        f.publish(ReviewVersion {
+            number: 0,
+            label: "v1".into(),
+            media_rel: "cuts/v1.mp4".into(),
+            proxy_rel: None,
+            fps_num: 24,
+            fps_den: 1,
+            frames: 100,
+            timeline_fingerprint: None,
+            snapshot: None,
+            published_by: "editor".into(),
+            published_at: 1,
+        });
+        Store::save(&root, &f).unwrap();
+        let token = f.add_link(GuestRole::Commenter, "jane".into(), 0, false, 1);
+        Store::save(&root, &f).unwrap();
+
+        let mk = |revoked_under: &str| {
+            ScopedProvider {
+                roots: vec![("p1".into(), root.clone()), ("p2".into(), root.clone())],
+                now: std::sync::atomic::AtomicI64::new(1_000),
+                revoked_by_project: HashMap::from([(
+                    revoked_under.to_string(),
+                    vec![token.clone()],
+                )]),
+            }
+        };
+
+        // revoked under p2, p1 matches first -> the p1-scoped link lives
+        let p = Portal::new(Arc::new(mk("p2")));
+        assert!(p.resolve(&token).await.is_some(), "p1 scope is clean");
+
+        // revoked under p1 (the matching project) -> dead, like unknown
+        let p2 = Portal::new(Arc::new(mk("p1")));
+        assert!(
+            p2.resolve(&token).await.is_none(),
+            "the matched project's tombstone kills the token"
+        );
+    }
+
+    // ---- review #66/#67: portal endpoint rate limiting ----------------------
+
+    /// The per-IP resolve budget: 60/min — burst allowed, sustained
+    /// refused with 429 + Retry-After + the RATE_LIMITED body (the same
+    /// shape the waveform admission control answers with).
+    #[tokio::test]
+    async fn session_resolution_is_rate_limited_per_ip() {
+        let (p, _root, token) = setup();
+        let mut last = None;
+        for _ in 0..=RATE_RESOLVE_PER_MIN {
+            last = Some(session(State(p.clone()), caller(), UrlPath(token.clone())).await);
+        }
+        let r = last.expect("at least one request");
+        assert_eq!(r.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert!(
+            r.headers().get(header::RETRY_AFTER).is_some(),
+            "Retry-After must accompany the 429"
+        );
+        let body = body_json(r).await;
+        assert_eq!(body["ok"], false);
+        assert_eq!(body["error"], "RATE_LIMITED");
+        // a DIFFERENT source IP has its own budget (per-IP, not global)
+        let other = ConnectInfo("127.0.0.1:51000".parse().unwrap());
+        let fresh_ip = session(State(p), other, UrlPath(token)).await;
+        assert_eq!(fresh_ip.status(), StatusCode::OK, "per-IP budgets");
+    }
+
+    /// The comment flood budget: 30/min per IP+token on the comment POST.
+    #[tokio::test]
+    async fn comment_post_is_rate_limited_per_ip_and_token() {
+        let (p, root, token) = setup();
+        for i in 0..RATE_COMMENT_PER_MIN {
+            // distinct notes: comments are content-deduped, so a repeated
+            // body would collapse to one note and prove nothing
+            let body = json!({"version": 1, "frame": 10 + i, "body": format!("note {i}"), "author": "j"});
+            let r = comment(
+                State(p.clone()),
+                caller(),
+                UrlPath(token.clone()),
+                Some(Json(body)),
+            )
+            .await;
+            assert_eq!(r.status(), StatusCode::OK);
+        }
+        let r = comment(
+            State(p.clone()),
+            caller(),
+            UrlPath(token.clone()),
+            Some(Json(json!({"version": 1, "frame": 10, "body": "over budget", "author": "j"}))),
+        )
+        .await;
+        assert_eq!(r.status(), StatusCode::TOO_MANY_REQUESTS);
+        let retry = r
+            .headers()
+            .get(header::RETRY_AFTER)
+            .expect("Retry-After present")
+            .to_str()
+            .unwrap()
+            .to_string();
+        assert!(retry.parse::<u64>().unwrap() >= 1, "retry-after >= 1s");
+        // nothing over-budget was written
+        let n = Store::load_comments(&root, 1).unwrap().len();
+        assert_eq!(n, usize::try_from(RATE_COMMENT_PER_MIN).unwrap());
     }
 }
