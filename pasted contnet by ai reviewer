@@ -1,0 +1,2524 @@
+Pasted review contnt 
+Yes. I checked the **newest `main` HEAD: `98c2af220622db5141359d833deb0680aa35f8c5`**, including the new ADR-0030/31/32 work and the latest dashboard/service code.
+
+The repo is materially better than the version I reviewed before. The two biggest architectural criticisms I had — **dashboard/application-boundary leakage** and **global runtime ownership** — have actually been addressed.
+
+But there is still a fairly large gap between:
+
+> **“technically impressive beta”**
+
+and
+
+> **“a product my mom can install, understand, trust, and use without me.”**
+
+Below is the backlog I would use.
+
+---
+
+# Executive allocation
+
+| Area                               | Current | Target |
+| ---------------------------------- | ------: | -----: |
+| Core architecture                  |   ~9/10 |    9.5 |
+| Sync/storage engineering           |   ~9/10 |    9.5 |
+| Security model                     | ~7.5/10 |      9 |
+| Desktop product UX                 |   ~6/10 |      9 |
+| Mom / low-cognitive-load usability | ~4.5/10 |      9 |
+| Multi-project correctness          |   ~6/10 |      9 |
+| Cross-device collaboration state   |   ~5/10 |      9 |
+| Production readiness               | ~6.5/10 |      9 |
+
+The next gains are **not another 500 Rust tests for already-solid internals**. They are mostly around product boundaries, authority, multi-project correctness, desktop lifecycle, and removing technical concepts from the user's face.
+
+---
+
+# P0 — fix before calling this a real consumer/studio product
+
+## 1. Finish cross-device project state
+
+This is the biggest architectural gap now.
+
+Your own ADR-0031 correctly admits that these are currently machine-local:
+
+```text
+.cairn/review.json
+.cairn/comments/...
+.cairn/members.json
+.cairn/audit.jsonl
+```
+
+while `.cairn*` is ignored by sync.
+
+That means:
+
+* machine A's roster can differ from machine B
+* review comments don't automatically appear elsewhere
+* a link revoked on machine A can remain valid on machine B
+* audit history is fragmented
+
+Implement ADR-0031 Phase 1 → 2 → 3.
+
+### Required definition of done
+
+Two computers on the same project must see:
+
+* same members
+* same roles
+* same review versions
+* same review comments
+* same link state
+* same revocations
+* same audit history
+
+and this must survive:
+
+* restart
+* offline operation
+* simultaneous writes
+* reconnect
+* kill -9
+* partial delivery
+
+This is now the **#1 architectural investment**.
+
+---
+
+## 2. Fix the RBAC holes in the new service layer
+
+This is important because the service module explicitly says:
+
+> “RBAC and policy checks happen HERE”
+
+but several new mutation functions don't currently do that.
+
+### Verified problem areas
+
+`service/actions.rs`:
+
+* `team_regenerate()`
+* `review_publish()`
+* `review_link()`
+* `review_revoke()`
+
+do not themselves perform the corresponding `rbac_guard()`.
+
+That creates a dangerous mismatch:
+
+```text
+gRPC ctl path
+   ↓
+RBAC
+
+dashboard service action
+   ↓
+direct mutation
+```
+
+The whole reason for ADR-0030 was to stop this class of drift.
+
+### Fix
+
+Every mutating application service should have one explicit policy boundary.
+
+At minimum:
+
+```text
+AttachRoot        → AttachRoot
+DetachRoot        → DetachRoot
+Pin/Unpin         → OrganizeBins
+Snapshot          → Snapshot
+Restore           → Restore
+Review publish    → ManageReview
+Review link       → ManageReview
+Review revoke     → ManageReview
+Invite generation → dedicated Invite permission / ManageMembers
+Compression       → appropriate write/media permission
+Merge             → EditTimeline / dedicated Merge permission
+```
+
+Then add a **matrix test that exercises every dashboard mutation**, not merely every ctl mutation.
+
+---
+
+## 3. Stop pretending `team_join()` actually joins
+
+Current `team_join()` validates the `enr-...` shape and records:
+
+```text
+swarm/peer-join
+```
+
+Then returns a `"next"` command telling the user to run CLI enrollment/login.
+
+But the UI says:
+
+> “Joined! Check Dashboard.”
+
+Those are two different things.
+
+### Fix
+
+Choose one:
+
+**Real join**
+
+```text
+Paste code
+→ verify code
+→ enroll device
+→ authenticate
+→ join project
+→ connected
+```
+
+or
+
+**Not real join**
+
+Change the UI to:
+
+> “Code saved. Continue setup.”
+
+Personally I'd choose the first.
+
+For a consumer/studio product, **typing a join code should actually complete enrollment**.
+
+---
+
+## 4. Make join codes authoritative, single-use, expiring and revocable
+
+Current local generation is:
+
+```text
+enr-<uuidv7>
+```
+
+with a locally stored expiry.
+
+You need an authoritative enrollment protocol:
+
+```text
+create invitation
+   ↓
+cryptographically random secret
+   ↓
+server records hash + expiry + project + permissions
+   ↓
+single use
+   ↓
+new device presents secret
+   ↓
+server consumes invitation atomically
+   ↓
+device gets identity
+```
+
+Do not rely on “looks like `enr-...`”.
+
+Also add:
+
+* attempt rate limiting
+* replay rejection
+* explicit expiration
+* cancellation/revocation
+* project scoping
+* role assignment
+* audit event
+
+---
+
+## 5. Reconsider fail-open `Editor` for unknown devices
+
+Current RBAC does:
+
+> unlisted device → `Editor`
+
+That is convenient for the “barnstorm” model.
+
+It's also dangerous.
+
+Once you have:
+
+```text
+machine-local membership
++
+cross-device sync
++
+join codes
++
+device identities
+```
+
+the safest model becomes:
+
+```text
+unknown device
+→ pending / untrusted
+→ no destructive permissions
+→ explicit approval
+```
+
+At minimum, investigate changing:
+
+```text
+unknown = Editor
+```
+
+to:
+
+```text
+unknown = Pending
+```
+
+and require enrollment approval.
+
+This becomes much more important once shared roster state is synchronized.
+
+---
+
+## 6. Fix symlink / reparse-point containment properly
+
+You did add `safe_join()`, which is good.
+
+It rejects:
+
+* `..`
+* absolute paths
+* drive prefixes
+* UNC
+* parent components
+
+and canonicalizes existing paths.
+
+But there is still a subtle class that must be explicitly tested: **link/reparse escapes**.
+
+For example:
+
+```text
+project/
+  footage/
+    latest.mov -> C:\secret\something
+```
+
+or a junction/reparse point on Windows.
+
+Every file operation needs to be safe against:
+
+* symlinks
+* junctions
+* reparse points
+* renamed targets
+* disappearing files between validation and use
+
+Especially:
+
+* open
+* download
+* duplicate
+* publish
+* compression
+* recall destination
+* export
+
+### Definition of done
+
+A project-root traversal test suite should include actual filesystem links and Windows reparse-point equivalents, not merely lexical `..` strings.
+
+---
+
+# P0/P1 — multi-project correctness
+
+This is one of the biggest things I would attack next because the app increasingly supports multiple projects while several surfaces still behave like there is one.
+
+## 7. Eliminate `first()` for mutations
+
+`ProjectManager::first()` is convenient.
+
+It is dangerous when used to choose the target of a state-changing operation.
+
+I found this pattern around review/team/default root resolution.
+
+The rule should become:
+
+```text
+zero projects → explain
+one project → implicit selection okay
+multiple projects → explicit project required
+```
+
+Never:
+
+```text
+multiple projects
+→ silently choose first
+```
+
+---
+
+## 8. Add a global project context
+
+Instead of every screen independently figuring out which project it's talking about, introduce:
+
+```text
+[ Brand Film ▼ ]
+```
+
+in the top bar.
+
+Then:
+
+* Files
+* Review
+* People
+* Versions
+* Activity
+* Search
+* Merge
+
+all operate on the same selected project.
+
+This will eliminate a huge class of accidental wrong-project actions.
+
+---
+
+## 9. Fix Review page selecting only the first project
+
+Current JS effectively does:
+
+```js
+const entry = (r.review && r.review[0]) || null;
+```
+
+So the Review page still behaves as if the first project is the active one.
+
+That should be driven by the global project context.
+
+---
+
+## 10. Make Team/People project-scoped
+
+`views::team()` currently uses the manager's first project.
+
+That's wrong once multiple projects exist.
+
+You want:
+
+> People — Brand Film
+
+rather than:
+
+> Team & devices — mystery project #1
+
+---
+
+## 11. Make marker export project selection explicit
+
+`markers_export()` currently allows empty project and falls back to the first attached project.
+
+Fine for a one-project beta.
+
+Bad as a general application contract.
+
+---
+
+## 12. Make review-link generation project-explicit
+
+Do not allow:
+
+```text
+review link
+project=""
+```
+
+to quietly target whatever happens to be first when multiple projects exist.
+
+---
+
+# P1 — mom-friendly product redesign
+
+This is where Cairn still has the most ROI.
+
+## 13. Kill “Dashboard” as the mental model
+
+For a normal user, Home should answer only:
+
+> **Is everything okay?**
+
+Something like:
+
+```text
+Brand Film
+
+✓ Everything is up to date
+
+12 files
+3 computers connected
+
+[ Open folder ]
+
+Needs attention
+• 2 files aren't available on this computer
+```
+
+That's enough.
+
+The current dashboard still contains:
+
+* recent assets
+* sessions
+* active projects
+* latest actions
+* user activity
+* chart
+* review strip
+* status telemetry
+
+It's a studio operations console.
+
+Not a mom interface.
+
+---
+
+## 14. Primary navigation should be tiny
+
+I would move toward:
+
+```text
+Home
+Files
+People
+```
+
+Then contextual actions:
+
+```text
+Review
+Versions
+Merge
+Connection
+Settings
+Diagnostics
+```
+
+The current:
+
+```text
+Dashboard
+Files
+Settings
+How to use
+Connect
+Review
+Merge
+```
+
+still asks the user to understand too many products.
+
+---
+
+## 15. Rename “People & devices”
+
+Instead of:
+
+> Team & devices
+
+use:
+
+> **People & computers**
+
+or:
+
+> **People**
+
+The app should speak like a human.
+
+---
+
+## 16. Remove engineering concepts from normal Settings
+
+Move this entire category into:
+
+```text
+Advanced
+```
+
+or:
+
+```text
+Developer / Admin
+```
+
+Hide:
+
+* daemon
+* protocol
+* uptime
+* node
+* feature flags
+* fencing
+* journal
+* leases
+* chunks
+* FEC
+* STUN
+* swarm
+* relay
+* CAS
+
+from normal users.
+
+They belong in Diagnostics/Admin.
+
+---
+
+## 17. Replace “Locks” with “Who's editing”
+
+Current wording talks about:
+
+> fencing tokens
+> held
+> stale
+> expired
+
+Normal user should see:
+
+> **Currently being edited**
+
+```text
+Alice — Brand Film timeline
+Editing now
+```
+
+That's it.
+
+---
+
+## 18. Replace “placeholder” everywhere user-facing
+
+Use:
+
+> **Online only**
+
+instead.
+
+Example:
+
+```text
+video.mov
+Online only
+[ Make available ]
+```
+
+not:
+
+```text
+placeholder
+Recall
+```
+
+---
+
+## 19. Replace “Recall” everywhere
+
+Your button has already moved toward:
+
+> **Make available**
+
+Now finish it everywhere.
+
+Current inconsistency:
+
+* button = Make available
+* panel = Recall
+* FAQ = Recall
+* note = Recall
+* API/internal names = recall
+
+Internal API can stay `recall`.
+
+User-facing UI should consistently say:
+
+> **Make available**
+
+---
+
+## 20. Replace “Pinned”
+
+You already have:
+
+> Keep on this computer
+
+Good.
+
+Now remove user-facing:
+
+* pinned
+* unpinned
+* pin
+* pinned chunks
+
+except perhaps in advanced diagnostics.
+
+---
+
+## 21. Replace sync-state vocabulary
+
+Current:
+
+```text
+synced
+syncing
+conflict
+retry
+offline
+```
+
+Primary user vocabulary should be:
+
+```text
+Ready
+Working
+Needs attention
+```
+
+Then details explain what actually happened.
+
+Example:
+
+> **Working**
+>
+> Uploading 8 files in the background. You can keep editing.
+
+---
+
+## 22. Remove “Linked”
+
+This:
+
+> Linked ✓ Ready in Premiere
+
+creates another state model.
+
+Use:
+
+> **Ready**
+
+Then an explanation:
+
+> Files are available to Premiere and DaVinci.
+
+One vocabulary.
+
+---
+
+## 23. Fix onboarding headline
+
+Current:
+
+> One folder — Premiere and DaVinci see the same files. Pick it to link.
+
+Better product language:
+
+> **Choose the folder where your project lives.**
+
+Then:
+
+> Cairn keeps it available on your other computers automatically.
+
+The product should explain itself from the user's task, not from its implementation.
+
+---
+
+## 24. Remove the BRAW/GPU jargon from first-run
+
+Current:
+
+> Heavy BRAW stays as lightweight proxy on laptop (GPU-made)...
+
+That is valuable functionality but terrible onboarding copy.
+
+Replace with:
+
+> **Working on a less powerful computer? Cairn can use lighter editing copies automatically.**
+
+Put the BRAW/GPU implementation detail in Advanced Help.
+
+---
+
+## 25. Never tell a normal user to start `cairn daemon`
+
+Current zero-root error still says:
+
+> Start it with cairn daemon, then reload this page.
+
+That directly violates the product's own stated install philosophy.
+
+The user should see:
+
+> **Cairn isn't running.**
+>
+> We're trying to restart it.
+
+Then:
+
+```text
+[ Try again ]
+[ Open Cairn ]
+```
+
+No terminal.
+
+---
+
+## 26. Remove terminal commands from beginner guides
+
+Current How-to still exposes things like:
+
+```text
+cairn tl-merge ...
+cairn proxy generate ...
+cairn review link ...
+```
+
+These should be under:
+
+> Advanced / Command line
+
+The normal workflow should never require the user to know the CLI.
+
+---
+
+## 27. Simplify How-to to actual workflows
+
+Instead of six cards explaining technology, make it:
+
+```text
+1. Add your project
+2. Open your normal folder
+3. Work normally
+4. Make a file available offline
+5. Share with a teammate
+6. Send a review link
+```
+
+Each card should answer:
+
+> What do I click?
+
+not:
+
+> How does Cairn work internally?
+
+---
+
+# P1 — review workflow
+
+## 28. Review should choose a project first
+
+Current review UI effectively assumes one.
+
+Make:
+
+```text
+Project: Brand Film ▼
+```
+
+then:
+
+```text
+Choose a cut
+```
+
+---
+
+## 29. Replace technical version metadata
+
+Current:
+
+> `v3 · label · duration · 8400 frames @ 25/1`
+
+Normal UI:
+
+> **Version 3**
+>
+> Final client cut · 1m 42s
+
+Technical metadata under:
+
+> Details
+
+---
+
+## 30. Simplify review roles
+
+Current:
+
+```text
+commenter
+viewer
+studio
+```
+
+User-facing:
+
+```text
+Can comment
+View only
+Studio / internal
+```
+
+---
+
+## 31. Let users choose expiration before generating
+
+Current review link flow should expose:
+
+```text
+Expires:
+[ 7 days ▼ ]
+```
+
+with sensible defaults.
+
+Never leave security policy as a hidden backend default.
+
+---
+
+## 32. Make generated link copy UX obvious
+
+After generation:
+
+```text
+✓ Link ready
+
+Client A
+Expires Oct 15
+
+[ Copy link ]
+
+Anyone with the link can view this cut.
+```
+
+The token itself should not dominate the UI.
+
+---
+
+## 33. Finish cross-device revocation
+
+This is tied directly to ADR-0031.
+
+A user must trust:
+
+> “Revoke”
+
+to mean:
+
+> **dead everywhere**
+
+not:
+
+> dead on this particular computer.
+
+---
+
+# P1 — file browser
+
+## 34. Add server-side pagination
+
+Current `/api/v1/files` returns the project's file rows and the UI renders them.
+
+That becomes ugly at:
+
+```text
+10,000 files
+50,000 files
+200,000 files
+```
+
+You need:
+
+```text
+cursor
+limit
+sort
+query
+```
+
+for example:
+
+```text
+/files?project=x&limit=100&cursor=...
+```
+
+---
+
+## 35. Virtualize the file table
+
+Don't put 20,000 DOM rows on screen.
+
+Render only visible rows.
+
+This matters for real media projects.
+
+---
+
+## 36. Make search indexed
+
+Current search is essentially substring scanning of file rows.
+
+For large projects:
+
+```text
+typed character
+→ scan lots of DB rows
+```
+
+is the wrong scaling model.
+
+Use indexed search / FTS or at least indexed prefix/path search.
+
+---
+
+## 37. Improve empty file states
+
+Instead of:
+
+> No files yet - attach a project and drop media in.
+
+Use context-sensitive states:
+
+> **No project selected**
+
+or:
+
+> **This folder is empty**
+
+or:
+
+> **No files match “interview”**
+
+Much clearer.
+
+---
+
+## 38. Make row actions visible
+
+Current quick actions still rely heavily on row-action treatment.
+
+Don't make essential actions depend on hover.
+
+Use:
+
+```text
+Filename                 •••
+```
+
+or always expose the one primary action.
+
+This matters for:
+
+* touch
+* trackpads
+* keyboard
+* accessibility
+* inexperienced users
+
+---
+
+## 39. Kill right-click “delete”
+
+Current project rows have:
+
+> Right-click to delete project
+
+and context-menu detachment.
+
+That's clever desktop behavior, but weak product design.
+
+Give them:
+
+```text
+•••
+Remove from Cairn
+```
+
+Right-click can remain as a bonus.
+
+---
+
+## 40. Replace browser `confirm()`
+
+Current code still has:
+
+```js
+confirm(...)
+```
+
+for detach and restore.
+
+Use your own modal.
+
+Detach should say:
+
+> **Remove this folder from Cairn?**
+>
+> Your files will stay on this computer.
+> Cairn will stop syncing this folder.
+
+Buttons:
+
+```text
+Cancel
+Remove folder
+```
+
+Restore should explicitly explain the consequences.
+
+---
+
+# P1 — correctness / race conditions
+
+## 41. Fix the duplicate-file collision bug
+
+This one is concrete.
+
+`file_duplicate()` tries:
+
+```text
+copy
+copy 2
+...
+copy 100
+```
+
+and stops checking after 100.
+
+If `(copy 100)` already exists, it can then copy onto that existing destination.
+
+That's the wrong behavior.
+
+### Fix
+
+Use atomic creation:
+
+```text
+create_new
+```
+
+or an equivalent exclusive-create mechanism.
+
+No arbitrary 100-copy limit.
+
+---
+
+## 42. Make mutations idempotent
+
+Double clicks can currently produce duplicated work.
+
+Add request IDs / idempotency keys to things like:
+
+* attach
+* snapshot
+* review publish
+* review link
+* revoke
+* duplicate
+* compression
+* merge
+
+---
+
+## 43. Disable buttons during active mutations
+
+Example:
+
+```text
+Publish for review
+```
+
+should become:
+
+```text
+Publishing…
+```
+
+while the request is active.
+
+Same for:
+
+* Generate link
+* Restore
+* Duplicate
+* Attach
+* Make available
+* Add computer
+
+---
+
+## 44. Make restore much harder to accidentally trigger
+
+Restoring a version is destructive.
+
+It should include:
+
+* clear consequences
+* selected version
+* file count
+* current state
+* confirm
+* explicit “Restore this version”
+
+Potentially:
+
+> Creates a new version automatically before restoring.
+
+I'd strongly prefer that.
+
+---
+
+# P1 — blocking work on async runtime
+
+These are engineering issues I would fix immediately.
+
+## 45. Move `ffmpeg` out of the async runtime
+
+`compress()` calls:
+
+```rust
+std::process::Command::new("ffmpeg").output()
+```
+
+inside an async service function.
+
+That can block a Tokio worker while a transcode runs.
+
+For a media application that's exactly the sort of operation that needs to be:
+
+```text
+request
+→ job queue
+→ worker
+→ progress
+→ completion
+```
+
+not:
+
+```text
+HTTP request
+→ block daemon thread until ffmpeg ends
+```
+
+---
+
+## 46. Move `ffprobe` out of request execution
+
+Review publishing also probes media.
+
+Do it in:
+
+```text
+spawn_blocking
+```
+
+or a bounded media worker.
+
+---
+
+## 47. Move OTIO/FCPXML merge parsing/processing out of async request thread
+
+`tl_merge()` currently performs:
+
+* temp-directory creation
+* file writes
+* file reads
+* parsing
+* merge
+
+synchronously.
+
+That should also become a worker task.
+
+---
+
+## 48. Use a bounded job system
+
+Cairn now has enough functionality to justify a real local job model:
+
+```text
+queued
+running
+progress
+completed
+failed
+cancelled
+```
+
+Use it for:
+
+* recall
+* compression
+* proxy generation
+* media probing
+* review publishing
+* potentially large merge
+
+This becomes a huge UX improvement too.
+
+---
+
+# P1 — compression / media tooling
+
+## 49. Don't expose fake/incomplete Cloudinary functionality
+
+The current Cloudinary branch returns essentially:
+
+> here's the recipe / next step
+
+rather than actually completing the operation.
+
+That should not appear as a finished user capability.
+
+Either:
+
+* implement it fully
+* hide it
+* label it experimental
+
+---
+
+## 50. Make cloud processing explicitly opt-in
+
+Sending media to an external processor should require explicit user consent.
+
+Example:
+
+> **Send this video to Cloud processing?**
+>
+> Your video will leave this computer and be processed by Cloudinary.
+
+That's particularly important because Cairn's pitch is local-first.
+
+---
+
+## 51. Bundle media tooling or remove the dependency
+
+Current review publishing can fail with:
+
+> install ffmpeg
+
+That is a poor experience on a fresh machine.
+
+A clean installation should not unexpectedly require a technically difficult external dependency for a headline feature.
+
+Best solution:
+
+```text
+Cairn installer
+→ includes validated ffmpeg/ffprobe
+```
+
+or use a reliable embedded media metadata path for probing.
+
+---
+
+# P1 — performance at scale
+
+## 52. Do not refresh expensive views every 2 seconds
+
+The current orchestration runs the main dashboard refresh every 2 seconds.
+
+Some of those calls involve:
+
+* store work
+* files
+* storage stats
+* activity
+* snapshots
+* flags
+
+Not all of those deserve a 2-second cadence.
+
+Separate:
+
+```text
+instant:
+presence / sync state
+
+fast:
+active project state
+
+slow:
+storage telemetry
+
+very slow:
+doctor / update / historical charts
+```
+
+---
+
+## 53. Cache storage telemetry
+
+`views::storage()` gathers store/CAS/disk information.
+
+Cache it.
+
+A disk meter doesn't need to be recomputed every two seconds.
+
+---
+
+## 54. Cache review summary counts
+
+`review_summary()` walks versions and loads comment data to calculate counts.
+
+That can become expensive.
+
+Store/materialize aggregate counts.
+
+---
+
+## 55. Avoid full-file-list reload just to populate review media
+
+Current review media selection retrieves `/files` and filters it.
+
+Once `/files` is paginated, that becomes even more wrong.
+
+Create:
+
+```text
+GET /review/media
+```
+
+that returns only eligible local media.
+
+---
+
+## 56. Add fetch cancellation/timeouts
+
+Current `getJSON()` / `postJSON()` don't appear to have a request timeout.
+
+Use:
+
+```text
+AbortController
+timeout
+single-flight
+```
+
+together.
+
+A dead endpoint should not leave a UI operation hanging indefinitely.
+
+---
+
+# P1 — daemon lifecycle / desktop UX
+
+## 57. Handle stale dashboard tokens after daemon restart
+
+Cairn uses a **per-launch dashboard token**.
+
+That is good security.
+
+But an already-open browser window has the old token after the daemon restarts.
+
+I did not find client logic that explicitly handles:
+
+```text
+403 dashboard token
+→ reload
+→ fetch new token
+```
+
+That should be a first-class recovery path.
+
+Otherwise users can end up staring at a dashboard that looks alive but whose API calls all fail.
+
+---
+
+## 58. Add explicit “Quit Cairn” semantics
+
+Your tray architecture intentionally lets the daemon outlive the tray.
+
+Technically sensible.
+
+But the user needs two different actions:
+
+```text
+Restart Cairn
+Quit Cairn
+```
+
+“Quit” must mean:
+
+> stop daemon and don't immediately resurrect it.
+
+Otherwise the supervisor can fight the user's intention.
+
+---
+
+## 59. Make auto-recovery user-visible but quiet
+
+Good:
+
+> Cairn is reconnecting…
+
+Bad:
+
+> daemon unreachable
+
+Better:
+
+> **Connection interrupted**
+>
+> Cairn is trying again automatically.
+
+with:
+
+```text
+Details
+```
+
+for technical diagnostics.
+
+---
+
+## 60. Finish native desktop lifecycle cross-platform
+
+Don't stop at Windows.
+
+Verify real:
+
+```text
+install
+→ autostart
+→ tray/menu bar
+→ daemon
+→ app window
+→ folder attach
+→ restart
+→ recovery
+→ uninstall
+```
+
+on:
+
+* Windows
+* macOS
+* Linux where supported
+
+Not merely compilation.
+
+---
+
+# P1 — security hardening
+
+## 61. Stop putting dashboard auth tokens in URLs where possible
+
+Current token works as:
+
+```text
+X-Cairn-Token
+```
+
+but also:
+
+```text
+?t=...
+```
+
+for downloads and EventSource.
+
+Query-string secrets have a wider exposure surface:
+
+* logs
+* browser history
+* debugging
+* copied URLs
+
+For SSE, use short-lived stream tickets.
+
+For downloads, use an authenticated fetch rather than permanent query credentials where practical.
+
+---
+
+## 62. `index.html` containing a token should be `no-store`
+
+Because the page contains:
+
+```js
+window.CAIRN_TOKEN = ...
+```
+
+set:
+
+```text
+Cache-Control: no-store
+Pragma: no-cache
+```
+
+on that response.
+
+---
+
+## 63. Add a Content Security Policy
+
+The dashboard should have an explicit CSP.
+
+Especially because the dashboard token is effectively a local capability.
+
+A local XSS bug should not automatically become:
+
+```text
+XSS
+→ steal token
+→ full local daemon API access
+```
+
+---
+
+## 64. Remove or vendor Google Fonts
+
+Your local dashboard currently reaches:
+
+```text
+fonts.googleapis.com
+fonts.gstatic.com
+```
+
+That's undesirable for a local-first application.
+
+It introduces:
+
+* network dependency
+* privacy leakage
+* slower offline startup
+* another external dependency
+
+Use:
+
+* bundled fonts
+* or system fonts
+
+---
+
+## 65. Audit all secret-bearing logs
+
+Explicitly ensure these never reach normal logs:
+
+* dashboard token
+* guest link token
+* join code
+* device token
+* server auth token
+* S3 credentials
+* signal secrets
+
+Especially at `debug`/`trace`.
+
+---
+
+## 66. Add rate limiting to public review endpoints
+
+The review portal is deliberately exposed to potentially untrusted users.
+
+Add limits for:
+
+* comments
+* link access
+* attachment requests
+* malformed requests
+* repeated token attempts
+
+---
+
+## 67. Add review-token abuse controls
+
+Even with strong random tokens:
+
+* rate-limit token lookup
+* normalize input
+* avoid revealing whether versions exist
+* cap token length
+* prevent brute-force scanning
+* revoke atomically
+
+---
+
+# P1 — supply chain / release security
+
+## 68. Add `cargo-deny`
+
+You have `cargo-audit`, which is good.
+
+Add policy checking for:
+
+* advisories
+* licenses
+* duplicate crates
+* banned dependencies
+
+---
+
+## 69. Pin GitHub Actions to commit SHAs
+
+Where practical, replace floating action references with immutable SHAs.
+
+This materially improves supply-chain security.
+
+---
+
+## 70. Generate an SBOM
+
+Every release should have:
+
+```text
+Cairn.exe
+SHA256
+SBOM
+build metadata
+version
+commit SHA
+```
+
+---
+
+## 71. Add release provenance
+
+Eventually:
+
+```text
+source commit
+→ reproducible build metadata
+→ signed artifact
+```
+
+For a file-management product, this is worth doing.
+
+---
+
+## 72. Code-sign the Windows binary
+
+A professional desktop installer should eventually be:
+
+* Authenticode signed
+* timestamped
+* associated with a recognizable publisher identity
+
+Otherwise Windows reputation/warning friction will undermine the “easy install” goal.
+
+---
+
+# P1 — error handling
+
+## 73. Stop exposing raw backend errors to normal users
+
+Current pattern:
+
+```text
+denied: {e}
+failed: {e}
+```
+
+is technically honest but user-hostile.
+
+Introduce:
+
+```text
+error_code
+user_message
+technical_detail
+retryable
+action
+```
+
+Example:
+
+```json
+{
+  "code": "PROJECT_OFFLINE",
+  "message": "This computer is offline.",
+  "action": "retry",
+  "retryable": true,
+  "detail": "server connection refused"
+}
+```
+
+Then UI:
+
+> **Cairn is reconnecting**
+>
+> Nothing is lost.
+
+and Advanced can show the detail.
+
+---
+
+## 74. Standardize action-oriented errors
+
+Every failure should answer:
+
+> **What should I do now?**
+
+Examples:
+
+```text
+Folder moved
+→ Choose the new folder
+
+File not on this computer
+→ Make available
+
+No server connection
+→ Reconnect automatically
+
+Permission denied
+→ Ask the project owner
+
+Disk almost full
+→ Free space
+```
+
+---
+
+# P1 — accessibility
+
+## 75. Finish modal focus management
+
+You already have:
+
+```html
+role="dialog"
+aria-modal="true"
+```
+
+Good.
+
+Finish:
+
+* focus capture
+* focus trap
+* focus restoration
+* Escape handling
+* screen-reader announcement
+
+for every modal/panel.
+
+---
+
+## 76. Finish language-selector keyboard semantics
+
+Current language menu uses:
+
+```html
+role="listbox"
+role="option"
+```
+
+but should also correctly implement:
+
+* arrow navigation
+* Home/End
+* selected state
+* focus movement
+* Enter/Space behavior
+* Escape
+
+---
+
+## 77. Give every file action a useful accessible name
+
+Don't depend on icon recognition.
+
+Example:
+
+```text
+Open file
+Download file
+Make available
+Keep on this computer
+Share project link
+```
+
+---
+
+## 78. Make status changes screen-reader friendly
+
+You've already improved toast `aria-live`.
+
+Extend that idea to:
+
+* sync status
+* reconnecting
+* completed operations
+* review publish completion
+* recall progress
+* errors
+
+---
+
+# P1 — internationalization
+
+This is still incomplete.
+
+You have translations for many `STR` entries, but Connect/Review/Merge still contain a lot of hard-coded English such as:
+
+* Your join code
+* Generate code
+* Join another workspace
+* How it connects
+* Signal
+* Swarm
+* Three-way merge
+* Semantic
+* Base
+* Ours
+* Theirs
+* Search clips
+* Frame notes
+
+So selecting:
+
+```text
+Deutsch / 日本語 / 中文
+```
+
+still produces mixed-language screens.
+
+### Fix
+
+Every visible user-facing string should go through one i18n source.
+
+Then add CI that fails when a visible string is not localized.
+
+---
+
+# P2 — UX polish
+
+## 79. Increase minimum interactive target sizes
+
+Some controls are still very desktop-dense.
+
+Aim for roughly:
+
+```text
+44 × 44 px
+```
+
+for touch-capable interactions.
+
+---
+
+## 80. Improve mobile/tablet responsiveness
+
+Even though this is a desktop product, users will open dashboards on:
+
+* laptops
+* tablets
+* browser windows
+* remote support sessions
+
+Make the UI degrade cleanly.
+
+---
+
+## 81. Make “Files” the actual center of gravity
+
+For most users:
+
+```text
+Home
+↓
+Files
+↓
+open something
+```
+
+That's the primary loop.
+
+The UI should reflect that.
+
+---
+
+## 82. Make search genuinely global
+
+Current search covers useful pieces, but it should eventually search:
+
+```text
+Files
+Projects
+People
+Reviews
+Versions
+Comments
+```
+
+and return grouped results.
+
+---
+
+## 83. Add keyboard navigation throughout the file table
+
+Especially:
+
+```text
+↑ ↓
+Enter
+Space
+Shift+?
+```
+
+for actions.
+
+---
+
+# P2 — storage
+
+## 84. Replace “disk quota” with real storage language
+
+Unless there is an actual quota abstraction, don't call it:
+
+> disk quota
+
+Use:
+
+> Storage used
+
+or:
+
+> Free space
+
+---
+
+## 85. Warn before the system is critically full
+
+Current warning threshold is extremely late.
+
+Have progressive states:
+
+```text
+80% — getting full
+90% — low space
+95% — action required
+```
+
+with:
+
+> Free up space
+
+---
+
+## 86. Make cleanup actionable
+
+Don't merely show:
+
+> 1.8 TB cached
+
+Give:
+
+```text
+Free space
+→ review removable cache
+→ see pinned files
+→ see largest files
+```
+
+Never make destructive cleanup implicit.
+
+---
+
+# P2 — versions / restore
+
+## 87. Make “Version” understandable
+
+Instead of:
+
+> Versions fold from the journal every 5,000 entries...
+
+user language:
+
+> **Saved versions**
+>
+> Cairn keeps restore points automatically.
+
+Technical mechanics belong in Diagnostics.
+
+---
+
+## 88. Auto-create a safety checkpoint before restore
+
+I'd strongly recommend:
+
+```text
+restore V12
+→ automatically save current state as V13
+→ restore V12
+```
+
+This makes experimentation safer.
+
+---
+
+# P2 — merge
+
+## 89. Keep expert merge UI, but don't make it the default mental model
+
+Current:
+
+```text
+Base
+Ours
+Theirs
+```
+
+is excellent terminology for an engineer.
+
+Terrible terminology for Mom.
+
+Beginner version:
+
+```text
+Original
+Your changes
+Their changes
+```
+
+Better yet, eventually:
+
+```text
+Cairn found two versions that changed in different places.
+
+[ Preview merge ]
+```
+
+which leads directly into the contract-debt automatic offer.
+
+---
+
+## 90. Finish contract-debt #1
+
+Your own acceptance criterion is exactly right:
+
+> sync detects a timeline conflict → dashboard says merge available → accept → journal entry → convergence
+
+Do it.
+
+That's much more valuable than exposing a manual three-file merger.
+
+---
+
+# P2 — review/media reliability
+
+## 91. Finish the Premiere-host verification
+
+Your own contract-debt document correctly calls this unfinished.
+
+Do the real:
+
+```text
+Premiere
+→ UXP panel
+→ Cairn
+→ marker endpoint
+→ parse
+→ import
+```
+
+test.
+
+---
+
+## 92. Finish large-waveform admission control
+
+Your own contract debt says:
+
+> “it handles them until it doesn't”
+
+That's the correct diagnosis.
+
+Add:
+
+* bounded memory
+* queue
+* admission limit
+* `429 Retry-After`
+* benchmark
+* operational knob
+
+---
+
+# P2 — observability / support
+
+## 93. Add “Send diagnostics”
+
+Normal user should never have to understand:
+
+```text
+doctor
+journal
+protocol
+daemon
+lease
+```
+
+Give them:
+
+> **Send diagnostics**
+
+which creates a safe redacted support bundle.
+
+---
+
+## 94. Give every support failure a correlation ID
+
+Example:
+
+> Something went wrong.
+>
+> Reference: `C8A2-41F`
+
+Then support logs can find the exact operation without showing internal details to the user.
+
+---
+
+## 95. Track product-level metrics
+
+Not creepy user analytics — operational metrics:
+
+* hydration p50/p95
+* sync latency
+* upload retry rate
+* relay rate
+* P2P success rate
+* review publish duration
+* recall duration
+* disk pressure
+* failed joins
+* crash-restart frequency
+
+This tells you where the real product pain is.
+
+---
+
+# P2 — architecture cleanup after the big rocks
+
+## 96. Continue shrinking `dashboard.rs`
+
+The big move is already done.
+
+Keep the rule strict:
+
+```text
+dashboard.rs
+= HTTP adapter only
+```
+
+No gradual regression.
+
+---
+
+## 97. Make the service API typed instead of JSON-heavy
+
+You improved the boundary, but several service functions still return `serde_json::Value`/`Json`.
+
+Longer term:
+
+```rust
+AttachResult
+DetachResult
+ReviewPublishResult
+ReviewLinkResult
+FileActionResult
+```
+
+will give you stronger compile-time contracts.
+
+---
+
+## 98. Separate application service from ctl service implementations
+
+You currently sometimes delegate service actions back into `CtlSnapshotsSvc`, etc.
+
+That works, but the cleaner long-term shape is:
+
+```text
+domain/application service
+       ↓
+ ┌─────┴─────┐
+ HTTP       gRPC
+```
+
+rather than:
+
+```text
+HTTP service
+   ↓
+gRPC service implementation
+   ↓
+domain
+```
+
+The latter is still better than duplicated logic, but the former is architecturally cleaner.
+
+---
+
+# P2 — runtime robustness
+
+## 99. Remove production `expect()` from hot daemon paths
+
+There are still production-side cases like:
+
+```rust
+expect("cfapi conns")
+expect("store poisoned")
+expect("overlay fp")
+```
+
+They're not catastrophic design flaws, but a daemon's philosophy should be:
+
+> a poisoned auxiliary cache should not kill the synchronization engine.
+
+Recover/log where reasonable.
+
+---
+
+## 100. Make process-level failure domains explicit
+
+The architecture is now much better.
+
+Keep enforcing:
+
+```text
+tray crash
+≠ daemon crash
+
+dashboard crash
+≠ daemon crash
+
+review portal crash
+≠ sync crash
+
+proxy generation failure
+≠ sync crash
+
+media processing failure
+≠ daemon availability
+```
+
+Especially once the job system exists.
+
+---
+
+# P2 — documentation truth
+
+## 101. Clean stale RBAC module documentation
+
+`cairn-core/src/rbac.rs` still contains wording saying daemon-side hooks are something that will land later, even though they now exist.
+
+It also describes `.cairn/members.json` as a synced project file while ADR-0031 explicitly says it is currently machine-local.
+
+That's exactly the sort of contradiction you've been fixing elsewhere.
+
+Make docs mechanically checked where possible.
+
+---
+
+## 102. Fix stale live-presence wording
+
+There is still UI text saying:
+
+> applies at next swarm join
+
+while the new implementation now explicitly **rejoins immediately**.
+
+That string needs updating.
+
+Same for comments in `daemon.rs`.
+
+---
+
+## 103. Make `CONTRACT-DEBT.md` CI-enforced
+
+Don't allow:
+
+```text
+OPEN
+```
+
+items to silently disappear into documentation.
+
+Each item should have:
+
+```text
+owner
+status
+acceptance test
+deadline/release
+```
+
+---
+
+# P3 — later, not now
+
+These are worthwhile but lower ROI than the above:
+
+## 104. Native deep-link registration
+
+Register:
+
+```text
+cairn://
+```
+
+with the OS so your project/share links actually open Cairn automatically.
+
+---
+
+## 105. OS notifications
+
+Useful notifications:
+
+> Brand Film is ready on this computer.
+
+> Review published.
+
+> 2 files need your attention.
+
+> Storage is getting low.
+
+Avoid notification spam.
+
+---
+
+## 106. Drag-and-drop onboarding
+
+Let users drag a project folder onto Cairn.
+
+That could be the easiest attach flow possible.
+
+---
+
+## 107. “Open folder” as the primary action everywhere
+
+Users understand folders better than Cairn objects.
+
+Where possible:
+
+```text
+Open folder
+```
+
+rather than:
+
+```text
+Open workspace
+```
+
+---
+
+## 108. Better first-run demonstration
+
+A clean machine could show:
+
+```text
+Choose a folder
+
+Why?
+Cairn keeps it available on your other computers.
+```
+
+Then one action.
+
+No:
+
+* daemon
+* project ID
+* sync
+* server
+* protocol
+* BRAW
+* GPU
+
+---
+
+# What I would actually build next
+
+This is the part I'd treat like an investment committee.
+
+### Wave 1 — highest return
+
+```text
+1. Cross-device state / ADR-0031
+2. RBAC audit of every service mutation
+3. Real join/enrollment flow
+4. Global project context
+5. Multi-project correctness
+6. Mom-mode Home redesign
+7. Remove technical vocabulary
+8. Replace confirm/right-click/hover dependence
+9. Fix duplicate atomicity
+10. Move ffmpeg/ffprobe/merge off async runtime
+```
+
+### Wave 2
+
+```text
+11. File pagination + virtualization
+12. Review UX redesign
+13. Error model
+14. token restart recovery
+15. CSP/no-store/token hygiene
+16. bundled ffmpeg/ffprobe
+17. review rate limiting
+18. cross-platform real desktop E2E
+19. accessibility completion
+20. i18n completion
+```
+
+### Wave 3
+
+```text
+21. automatic semantic merge offer
+22. Premiere host verification
+23. large waveform admission control
+24. support bundles
+25. SBOM / cargo-deny / signed releases
+26. metrics / operational dashboards
+27. native deep links
+28. notifications
+```
+
+---
+
+# The single biggest product change
+
+Cairn needs to stop presenting itself as:
+
+> **“a sophisticated sync system with a UI”**
+
+and become:
+
+> **“a normal folder that quietly solves the studio's file problem.”**
+
+The user should mostly experience:
+
+```text
+Choose folder
+↓
+Ready
+↓
+Work normally
+↓
+Files appear elsewhere
+↓
+Need one locally?
+Make available
+↓
+Need client feedback?
+Share review link
+```
+
+Everything else — FastCDC, CAS, BLAKE3, FUSE/CfAPI, leases, journals, P2P, STUN, FEC, protocol versions, WAL, merge classifiers — should be doing its job **without requiring the user to know it exists**.
+
+That is the largest remaining ROI in Cairn.
+
+And importantly, **the new ADR-0030 work means I would not rewrite the architecture to get there**. The direction is now much better: keep the core, finish the authority/state model, and put a much stronger product boundary over it.
