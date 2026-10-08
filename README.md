@@ -20,6 +20,13 @@ crates/
   cairn-sync       sync engine: state machine, AIMD uploader, conflict copies, fold
   cairn-server     metadata plane + control-plane jobs + data-plane presigning
   cairn-cli        CLI + local daemon (ctl gRPC :17777, local dashboard :17778)
+  cairn-review     client review portal: version stack, guest links, frame notes (ADR-0028)
+  cairn-p2p        NAT traversal + swarm: STUN, relay, mDNS, signal, sessions
+  cairn-quic       QUIC transport: endpoints, relay, trust (transport experiment track)
+  cairn-proxy      media proxy pipeline: FFmpeg transcode ladders (ADR-0020)
+  cairn-fec        forward error correction (redundant chunk repair)
+  cairn-shell-ext  Windows shell extension: Explorer overlay badges
+  cairn-app        native Windows console shell (Tauri) over the dashboard (ADR-0022)
   cairn-sim        deterministic simulation suite (I2 enforcement)
   cairn-fs-linux   FUSE (fuser)
   cairn-fs-mac     File Provider shim (cfg(target_os = "macos"))

@@ -1,9 +1,16 @@
-# Cairn Beta — 5 Minute Test (Windows)
+# Cairn Beta — Setup Guide (Windows)
 
 The whole test: install one binary, attach a folder, open a real project file
 in Blender (or Resolve), save, verify. Everything — the storage server, the
 sync daemon, the CLI — ships in the single `cairn.exe`; for the beta the whole
 stack runs on your machine over localhost, so nothing leaves the box.
+
+**Honest scope note (read this before the checklist):** the installer + tray
+cover the client side end to end (no terminal). The storage SERVER still
+needs one terminal command in this beta — there is no hosted default server
+yet, and joining a teammate's machine still needs the enroll/login step from
+section 3. That is the gap between "5 minutes" and reality; it is the top
+product priority, and this guide no longer pretends otherwise.
 
 ## 1. Install (one command)
 
@@ -19,16 +26,19 @@ release's SHA256 file, adds it to your PATH, and runs `cairn init` (creates
 `%USERPROFILE%\.cairn`). If SmartScreen ever asks about the downloaded file:
 **More info → Run anyway**.
 
-## 2. Start the stack (two terminals)
+## 2. Start the stack (one terminal, beta only)
 
-Cairn syncs through a storage server; for the beta it runs on your machine.
-Keep both windows open while you test — and if "two terminals" annoys you,
-that is exactly the kind of feedback we want.
+The tray starts and supervises the DAEMON for you (that part is zero
+terminal). The beta storage server is the one exception — start it in a
+single terminal and keep it open while you test:
 
 ```text
-Terminal A:  cairn server --data-dir %USERPROFILE%\.cairn-server --dev-insecure
-Terminal B:  cairn daemon
+terminal:  cairn server --data-dir %USERPROFILE%\.cairn-server --dev-insecure
 ```
+
+If "the server needs its own terminal" annoys you: correct instinct, that is
+exactly the feedback we want — it is the known beta gap from the scope note
+above.
 
 ## 3. Enroll and attach
 
@@ -100,11 +110,10 @@ the rest. Both matter; neither replaces the other.
 
 ---
 
-## The zero-terminal path (round 12: tray + installer)
+## The zero-terminal path (tray + installer)
 
-The 5-minute guide below is the CLI path — for power users, servers, and
-anyone curious about the machinery. Everyone else installs and lives in the
-tray:
+For the everyday flow you should never need the CLI at all. Everyone else
+installs and lives in the tray:
 
 1. **Install (one command, no admin):**
 
@@ -117,8 +126,9 @@ tray:
 
 2. **Day 2 operation is four clicks:** tray icon → Connect to Project…
    (folder picker — attach, scan, and mount run in the daemon) → Status
-   Details (the doctor, "Everything is OK") → Open Project Folder. The tray
-   polls every 3 s; the icon tooltip is the sync state.
+   (a plain-language answer; the technical details land on your clipboard
+   for a bug report) → Open Project Folder. The tray polls every 3 s; the
+   icon tooltip is the sync state.
 
 3. **Two editors, one timeline:** the merge is automatic for OTIO/FCPXML —
    when a conflict copy lands, `cairn tl-merge --base <ancestor> --ours
