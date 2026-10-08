@@ -108,6 +108,12 @@ pub async fn serve(addr: String, state: Arc<DaemonState>) -> anyhow::Result<()> 
         .route("/api/v1/merge/offer/decline", post(merge_offer_decline))
         .route("/api/v1/tl-merge", post(tl_merge))
         .route("/api/v1/compress", post(compress))
+        // Proxy preview copies (contract freeze §1): make small editing
+        // copies of big camera media from the UI. Parse/respond ONLY — the
+        // service layer owns validation, RBAC, the in-flight guard, and the
+        // transcode; the security gate below covers these routes like the rest.
+        .route("/api/v1/proxy/generate", post(proxy_generate))
+        .route("/api/v1/proxy/status", get(proxy_status))
         // P0: host + origin + token gates for EVERY route (the layer wraps
         // all routes added above). Order matters: layer before with_state.
         .layer(axum::middleware::from_fn_with_state(
@@ -552,7 +558,7 @@ async fn files(
 ) -> Json<serde_json::Value> {
     let project = q.get("project").cloned().unwrap_or_default();
     let needle = q.get("q").cloned().unwrap_or_default();
-    Json(service::views::files(&state, &project, &needle))
+    Json(service::views::files(&state, &project, &needle).await)
 }
 
 async fn state_records(
@@ -911,12 +917,15 @@ async fn tl_merge(body: Option<Json<serde_json::Value>>) -> Json<serde_json::Val
             json!({"ok": false, "error": "body required: {base_otio, ours_otio, theirs_otio}"}),
         );
     };
-    Json(service::actions::tl_merge(
-        v["base_otio"].as_str().unwrap_or_default(),
-        v["ours_otio"].as_str().unwrap_or_default(),
-        v["theirs_otio"].as_str().unwrap_or_default(),
-        v["semantic"].as_bool().unwrap_or(false),
-    ))
+    Json(
+        service::actions::tl_merge(
+            v["base_otio"].as_str().unwrap_or_default(),
+            v["ours_otio"].as_str().unwrap_or_default(),
+            v["theirs_otio"].as_str().unwrap_or_default(),
+            v["semantic"].as_bool().unwrap_or(false),
+        )
+        .await,
+    )
 }
 
 async fn compress(
@@ -936,6 +945,48 @@ async fn compress(
         )
         .await,
     )
+}
+
+/// POST /api/v1/proxy/generate {project, path} — generate an editing proxy.
+/// The service answers Ok/Err JSON; the adapter maps ONLY status codes:
+/// "in_progress" → 409 (a second click while one encode runs), everything
+/// else → 400 (caller-fixable input/refusal). Never a 500 from business logic.
+async fn proxy_generate(
+    State(state): State<Arc<DaemonState>>,
+    body: Option<Json<serde_json::Value>>,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    let Some(Json(v)) = body else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"ok": false, "error": "body required: {project, path}"})),
+        )
+            .into_response();
+    };
+    let j = service::proxy::proxy_generate(
+        &state,
+        v["project"].as_str().unwrap_or_default(),
+        v["path"].as_str().unwrap_or_default(),
+    )
+    .await;
+    if j["ok"] == serde_json::Value::Bool(true) {
+        return Json(j).into_response();
+    }
+    let code = if j["error"] == "in_progress" {
+        StatusCode::CONFLICT
+    } else {
+        StatusCode::BAD_REQUEST
+    };
+    (code, Json(j)).into_response()
+}
+
+/// GET /api/v1/proxy/status?project= — the proxy index as rows.
+async fn proxy_status(
+    State(state): State<Arc<DaemonState>>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Json<serde_json::Value> {
+    let project = q.get("project").cloned().unwrap_or_default();
+    Json(service::proxy::proxy_status(&state, &project).await)
 }
 
 #[cfg(test)]

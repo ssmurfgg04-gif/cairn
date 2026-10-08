@@ -108,12 +108,25 @@ pub async fn create_snapshot(
 }
 
 /// POST /api/v1/snapshots/restore {project_id, commit_hash, target_path?}.
+///
+/// #44/#88 restore safety checkpoint: restore OVERWRITES workspace state,
+/// and the moment a user discovers "restore grabbed the wrong commit" is
+/// AFTER the restore. So every restore first folds the CURRENT journal head
+/// into a commit (the same snapshot-create machinery `create_snapshot`
+/// uses) and reports it in the response — the UI can say "Cairn saved the
+/// current state first" and one click undoes a wrong restore. A failed
+/// checkpoint FAILS the restore: a destructive act without a known-good
+/// escape hatch is exactly the accident class #44 describes. Existing
+/// response fields (`ok`, `restored_files`, `bytes`) are unchanged.
+pub const RESTORE_CHECKPOINT_LABEL: &str = "safety checkpoint before restore";
+
 pub async fn restore_snapshot(
     state: &Arc<DaemonState>,
     project: &str,
     commit_hash: &str,
     target_path: &str,
 ) -> Result<Json, String> {
+    let (checkpoint_version, checkpoint_commit) = restore_safety_checkpoint(state, project).await?;
     let svc = crate::daemon::CtlSnapshotsSvc {
         state: Arc::clone(state),
     };
@@ -126,9 +139,41 @@ pub async fn restore_snapshot(
         .await
         .map(|r| {
             let r = r.into_inner();
-            json!({"ok": true, "restored_files": r.restored_files, "bytes": r.bytes})
+            json!({
+                "ok": true,
+                "restored_files": r.restored_files,
+                "bytes": r.bytes,
+                "checkpoint_version": checkpoint_version,
+                "checkpoint_commit": checkpoint_commit,
+                "checkpoint_label": RESTORE_CHECKPOINT_LABEL,
+            })
         })
         .map_err(|s| s.message().to_string())
+}
+
+/// Fold the current state into a checkpoint commit and return
+/// `(snapshot_seq, commit_hash)`. Reuses the EXACT snapshot-create path
+/// (`create_snapshot` → ctl FoldNow); the seq comes from the snapshot list,
+/// whose first entry is always the newest commit on `main` — the one this
+/// call just folded.
+async fn restore_safety_checkpoint(
+    state: &Arc<DaemonState>,
+    project: &str,
+) -> Result<(i64, String), String> {
+    let snap = create_snapshot(state, project, RESTORE_CHECKPOINT_LABEL).await?;
+    let commit = snap
+        .get("commit_hash")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let list = list_snapshots(state, project).await?;
+    let version = list
+        .get("snapshots")
+        .and_then(|s| s.get(0))
+        .and_then(|s| s.get("snapshot_seq"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    Ok((version, commit))
 }
 
 /// GET /api/v1/snapshots?project= — list via the ctl service.
@@ -400,6 +445,15 @@ pub async fn resolve_download(
 /// up like any other new file (it IS a new file — the explicit-action
 /// semantics the retro asked for). Placeholders answer the recall hint:
 /// duplicating a 0-byte placeholder would create a 0-byte file.
+///
+/// Review #41: the old loop polled `exists()` then copied — a TOCTOU race
+/// (two concurrent duplicates, or a watcher-created "(copy)" between the
+/// check and the copy) could OVERWRITE an existing file, and at 100+ copies
+/// it silently clobbered `name (copy 100).ext` unconditionally. The
+/// destination is now claimed with `create_new(true)` (exclusive create —
+/// the kernel arbitrates), looping past 100 without a rename cap (bounded
+/// at 10 000 for sanity: every iteration is one O(1) create attempt, and a
+/// project with 10 000 same-named copies has bigger problems).
 pub async fn file_duplicate(state: &Arc<DaemonState>, project: &str, path: &str) -> Json {
     let Some(root) = state.projects.project_root(project).await else {
         return json!({"ok": false, "error": "project not attached"});
@@ -422,34 +476,68 @@ pub async fn file_duplicate(state: &Arc<DaemonState>, project: &str, path: &str)
         .extension()
         .map(|e| e.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let dest = stem;
-    let mut n = 1;
-    let mut candidate = {
-        let base = format!("{} (copy)", dest.display());
+    let candidate_name = |n: u32| -> std::path::PathBuf {
+        let base = if n == 1 {
+            format!("{} (copy)", stem.display())
+        } else {
+            format!("{} (copy {n})", stem.display())
+        };
         if ext.is_empty() {
             std::path::PathBuf::from(base)
         } else {
             std::path::PathBuf::from(format!("{base}.{ext}"))
         }
     };
-    while tokio::fs::metadata(&candidate).await.is_ok() && n < 100 {
+    // Claim the destination FIRST (exclusive create), then stream the bytes
+    // into the handle we already own — the file that appears at `candidate`
+    // is ours by construction, never a clobber.
+    const DUPLICATE_NAME_CAP: u32 = 10_000;
+    let mut n = 0u32;
+    let (candidate, mut dest) = loop {
         n += 1;
-        let base = format!("{} (copy {})", dest.display(), n);
-        candidate = if ext.is_empty() {
-            std::path::PathBuf::from(base)
-        } else {
-            std::path::PathBuf::from(format!("{base}.{ext}"))
-        };
-    }
-    match tokio::fs::copy(&full, &candidate).await {
-        Ok(bytes) => {
+        if n > DUPLICATE_NAME_CAP {
+            return json!({"ok": false, "error": format!(
+                "no free duplicate name after {DUPLICATE_NAME_CAP} attempts"
+            )});
+        }
+        let candidate = candidate_name(n);
+        match tokio::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+            .await
+        {
+            Ok(f) => break (candidate, f),
+            // taken: try the next name
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => {
+                return json!({"ok": false, "error": format!("copy failed: {e}")});
+            }
+        }
+    };
+    let mut src = match tokio::fs::File::open(&full).await {
+        Ok(f) => f,
+        Err(e) => {
+            let _ = tokio::fs::remove_file(&candidate).await; // don't leave an empty claim
+            return json!({"ok": false, "error": format!("copy failed: {e}")});
+        }
+    };
+    use tokio::io::AsyncWriteExt as _;
+    let written = tokio::io::copy(&mut src, &mut dest).await;
+    let flush = dest.flush().await;
+    match (written, flush) {
+        (Ok(bytes), Ok(())) => {
             let rel = candidate
                 .strip_prefix(&root)
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_else(|_| candidate.to_string_lossy().into_owned());
             json!({"ok": true, "path": rel, "bytes": bytes})
         }
-        Err(e) => json!({"ok": false, "error": format!("copy failed: {e}")}),
+        (Err(e), _) | (_, Err(e)) => {
+            drop(dest);
+            let _ = tokio::fs::remove_file(&candidate).await; // partial copy removed, original untouched
+            json!({"ok": false, "error": format!("copy failed: {e}")})
+        }
     }
 }
 
@@ -738,12 +826,21 @@ pub async fn review_publish(
             Ok(parsed) => (count, parsed.0, parsed.1),
             Err(e) => return json!({ "ok": false, "error": format!("unparseable fps: {e}") }),
         },
-        _ => match crate::review::probe_media(&full) {
-            Some(probed) => (probed.2, probed.0, probed.1),
-            None => {
-                return json!({"ok": false, "error": "could not probe this media (ffprobe missing or file unreadable) - install ffmpeg, or publish with explicit frames/fps"})
+        _ => {
+            // review #46: the probe shells out to ffprobe (a blocking
+            // subprocess over possibly gigabyte media) — publish runs on the
+            // async runtime, so the probe goes to the blocking pool.
+            // Behavior identical: join failure degrades to the same honest
+            // "could not probe" answer.
+            let probe_path = full.clone();
+            match tokio::task::spawn_blocking(move || crate::review::probe_media(&probe_path)).await
+            {
+                Ok(Some(probed)) => (probed.2, probed.0, probed.1),
+                _ => {
+                    return json!({"ok": false, "error": "could not probe this media (ffprobe missing or file unreadable) - install ffmpeg, or publish with explicit frames/fps"})
+                }
             }
-        },
+        }
     };
     let mut file = match cairn_review::store::Store::load(&root) {
         Ok(Some(f)) => f,
@@ -963,12 +1060,29 @@ async fn resolve_root(state: &Arc<DaemonState>, project: &str) -> Option<PathBuf
 /// POST /api/v1/tl-merge {base_otio, ours_otio, theirs_otio, semantic?} —
 /// thin wrapper over cairn-tl three-way merge (C0-C10 classifier).
 /// Bodies are raw OTIO JSON strings (small timelines); large media stays in CAS.
-pub fn tl_merge(base: &str, ours: &str, theirs: &str, semantic: bool) -> Json {
+pub async fn tl_merge(base: &str, ours: &str, theirs: &str, semantic: bool) -> Json {
     if base.is_empty() || ours.is_empty() || theirs.is_empty() {
         return json!(
             {"ok": false, "error": "base_otio, ours_otio, theirs_otio required (OTIO JSON strings)"}
         );
     }
+    // review #47: the tmp writes + three parses + the C0-C10 merge are pure
+    // blocking CPU over potentially large timeline JSON — off the async
+    // runtime. Response contract unchanged.
+    let base = base.to_string();
+    let ours = ours.to_string();
+    let theirs = theirs.to_string();
+    let joined =
+        tokio::task::spawn_blocking(move || tl_merge_blocking(&base, &ours, &theirs, semantic))
+            .await;
+    match joined {
+        Ok(j) => j,
+        Err(e) => json!({"ok": false, "error": format!("merge task failed: {e}")}),
+    }
+}
+
+/// The synchronous merge body (runs on the blocking pool; see tl_merge).
+fn tl_merge_blocking(base: &str, ours: &str, theirs: &str, semantic: bool) -> Json {
     // Write to temp, reuse CLI merge path semantics via cairn_tl directly.
     let dir = std::env::temp_dir().join(format!("cairn-merge-{}", uuid::Uuid::now_v7().simple()));
     if std::fs::create_dir_all(&dir).is_err() {
@@ -1061,26 +1175,35 @@ pub async fn compress(
     if let Some(p) = out_full.parent() {
         let _ = std::fs::create_dir_all(p);
     }
-    let status = std::process::Command::new("ffmpeg")
-        .arg("-y")
-        .arg("-i")
-        .arg(&full)
-        .args(["-vf", &format!("scale=-2:{height}")])
-        .args(codec_args)
-        .args([
-            "-crf",
-            &crf.to_string(),
-            "-c:a",
-            "aac",
-            "-b:a",
-            "128k",
-            "-movflags",
-            "+faststart",
-            "-pix_fmt",
-            "yuv420p",
-        ])
-        .arg(&out_full)
-        .output();
+    // review #45: the encode is a LONG blocking subprocess (an archive H265
+    // run can outlive the request by minutes) — it must never occupy an
+    // async-runtime worker or the whole console stalls mid-encode. Response
+    // contract unchanged.
+    let encode_full = out_full.clone();
+    let joined = tokio::task::spawn_blocking(move || {
+        std::process::Command::new("ffmpeg")
+            .arg("-y")
+            .arg("-i")
+            .arg(&full)
+            .args(["-vf", &format!("scale=-2:{height}")])
+            .args(codec_args)
+            .args([
+                "-crf",
+                &crf.to_string(),
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                "-movflags",
+                "+faststart",
+                "-pix_fmt",
+                "yuv420p",
+            ])
+            .arg(&encode_full)
+            .output()
+    })
+    .await;
+    let status = joined.unwrap_or_else(|e| Err(std::io::Error::other(e.to_string())));
     match status {
         Ok(o) if o.status.success() => {
             let bytes = std::fs::metadata(&out_full).map(|m| m.len()).unwrap_or(0);
@@ -1287,5 +1410,397 @@ mod tests {
         assert_eq!(clamp_ttl_hours(0), 1, "zero floors to 1h");
         assert_eq!(clamp_ttl_hours(-42), 1, "negative floors to 1h");
         assert_eq!(clamp_ttl_hours(99_999), 8_760, "beyond a year clamps down");
+
+    use cairn_core::clock::WallClock;
+    use cairn_store::state::LocalState;
+    use cairn_store::{Cas, FileRow, HeaderCache, Outbox, Store};
+
+    fn tmp() -> std::path::PathBuf {
+        tempfile::tempdir().unwrap().keep()
+    }
+
+    /// DaemonState with inert defaults (all fields pub; `new` is
+    /// daemon-private — same construction the views tests use).
+    fn daemon_state(home: std::path::PathBuf) -> DaemonState {
+        DaemonState {
+            home,
+            started: std::time::Instant::now(),
+            flags: tokio::sync::RwLock::new(Vec::new()),
+            recall_jobs: std::sync::Arc::new(tokio::sync::RwLock::new(
+                std::collections::HashMap::new(),
+            )),
+            projects: std::sync::Arc::new(crate::projects::ProjectManager::new()),
+            doctor_cache: tokio::sync::RwLock::new(None),
+        }
+    }
+
+    fn enrolled_state(home: &std::path::Path, server_url: &str, device: &str) -> Arc<DaemonState> {
+        let store = Store::open(home, Arc::new(WallClock)).unwrap();
+        crate::projects::save_identity(
+            &store,
+            &crate::projects::Identity {
+                server_url: server_url.to_string(),
+                token: "test-token".into(),
+                device_id: device.into(),
+                tenant_id: "t-test".into(),
+                tls_ca: None,
+            },
+        )
+        .unwrap();
+        Arc::new(daemon_state(home.to_path_buf()))
+    }
+
+    // ------------------------------------------------------------------
+    // #41: file_duplicate never clobbers — exclusive create, past 100
+    // ------------------------------------------------------------------
+
+    /// The review #41 cap case: with 150 "(copy N)" siblings already on
+    /// disk, duplicate still lands a FRESH name (the old loop capped at 100
+    /// and then overwrote "name (copy 100).ext" unconditionally). The
+    /// content of every pre-existing copy must survive untouched.
+    #[tokio::test]
+    async fn file_duplicate_survives_150_existing_copies_without_clobber() {
+        let home = tmp();
+        let state = enrolled_state(&home, "http://127.0.0.1:1", "dev-dup");
+        let root = tmp();
+        let src = root.join("clip.braw");
+        std::fs::write(&src, b"ORIGINAL-BYTES").unwrap();
+        // every candidate name 1..=150 is taken ("(copy)" + "(copy 2..150)"):
+        // the first free name is (copy 151) — beyond the old 100 cap that
+        // clobbered unconditionally
+        std::fs::write(root.join("clip (copy).braw"), b"KEEP-1").unwrap();
+        for n in 2..=150 {
+            std::fs::write(
+                root.join(format!("clip (copy {n}).braw")),
+                format!("KEEP-{n}"),
+            )
+            .unwrap();
+        }
+        state
+            .projects
+            .attach(&state.home, &root, Some("p-dup".into()), None)
+            .await
+            .unwrap();
+
+        let r = file_duplicate(&state, "p-dup", "clip.braw").await;
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(r["path"], "clip (copy 151).braw");
+        assert_eq!(r["bytes"], b"ORIGINAL-BYTES".len() as u64);
+        // the copy is byte-exact
+        assert_eq!(
+            std::fs::read(root.join("clip (copy 151).braw")).unwrap(),
+            b"ORIGINAL-BYTES"
+        );
+        // and NOT ONE pre-existing copy was touched (the old code clobbered #100)
+        assert_eq!(
+            std::fs::read(root.join("clip (copy).braw")).unwrap(),
+            b"KEEP-1"
+        );
+        for n in 2..=150 {
+            assert_eq!(
+                std::fs::read(root.join(format!("clip (copy {n}).braw"))).unwrap(),
+                format!("KEEP-{n}").into_bytes(),
+                "copy {n} must survive untouched"
+            );
+        }
+        // original intact too
+        assert_eq!(std::fs::read(&src).unwrap(), b"ORIGINAL-BYTES");
+    }
+
+    /// Baseline collision names stay the familiar " (copy)" / " (copy 2)".
+    #[tokio::test]
+    async fn file_duplicate_names_and_race_safety_basics() {
+        let home = tmp();
+        let state = enrolled_state(&home, "http://127.0.0.1:1", "dev-dup");
+        let root = tmp();
+        std::fs::write(root.join("clip.braw"), b"AA").unwrap();
+        state
+            .projects
+            .attach(&state.home, &root, Some("p-dup2".into()), None)
+            .await
+            .unwrap();
+        let r1 = file_duplicate(&state, "p-dup2", "clip.braw").await;
+        assert_eq!(r1["path"], "clip (copy).braw");
+        let r2 = file_duplicate(&state, "p-dup2", "clip.braw").await;
+        assert_eq!(r2["path"], "clip (copy 2).braw");
+        // extensionless files keep the no-suffix shape
+        std::fs::write(root.join("README"), b"RR").unwrap();
+        let r3 = file_duplicate(&state, "p-dup2", "README").await;
+        assert_eq!(r3["path"], "README (copy)");
+    }
+
+    // ------------------------------------------------------------------
+    // #44/#88: restore creates a safety checkpoint first
+    // ------------------------------------------------------------------
+
+    /// Boot the REAL server stack (gRPC + objects HTTP, ephemeral loopback
+    /// ports) — the same shape crates/cairn-server/tests/cold_fetch.rs uses.
+    /// The accept loop feeds `serve_with_incoming` via a channel so the
+    /// test needs no extra tokio-stream features.
+    async fn spin_server(dir: &std::path::Path) -> (Arc<cairn_server::ServerState>, String) {
+        let obj_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let obj_port = obj_listener.local_addr().unwrap().port();
+        let base = format!("http://127.0.0.1:{obj_port}/");
+        let db = cairn_server::db::open(&dir.join("meta.db")).await.unwrap();
+        cairn_server::db::migrate(&db).await.unwrap();
+        let auth = cairn_server::auth::Authenticator::load_or_create(
+            &dir.join("keys"),
+            Arc::new(WallClock),
+        )
+        .unwrap();
+        let store = Arc::new(
+            cairn_server::storage::LocalFsStore::open(
+                &dir.join("objects"),
+                b"test-object-key",
+                &base,
+            )
+            .unwrap(),
+        );
+        let state = Arc::new(cairn_server::ServerState {
+            db,
+            auth,
+            store: Arc::clone(&store) as Arc<dyn cairn_server::storage::ObjectStore>,
+            bloom: tokio::sync::RwLock::new(cairn_core::bloom::Bloom::empty()),
+            clock: Arc::new(WallClock) as Arc<dyn cairn_core::clock::SystemClock>,
+            dev_insecure: true,
+        });
+        state.migrate().await.unwrap();
+
+        let router = store.router();
+        tokio::spawn(async move { axum::serve(obj_listener, router).await });
+
+        let grpc_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let grpc_port = grpc_listener.local_addr().unwrap().port();
+        let (tx, rx) = tokio::sync::mpsc::channel::<tokio::net::TcpStream>(64);
+        tokio::spawn(async move {
+            while let Ok((sock, _)) = grpc_listener.accept().await {
+                if tx.send(sock).await.is_err() {
+                    break;
+                }
+            }
+        });
+        let serve_state = Arc::clone(&state);
+        tokio::spawn(async move {
+            use futures::StreamExt;
+            let incoming =
+                tokio_stream::wrappers::ReceiverStream::new(rx).map(Ok::<_, std::io::Error>);
+            let _ = tonic::transport::Server::builder()
+                .add_service(cairn_proto::pb::journal_server::JournalServer::new(
+                    cairn_server::services::JournalSvc {
+                        state: serve_state.clone(),
+                    },
+                ))
+                .add_service(cairn_proto::pb::lease_server::LeaseServer::new(
+                    cairn_server::services::LeaseSvc {
+                        state: serve_state.clone(),
+                    },
+                ))
+                .add_service(cairn_proto::pb::upload_server::UploadServer::new(
+                    cairn_server::services::UploadSvc {
+                        state: serve_state.clone(),
+                    },
+                ))
+                .add_service(cairn_proto::pb::download_server::DownloadServer::new(
+                    cairn_server::services::DownloadSvc {
+                        state: serve_state.clone(),
+                    },
+                ))
+                .add_service(cairn_proto::pb::auth_server::AuthServer::new(
+                    cairn_server::services::AuthSvc {
+                        state: serve_state.clone(),
+                    },
+                ))
+                .add_service(cairn_proto::pb::project_server::ProjectServer::new(
+                    cairn_server::services::ProjectSvc {
+                        state: serve_state.clone(),
+                    },
+                ))
+                .add_service(cairn_proto::pb::snapshot_server::SnapshotServer::new(
+                    cairn_server::services::SnapshotSvc { state: serve_state },
+                ))
+                .serve_with_incoming(incoming)
+                .await;
+        });
+        (state, format!("http://127.0.0.1:{grpc_port}"))
+    }
+
+    /// The full restore story against the real server: a real file is
+    /// pushed by a real engine, folded into commit1; restore(commit1) must
+    /// FIRST fold a checkpoint commit (reported as checkpoint_version /
+    /// checkpoint_commit) and then materialize the file. The response keeps
+    /// its historical fields (ok / restored_files / bytes) intact.
+    #[tokio::test]
+    async fn restore_creates_a_safety_checkpoint_of_the_current_state_first() {
+        let server_dir = tempfile::tempdir().unwrap();
+        let (server, grpc_url) = spin_server(server_dir.path()).await;
+        sqlx::query("INSERT OR IGNORE INTO tenants(id, created_at) VALUES('t-test',0)")
+            .execute(&server.db)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT OR IGNORE INTO projects(tenant_id, project_id, created_at) VALUES('t-test','p-restore',0)",
+        )
+        .execute(&server.db)
+        .await
+        .unwrap();
+        let code = server
+            .auth
+            .enroll_code("t-test", "restore@test.tv", "sync", 600_000)
+            .await;
+        let (token, identity) = server
+            .auth
+            .enroll(&server.db, &code, "pk-restore", "restore-probe")
+            .await
+            .unwrap();
+        assert_eq!(identity.tenant_id, "t-test");
+
+        // daemon home with the REAL identity (server reachable)
+        let home = tmp();
+        {
+            let store = Store::open(&home, Arc::new(WallClock)).unwrap();
+            crate::projects::save_identity(
+                &store,
+                &crate::projects::Identity {
+                    server_url: grpc_url.clone(),
+                    token,
+                    device_id: identity.device_id.clone(),
+                    tenant_id: identity.tenant_id.clone(),
+                    tls_ca: None,
+                },
+            )
+            .unwrap();
+        }
+        let state = Arc::new(daemon_state(home.clone()));
+
+        // project root + workspace binding + one real file pushed by a real engine
+        let root = tmp();
+        std::fs::create_dir_all(root.join("media")).unwrap();
+        std::fs::write(root.join("media/notes.txt"), b"restore-me").unwrap();
+        // restore is Owner-only in the RBAC matrix — the enrolled device must
+        // BE the owner of this root for the ctl path to accept the restore
+        std::fs::create_dir_all(root.join(".cairn")).unwrap();
+        let mut members = cairn_core::rbac::MemberFile::default();
+        members.upsert(
+            &identity.device_id,
+            "restore probe",
+            cairn_core::rbac::Role::Owner,
+            "self",
+            1,
+        );
+        std::fs::write(
+            crate::members::members_path(&root),
+            members.to_json().unwrap(),
+        )
+        .unwrap();
+        let store = Store::open(&home, Arc::new(WallClock)).unwrap();
+        cairn_sync::workspace::set_workspace_ns(&store, "p-restore", &root).unwrap();
+        let conn = store.conn_handle();
+        let cas = Cas::open(&home.join("blobs"), conn.clone()).unwrap();
+        let plane = cairn_sync::plane_grpc::GrpcPlane::connect(
+            &grpc_url,
+            &store.meta_get("auth/token").unwrap(),
+            "t-test",
+            None,
+        )
+        .await
+        .unwrap();
+        let engine = cairn_sync::Engine {
+            tenant_id: "t-test".into(),
+            project_id: "p-restore".into(),
+            device_id: identity.device_id.clone(),
+            local_ns: "p-restore".into(),
+            author_id: identity.device_id.clone(),
+            store: store.clone(),
+            cas,
+            outbox: Outbox::new(conn.clone()),
+            headers: HeaderCache::new(conn),
+            plane: Arc::new(plane),
+            dicts: cairn_core::compress::DictRegistry::new(),
+            gate: cairn_sync::Gate::new(),
+        };
+        let meta = std::fs::metadata(root.join("media/notes.txt")).unwrap();
+        engine
+            .store
+            .put_file(&FileRow {
+                path: "media/notes.txt".into(),
+                project_id: "p-restore".into(),
+                manifest_hash: None,
+                size: meta.len(),
+                mode: "file".into(),
+                mtime: cairn_sync::scan::mtime_millis(&meta),
+                local_state: LocalState::Dirty.as_str().into(),
+            })
+            .unwrap();
+        engine.sync_pass().await.expect("push to real server");
+        // fold the pushed state into commit1 (the restore target). NOTE: the
+        // ctl restore path is Owner-only; the members file above (written
+        // BEFORE attach) makes the enrolled device the root owner.
+        let target = create_snapshot(&state, "p-restore", "restore target")
+            .await
+            .unwrap();
+        let commit1 = target["commit_hash"].as_str().unwrap().to_string();
+        // workspace drifts AFTER the commit — the restore must bring it back
+        std::fs::write(root.join("media/notes.txt"), b"DRIFTED-BEYOND-RECOGNITION").unwrap();
+
+        // attach AFTER the engine pass: the service action resolves the
+        // project through the ProjectManager (real attach, real server)
+        state
+            .projects
+            .attach(&state.home, &root, Some("p-restore".into()), None)
+            .await
+            .unwrap();
+
+        let r = restore_snapshot(&state, "p-restore", &commit1, "")
+            .await
+            .unwrap();
+        assert_eq!(r["ok"], true, "{r}");
+        // historical contract fields unchanged
+        assert_eq!(r["restored_files"], 1);
+        assert_eq!(r["bytes"], b"restore-me".len() as u64);
+        // #44/#88: the checkpoint of the CURRENT state, reported for the UI
+        assert!(r["checkpoint_version"].as_i64().unwrap() >= 1);
+        let checkpoint = r["checkpoint_commit"].as_str().unwrap();
+        assert!(
+            checkpoint.len() == 64,
+            "commit hash is 64 hex: {checkpoint}"
+        );
+        assert_ne!(
+            checkpoint, commit1,
+            "checkpoint is a NEW commit, not the restore target"
+        );
+        assert_eq!(r["checkpoint_label"], RESTORE_CHECKPOINT_LABEL);
+        // and the checkpoint is a REAL commit in the snapshot list
+        let snaps = list_snapshots(&state, "p-restore").await.unwrap();
+        let hashes: Vec<&str> = snaps["snapshots"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s["commit_hash"].as_str().unwrap())
+            .collect();
+        assert!(hashes.contains(&checkpoint));
+        // the workspace is back at the committed bytes
+        assert_eq!(
+            std::fs::read(root.join("media/notes.txt")).unwrap(),
+            b"restore-me"
+        );
+    }
+
+    /// A failed checkpoint must FAIL the restore (never destroy state
+    /// without the escape hatch): no server behind the identity → the
+    /// fold_now errors → restore_snapshot returns Err before touching disk.
+    #[tokio::test]
+    async fn restore_is_refused_when_the_checkpoint_cannot_be_created() {
+        let home = tmp();
+        let state = enrolled_state(&home, "http://127.0.0.1:1", "dev-offline");
+        let r = restore_snapshot(&state, "p-any", "deadbeef", "").await;
+        assert!(
+            r.is_err(),
+            "no checkpoint possible offline → restore refused"
+        );
+        let msg = r.err().unwrap();
+        assert!(
+            !msg.is_empty(),
+            "the error names the checkpoint failure, not a silent restore"
+        );
     }
 }

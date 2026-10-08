@@ -12,19 +12,27 @@ cairn-sync = { path = "../cairn-sync" }
 cairn-server = { path = "../cairn-server" }
 cairn-proto = { path = "../cairn-proto" }
 tokio = { workspace = true }
+tonic = { workspace = true }
 async-trait = { workspace = true }
+axum = { workspace = true }
+tokio-stream = "0.1"
 rand = { workspace = true }
 tracing = { workspace = true }
 sha2 = { workspace = true }
 tempfile = { workspace = true }
 sqlx = { workspace = true }
+# net_harness::Home::blake3_of — the byte-identity check both cross-network
+# E2Es assert with on every converged media file
+blake3 = { workspace = true }
 
 # state_and_offer_e2e.rs builds real OTIO fixtures + parses merged output,
 # and drives the REAL portal (cairn-review::http::Portal) for the Phase-2
 # cross-machine revoke E2E
+# editing_session_e2e.rs drives the REAL proxy transcoder + parses FCPXML
 [dev-dependencies]
 cairn-tl = { path = "../cairn-tl" }
 cairn-review = { path = "../cairn-review" }
+cairn-proxy = { path = "../cairn-proxy" }
 
 [lints]
 workspace = true

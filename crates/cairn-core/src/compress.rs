@@ -80,6 +80,17 @@ pub fn policy_for(path: &str) -> Compression {
     }
 }
 
+/// True when `path`'s extension is one the SPEC §6 sniff table treats as
+/// MEDIA (camera raw, video masters, audio). The cheap first gate for
+/// surfaces that shell out to ffmpeg/ffprobe (proxy generation): refuse
+/// non-media BEFORE paying a process spawn, while the probe/transcoder
+/// itself stays the final arbiter of decodability. One definition — the
+/// same table `policy_for` reads — so no surface grows its own list.
+#[must_use]
+pub fn is_media_path(path: &str) -> bool {
+    MEDIA_EXTS.contains(&ext_of(path).as_str())
+}
+
 /// Dictionary registry (project_id → dict), shared between pipeline passes.
 #[derive(Default)]
 pub struct DictRegistry {
@@ -195,6 +206,21 @@ mod tests {
         assert_eq!(policy_for("subtitles.srt"), Compression::Zstd3);
         assert_eq!(policy_for("session.json"), Compression::Zstd3);
         assert_eq!(policy_for("unknown.bin"), Compression::None);
+    }
+
+    /// The proxy service gates on this before spawning ffmpeg — it must be
+    /// the SAME table the compression policy reads (one definition, no drift)
+    /// and case-insensitive like the rest of the extension handling.
+    #[test]
+    fn is_media_path_reads_the_same_sniff_table() {
+        assert!(is_media_path("A001_C001_07107.braw"));
+        assert!(is_media_path("interview.MP4"));
+        assert!(is_media_path("cuts/v2/mix.wav"));
+        assert!(is_media_path("score.aiff"));
+        assert!(!is_media_path("timeline.otio"));
+        assert!(!is_media_path("notes.txt"));
+        assert!(!is_media_path("grade.cube"));
+        assert!(!is_media_path("noext"));
     }
 
     #[test]

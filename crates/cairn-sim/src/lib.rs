@@ -14,6 +14,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod net_harness;
 pub mod plane;
 pub mod world;
 

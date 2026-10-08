@@ -24,6 +24,7 @@
 //! * read-only views live in `views`, state-changing actions in `actions`.
 
 pub mod actions;
+pub mod proxy;
 pub mod views;
 
 use std::path::{Path, PathBuf};

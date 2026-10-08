@@ -407,11 +407,60 @@ pub async fn markers_export(
 /// GET /api/v1/files?project=&q= — per-file rows with sync + pin badges
 /// (audit #7: "clip1.braw 8.3 MB synced / placeholder / pinned" — a file
 /// list, not `ls`). `q` filters cheaply server-side here.
-pub fn files(state: &DaemonState, project: &str, needle: &str) -> serde_json::Value {
+///
+/// Media rows also carry `proxy_state` ("none|ready|stale|failed") from the
+/// cairn-proxy index (contract freeze §1): CHEAP by design — one index read
+/// plus a stat fingerprint per indexed media, NEVER a blake3 rehash of a
+/// 50 GB camera master just to draw a table (status_of_fast's fast path,
+/// minus its rehash fallback: a fingerprint MISS answers "stale" — the
+/// honest "cannot prove current without hashing" — and the status endpoint
+/// or `cairn proxy status --verify` settles the doubt).
+pub async fn files(state: &DaemonState, project: &str, needle: &str) -> serde_json::Value {
     let needle = needle.to_lowercase();
     let Some(store) = open_store(state.home.as_path()) else {
         return json!({"ok": false, "error": "store unavailable"});
     };
+    // proxy index → media_rel → ready|stale|failed (latest entry per media)
+    let mut proxy_states: std::collections::HashMap<String, &'static str> = Default::default();
+    if !project.is_empty() {
+        if let Some(root) = state.projects.project_root(project).await {
+            if let Ok(bytes) = std::fs::read(cairn_proxy::pipeline::index_path(&root)) {
+                if let Ok(idx) = cairn_proxy::model::ProxyIndex::from_json(&bytes) {
+                    let mut latest: std::collections::HashMap<
+                        &str,
+                        &cairn_proxy::model::ProxyEntry,
+                    > = Default::default();
+                    for e in idx.proxies.values() {
+                        match latest.get(e.media_rel.as_str()) {
+                            Some(cur) if cur.generated_at_ms >= e.generated_at_ms => {}
+                            _ => {
+                                latest.insert(e.media_rel.as_str(), e);
+                            }
+                        }
+                    }
+                    for (media_rel, e) in latest {
+                        let st = if e.last_error.is_some() {
+                            "failed"
+                        } else if let (Some(want_len), Some(want_mtime)) =
+                            (e.source_len, e.source_mtime_ms)
+                        {
+                            match cairn_proxy::pipeline::source_fingerprint(&root.join(media_rel)) {
+                                Ok((len, mtime)) if len == want_len && mtime == want_mtime => {
+                                    "ready"
+                                }
+                                _ => "stale",
+                            }
+                        } else {
+                            // pre-stat-tracking entry: readiness needs a rehash,
+                            // which this view refuses to pay
+                            "stale"
+                        };
+                        proxy_states.insert(media_rel.to_string(), st);
+                    }
+                }
+            }
+        }
+    }
     let mut rows_out = Vec::new();
     let mut summary = serde_json::Map::new();
     let mut total_files = 0u64;
@@ -461,6 +510,7 @@ pub fn files(state: &DaemonState, project: &str, needle: &str) -> serde_json::Va
             "pinned": pins.contains(&row.path),
             "merge_available": merge_available,
             "placeholder": row.manifest_hash.is_some(),
+            "proxy_state": proxy_states.get(&row.path).copied().unwrap_or("none"),
         }));
     }
     rows_out.sort_by(|a, b| {
@@ -781,8 +831,10 @@ mod tests {
     /// plus a project-wide `summary.merge_offers` count — the affordance an
     /// editor actually clicks. Rows without an offer stay `false`; the count
     /// is the number of DECISIONS waiting, not the number of rows.
-    #[test]
-    fn files_rows_expose_merge_available() {
+    /// (Contract freeze §1: rows also carry `proxy_state` — "none" here,
+    /// since this store has no proxy index.)
+    #[tokio::test]
+    async fn files_rows_expose_merge_available() {
         let home = tempfile::tempdir().unwrap();
         {
             let store = open_store(home.path()).unwrap();
@@ -824,7 +876,7 @@ mod tests {
             doctor_cache: tokio::sync::RwLock::new(None),
         };
 
-        let out = files(&state, "p1", "");
+        let out = files(&state, "p1", "").await;
         assert_eq!(out["ok"], json!(true));
         let rows = out["files"].as_array().expect("files array");
         let hero = rows
@@ -832,6 +884,7 @@ mod tests {
             .find(|r| r["path"] == json!("hero.otio"))
             .expect("hero row present");
         assert_eq!(hero["merge_available"], json!(true), "offer -> badge");
+        assert_eq!(hero["proxy_state"], json!("none"), "no proxy index -> none");
         let broll = rows
             .iter()
             .find(|r| r["path"] == json!("broll.otio"))
@@ -844,7 +897,7 @@ mod tests {
         assert_eq!(out["summary"]["merge_offers"], json!(1));
 
         // project scoping: another namespace sees neither rows nor offers
-        let other = files(&state, "p2", "");
+        let other = files(&state, "p2", "").await;
         assert_eq!(other["files"].as_array().unwrap().len(), 0);
         assert_eq!(other["summary"]["merge_offers"], json!(0));
     }
