@@ -93,12 +93,12 @@ const STR = {
   "btn.attach": { en: "attach", "de-DE": "verbinden", "ja-JP": "接続", "zh-CN": "连接" },
   "btn.copy": { en: "copy", "de-DE": "kopieren", "ja-JP": "コピー", "zh-CN": "复制" },
   "btn.versions": { en: "Versions", "de-DE": "Versionen", "ja-JP": "バージョン", "zh-CN": "版本" },
-  "btn.recall": { en: "Recall", "de-DE": "Abrufen", "ja-JP": "リコール", "zh-CN": "取回" },
+  "btn.recall": { en: "Make available", "de-DE": "Verfügbar machen", "ja-JP": "利用可能にする", "zh-CN": "设为可用" },
   "btn.snapshot": { en: "create version", "de-DE": "Version erstellen", "ja-JP": "バージョン作成", "zh-CN": "创建版本" },
   "btn.detach": { en: "detach", "de-DE": "trennen", "ja-JP": "切断", "zh-CN": "断开" },
   "btn.restore": { en: "restore", "de-DE": "wiederherstellen", "ja-JP": "復元", "zh-CN": "还原" },
-  "btn.pin": { en: "pin", "de-DE": "anheften", "ja-JP": "ピン留め", "zh-CN": "置顶" },
-  "btn.unpin": { en: "unpin", "de-DE": "Pin löschen", "ja-JP": "ピン解除", "zh-CN": "取消置顶" },
+  "btn.pin": { en: "Keep on this computer", "de-DE": "Auf diesem Computer behalten", "ja-JP": "このPCに保持", "zh-CN": "保留在此电脑" },
+  "btn.unpin": { en: "Stop keeping on this computer", "de-DE": "Nicht mehr behalten", "ja-JP": "保持を解除", "zh-CN": "停止保留" },
 
   "panel.add": { en: "Add a project", "de-DE": "Projekt hinzufügen", "ja-JP": "プロジェクトを追加", "zh-CN": "添加项目" },
   "panel.versions": { en: "Versions", "de-DE": "Versionen", "ja-JP": "バージョン", "zh-CN": "版本" },
@@ -250,8 +250,61 @@ const STR = {
   "toast.denied": { en: "denied: {e}", "de-DE": "verweigert: {e}", "ja-JP": "拒否: {e}", "zh-CN": "被拒绝：{e}" },
   "toast.failed": { en: "failed: {e}", "de-DE": "fehlgeschlagen: {e}", "ja-JP": "失敗: {e}", "zh-CN": "失败：{e}" },
 
-  "confirm.detach": { en: "Detach {p}? Local files stay.", "de-DE": "{p} trennen? Lokale Dateien bleiben.", "ja-JP": "{p}を切断しますか？ローカルファイルは保持されます。", "zh-CN": "断开 {p}？本地文件会保留。" },
-  "confirm.restore": { en: "Restore this version into the workspace?", "de-DE": "Diese Version in den Workspace zurückspielen?", "ja-JP": "このバージョンをワークスペースに復元しますか？", "zh-CN": "将该版本还原到工作区？" },
+  /* mom-test round: confirmations state CONSEQUENCES, not implementation
+     nouns ("detach/workspace" meant nothing to a non-technical user) */
+  "confirm.detach": { en: "Remove {p} from Cairn? Your files stay on this computer - Cairn only stops syncing them.", "de-DE": "{p} aus Cairn entfernen? Deine Dateien bleiben auf diesem Computer - Cairn hört nur auf zu synchronisieren.", "ja-JP": "{p}をCairnから削除しますか？ファイルはこのコンピュータに残り、同期が停止するだけです。", "zh-CN": "要从 Cairn 移除 {p} 吗？文件仍保留在这台电脑上，Cairn 只是停止同步。" },
+  "confirm.restore": { en: "Restore this older version? It replaces the current project files with the selected one.", "de-DE": "Diese ältere Version wiederherstellen? Sie ersetzt die aktuellen Projektdateien.", "ja-JP": "この古いバージョンを復元しますか？現在のプロジェクトファイルが置き換えられます。", "zh-CN": "要恢复这个旧版本吗？它将替换当前的项目文件。" },
+
+  /* round 28: connect / review / merge i18n completion (the language
+     selector used to go silent mid-sentence on these views) + plain
+     language (no STUN, no swarm, no 0.0.0.0 in a user's face) */
+  "view.connect": { en: "Connect", "de-DE": "Verbinden", "ja-JP": "接続", "zh-CN": "连接" },
+  "view.review": { en: "Review", "de-DE": "Review", "ja-JP": "レビュー", "zh-CN": "审阅" },
+  "view.merge": { en: "Merge", "de-DE": "Zusammenführen", "ja-JP": "マージ", "zh-CN": "合并" },
+  "connect.lede": { en: "Before syncing, connect your team with a join code. Generate one below, share it, done.", "de-DE": "Verbinde dein Team mit einem Join-Code. Unten erzeugen, teilen, fertig.", "ja-JP": "参加コードでチームを接続します。下で生成して共有するだけです。", "zh-CN": "用加入代码连接你的团队。在下方生成并分享即可。" },
+  "connect.hintCode": { en: "Share this code with a teammate.", "de-DE": "Teile diesen Code mit deinem Team.", "ja-JP": "このコードをチームメイトに共有してください。", "zh-CN": "把这个代码分享给队友。" },
+  "connect.hintNone": { en: "No code yet - attach a project and make sure the server is running.", "de-DE": "Noch kein Code - Projekt hinzufügen und prüfen, dass der Server läuft.", "ja-JP": "コードがまだありません - プロジェクトを追加し、サーバーが動作しているか確認してください。", "zh-CN": "还没有代码 - 请先添加项目并确认服务器已启动。" },
+  "connect.online": { en: "online", "de-DE": "online", "ja-JP": "オンライン", "zh-CN": "在线" },
+  "connect.offline": { en: "offline", "de-DE": "offline", "ja-JP": "オフライン", "zh-CN": "离线" },
+  "connect.noSignal": { en: "not connected", "de-DE": "nicht verbunden", "ja-JP": "未接続", "zh-CN": "未连接" },
+  "connect.noSwarm": { en: "not syncing yet", "de-DE": "synchronisiert noch nicht", "ja-JP": "まだ同期していません", "zh-CN": "尚未同步" },
+  "connect.noCode": { en: "No code to copy", "de-DE": "Kein Code zum Kopieren", "ja-JP": "コピーするコードがありません", "zh-CN": "没有可复制的代码" },
+  "connect.copied": { en: "Join code copied", "de-DE": "Join-Code kopiert", "ja-JP": "参加コードをコピーしました", "zh-CN": "已复制加入代码" },
+  "connect.generated": { en: "New code: {c}", "de-DE": "Neuer Code: {c}", "ja-JP": "新しいコード: {c}", "zh-CN": "新代码：{c}" },
+  "connect.joinFirst": { en: "Paste a join code first", "de-DE": "Zuerst einen Join-Code einfügen", "ja-JP": "まず参加コードを貼り付けてください", "zh-CN": "请先粘贴加入代码" },
+  "connect.joined": { en: "Joined! Check Dashboard.", "de-DE": "Beigetreten! Siehe Übersicht.", "ja-JP": "参加しました！ダッシュボードを確認。", "zh-CN": "已加入！请查看总览。" },
+  "connect.joinFailed": { en: "Join failed: {e}", "de-DE": "Beitritt fehlgeschlagen: {e}", "ja-JP": "参加に失敗: {e}", "zh-CN": "加入失败：{e}" },
+  "connect.needProject": { en: "Attach a project first", "de-DE": "Zuerst ein Projekt hinzufügen", "ja-JP": "先にプロジェクトを追加してください", "zh-CN": "请先添加项目" },
+
+  "review.lede": { en: "Publish a cut, generate a link, share it. Client opens in browser, leaves frame notes.", "de-DE": "Schnitt veröffentlichen, Link erzeugen, teilen. Der Kunde schaut im Browser und hinterlässt Frame-Notizen.", "ja-JP": "カットを公開してリンクを共有。クライアントはブラウザで開き、フレームにメモを残します。", "zh-CN": "发布剪辑、生成链接、分享。客户在浏览器中打开并留下逐帧备注。" },
+  "review.versions": { en: "Versions", "de-DE": "Versionen", "ja-JP": "バージョン", "zh-CN": "版本" },
+  "review.chooseMedia": { en: "Video to publish", "de-DE": "Zu veröffentlichendes Video", "ja-JP": "公開する動画", "zh-CN": "要发布的视频" },
+  "review.chooseMediaA11y": { en: "Choose the video to publish", "de-DE": "Video zur Veröffentlichung wählen", "ja-JP": "公開する動画を選択", "zh-CN": "选择要发布的视频" },
+  "review.publish": { en: "Publish for review", "de-DE": "Zur Review veröffentlichen", "ja-JP": "レビューに公開", "zh-CN": "发布以供审阅" },
+  "review.published": { en: "Published v{n}", "de-DE": "v{n} veröffentlicht", "ja-JP": "v{n} を公開しました", "zh-CN": "已发布 v{n}" },
+  "review.noVersions": { en: "No versions yet - publish a cut first.", "de-DE": "Noch keine Versionen - zuerst einen Schnitt veröffentlichen.", "ja-JP": "バージョンがまだありません - まずカットを公開してください。", "zh-CN": "还没有版本 - 请先发布剪辑。" },
+  "review.noMedia": { en: "No finished video files available yet - they must finish syncing first.", "de-DE": "Noch keine fertigen Videodateien verfügbar - die Synchronisierung muss erst abschließen.", "ja-JP": "利用可能な完成動画がまだありません - 同期の完了が必要です。", "zh-CN": "还没有可用的完整视频文件 - 需要先完成同步。" },
+  "review.untitled": { en: "untitled", "de-DE": "ohne Titel", "ja-JP": "無題", "zh-CN": "未命名" },
+  "review.versionRow": { en: "v{n} · {t} · {d} · {f} frames @ {r}", "de-DE": "v{n} · {t} · {d} · {f} Bilder @ {r}", "ja-JP": "v{n} · {t} · {d} · {f} フレーム @ {r}", "zh-CN": "v{n} · {t} · {d} · {f} 帧 @ {r}" },
+  "review.linkTitle": { en: "Generate review link", "de-DE": "Review-Link erzeugen", "ja-JP": "レビューリンクを生成", "zh-CN": "生成审阅链接" },
+  "review.linkCreate": { en: "Generate link", "de-DE": "Link erzeugen", "ja-JP": "リンクを生成", "zh-CN": "生成链接" },
+  "review.linkNote": { en: "Anyone with this link can view this version until it expires. Revoke it below anytime.", "de-DE": "Jeder mit diesem Link kann diese Version bis zum Ablauf ansehen. Unten jederzeit widerrufbar.", "ja-JP": "このリンクを知る人は誰でも、期限切れまでこのバージョンを閲覧できます。いつでも下で取り消せます。", "zh-CN": "任何拥有此链接的人都可在过期前查看该版本。可随时在下方撤销。" },
+  "review.selfHost": { en: "Self-hosting the review portal (advanced)", "de-DE": "Review-Portal selbst hosten (für Fortgeschrittene)", "ja-JP": "レビューポータルのセルフホスト（上級者向け）", "zh-CN": "自托管审阅门户（高级）" },
+  "review.expires": { en: "expires {d}", "de-DE": "läuft {d} ab", "ja-JP": "{d} に期限切れ", "zh-CN": "{d} 过期" },
+  "review.never": { en: "never expires", "de-DE": "läuft nie ab", "ja-JP": "無期限", "zh-CN": "永不过期" },
+  "review.expired": { en: "expired", "de-DE": "abgelaufen", "ja-JP": "期限切れ", "zh-CN": "已过期" },
+  "review.revoke": { en: "Revoke", "de-DE": "Widerrufen", "ja-JP": "取り消す", "zh-CN": "撤销" },
+  "review.revoked": { en: "link revoked", "de-DE": "Link widerrufen", "ja-JP": "リンクを取り消しました", "zh-CN": "链接已撤销" },
+
+  "merge.lede": { en: "Two editors, same timeline. Pick base/ours/theirs, preview the merge.", "de-DE": "Zwei Editoren, eine Timeline. Basis/unsere/deren wählen, Merge ansehen.", "ja-JP": "二人の編集者、同じタイムライン。ベース/自分/相手を選んでマージを確認。", "zh-CN": "两位剪辑师，同一条时间线。选择 base/ours/theirs 并预览合并。" },
+  "merge.pickThree": { en: "Pick base, ours, and theirs files first.", "de-DE": "Zuerst Basis-, Unsere- und Deren-Datei wählen.", "ja-JP": "まずベース・自分・相手のファイルを選んでください。", "zh-CN": "请先选择 base、ours、theirs 文件。" },
+  "merge.running": { en: "Merging... (frame-accurate, three-way)", "de-DE": "Führe zusammen... (bildgenau, dreiweg)", "ja-JP": "マージ中...（フレーム正確・3-way）", "zh-CN": "正在合并...（逐帧精确，三方）" },
+  "merge.searching": { en: "Searching...", "de-DE": "Suche...", "ja-JP": "検索中...", "zh-CN": "搜索中..." },
+  "merge.fallback": { en: "merge view unavailable: {e}", "de-DE": "Merge-Ansicht nicht verfügbar: {e}", "ja-JP": "マージビューを利用できません: {e}", "zh-CN": "合并视图不可用：{e}" },
+  "merge.noMatches": { en: "no matches", "de-DE": "keine Treffer", "ja-JP": "一致なし", "zh-CN": "无匹配" },
+
+  "toast.sharedLink": { en: "project link copied - teammates with access can open it. Nothing was uploaded.", "de-DE": "Projekt-Link kopiert - Teammitglieder mit Zugang können ihn öffnen. Nichts wurde hochgeladen.", "ja-JP": "プロジェクトリンクをコピーしました - アクセス権のあるチームメイトが開けます。アップロードはしていません。", "zh-CN": "项目链接已复制 - 有权限的队友可以打开。未上传任何内容。" },
+  "toast.recallFirst": { en: "Not on this computer yet - use Make available first.", "de-DE": "Noch nicht auf diesem Computer - erst \"Verfügbar machen\" nutzen.", "ja-JP": "まだこのコンピュータにありません - 先に「利用可能にする」を使ってください。", "zh-CN": "还不在这台电脑上 - 请先使用“设为可用”。" },
 };
 
 function detectLang() {
@@ -380,8 +433,22 @@ function displayRoot(p) {
   return String(p ?? "").replace(/^\\\\\?\\/, "");
 }
 
+/* per-launch dashboard token (the daemon injects it into the page at
+   serve time): every /api call carries it — header for fetch, ?t= for
+   the two clients that cannot set headers (EventSource, download
+   links). Without it the API answers 403. */
+function cairnToken() {
+  return String(window.CAIRN_TOKEN || "");
+}
+function authHeaders() {
+  return { "X-Cairn-Token": cairnToken() };
+}
+function withToken(url) {
+  return url + (url.includes("?") ? "&" : "?") + "t=" + encodeURIComponent(cairnToken());
+}
+
 async function getJSON(url) {
-  const res = await fetch(url, { headers: { Accept: "application/json" } });
+  const res = await fetch(url, { headers: { Accept: "application/json", ...authHeaders() } });
   if (!res.ok) throw new Error(`${url}: ${res.status}`);
   return res.json();
 }
@@ -389,13 +456,14 @@ async function getJSON(url) {
 async function postJSON(url, body) {
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body || {}),
   });
   return res.json();
 }
 
-/* toast: inline feedback instead of window.alert (redesign-skill ban) */
+/* toast: inline feedback instead of window.alert (redesign-skill ban);
+   aria-live so screen readers announce status changes (a11y round) */
 let TOAST_TIMER = null;
 function toast(msg, isBad) {
   let el = document.querySelector(".toast");
@@ -403,9 +471,11 @@ function toast(msg, isBad) {
     el = document.createElement("div");
     el.className = "toast";
     el.setAttribute("role", "status");
+    el.setAttribute("aria-live", "polite");
     document.body.appendChild(el);
   }
   el.textContent = msg;
+  el.setAttribute("aria-live", isBad ? "assertive" : "polite");
   el.classList.toggle("is-bad", !!isBad);
   el.classList.add("is-on");
   window.clearTimeout(TOAST_TIMER);
@@ -1354,12 +1424,21 @@ async function doFileOpen(project, path) {
   else toast(t("toast.openedFolder"));
 }
 
-function doFileDownload(project, path) {
+async function doFileDownload(project, path) {
   if (!project || !path) return;
+  const url = withToken(`/api/v1/file/download?project=${encodeURIComponent(project)}&path=${encodeURIComponent(path)}`);
+  // honest UX: a placeholder answers 409 AFTER the browser already said
+  // "downloading..." - preflight one cheap HEAD and route the failure to
+  // the action that actually fixes it (recall), not to a dead download.
+  try {
+    const head = await fetch(url, { method: "HEAD" });
+    if (head.status === 409) { toast(t("toast.recallFirst"), true); return; }
+    if (!head.ok) { toast(t("toast.denied", { e: "HTTP " + head.status }), true); return; }
+  } catch { /* daemon hiccup: let the browser attempt it anyway */ }
   // the browser owns the download UX (progress, cancel, save location);
   // we just point it at the daemon's streaming endpoint
   const a = document.createElement("a");
-  a.href = `/api/v1/file/download?project=${encodeURIComponent(project)}&path=${encodeURIComponent(path)}`;
+  a.href = url;
   a.download = "";
   document.body.appendChild(a);
   a.click();
@@ -1379,30 +1458,17 @@ async function doFileDuplicate(project, path) {
 }
 
 async function doFileShare(project, path) {
-  // share = a WEB link, not localhost. Try free provider (file.io) via download+upload, fallback to cairn:// link.
+  // Share = a cairn:// deep link for teammates who already have access
+  // to this project. It NEVER uploads bytes anywhere: the old
+  // third-party "public link" fallback (upload to file.io) is gone for
+  // good - a local-first media tool must not ship the user's footage to
+  // a public host behind a button labelled Share. To reach someone
+  // WITHOUT Cairn access: Review -> Generate link (token-gated,
+  // expiring, revocable), or Download the file and send it yourself.
   if (!path) return;
   const cairnLink = `cairn://${encodeURIComponent(project)}/${encodeURIComponent(path)}`;
-  const localUrl = `${location.origin}/api/v1/file/download?project=${encodeURIComponent(project)}&path=${encodeURIComponent(path)}`;
-  // try to copy cairn link immediately (fast), then attempt web provider in background
   const ok = await copyText(cairnLink);
-  toast(ok ? (t("toast.copiedPath") + " \u2014 " + cairnLink) : t("toast.denied", { e: "clipboard blocked" }), !ok);
-  // background: try file.io for a public URL (free, no auth) - fetch local bytes then POST
-  try {
-    const resp = await fetch(localUrl);
-    if (!resp.ok) return;
-    const blob = await resp.blob();
-    // file.io has 2GB limit, skip if too large for demo
-    if (blob.size > 100*1024*1024) return;
-    const fd = new FormData();
-    fd.append("file", blob, path.split("/").pop() || "file");
-    const up = await fetch("https://file.io", { method: "POST", body: fd });
-    const j = await up.json().catch(()=>null);
-    if (j && j.success && j.link) {
-      await copyText(j.link);
-      toast("Public link: " + j.link + " (also on clipboard)", false);
-      console.log("public share link:", j.link, "cairn:", cairnLink);
-    }
-  } catch (e) { console.log("web share fallback failed", e); }
+  toast(ok ? t("toast.sharedLink") : t("toast.denied", { e: "clipboard blocked" }), !ok);
 }
 
 /* ============================== recent assets (dashboard) ==============================
@@ -2127,7 +2193,7 @@ function renderLive() {
 function liveSseOpen() {
   if (LIVE_SSE) return;
   try {
-    LIVE_SSE = new EventSource("/api/v1/live");
+    LIVE_SSE = new EventSource(withToken("/api/v1/live"));
     LIVE_SSE.onmessage = (msg) => {
       try {
         const ev = JSON.parse(msg.data);
@@ -2378,7 +2444,7 @@ $("files-project").addEventListener("change", refreshFiles);
 
 /* ============================== orchestration ============================== */
 
-async function refreshAll() {
+async function refreshDashboardBase() {
   await refreshStatus();
   await refreshProjects();
   renderOnboarding();
@@ -2429,6 +2495,50 @@ stagger(document.querySelector(".dash-grid"), ".card");
 stagger(document.querySelector(".settings-col"), ".card");
 stagger(document.querySelector(".howto-grid"), ".card");
 
+/* refresh orchestration (mom-test round): ONE owner of cadence - the old
+   code reassigned refreshAll AFTER setInterval had captured the original,
+   so the wrapper quietly never ran on the 2s tick. Also: a hidden tab
+   stops polling entirely (visibility-aware), returning starts the timers
+   again and refreshes once; REFRESHING keeps a slow refresh from
+   overlapping the next one (single-flight). Defined BEFORE the boot
+   block so the first refreshAll() call hits no dead zones. */
+let REFRESHING = false;
+async function refreshAll() {
+  if (REFRESHING) return;
+  REFRESHING = true;
+  try {
+    await refreshDashboardBase();
+    await Promise.allSettled([refreshConnect(), refreshReviewPage()]);
+  } finally {
+    REFRESHING = false;
+  }
+}
+const POLL_MS_PLAN = [
+  [refreshAll, 2000],
+  [refreshReview, 5000],
+  [refreshTeam, 8000],
+  [refreshUpdate, 30000],
+  [refreshOnce, 15000],
+  [refreshConnect, 8000],
+];
+let POLL_TIMERS = [];
+function startPolling() {
+  if (POLL_TIMERS.length) return;
+  POLL_TIMERS = POLL_MS_PLAN.map(([fn, ms]) => setInterval(fn, ms));
+}
+function stopPolling() {
+  POLL_TIMERS.forEach(clearInterval);
+  POLL_TIMERS = [];
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    stopPolling();
+  } else {
+    startPolling();
+    refreshAll();
+  }
+});
+
 /* boot */
 applyI18n();
 refreshOnce();
@@ -2436,76 +2546,131 @@ refreshAll();
 refreshReview();
 refreshTeam();
 refreshUpdate();
-setInterval(refreshAll, 2000);
-setInterval(refreshReview, 5000);
-setInterval(refreshTeam, 8000);
-setInterval(refreshUpdate, 30000);
-setInterval(refreshOnce, 15000);
+startPolling();
+/* cadence lives in ONE place: the POLL_MS_PLAN owner above. */
 /* ============ CONNECT, REVIEW, MERGE wiring (round 27 prime real estate) ============ */
 async function refreshConnect() {
   try {
-    const t = await getJSON("/api/v1/team");
-    const code = t.join_code || (t.projects && t.projects[0] && t.projects[0].join_code) || "";
-    const sig = t.signal || (t.projects && t.projects[0] && t.projects[0].signal) || "";
-    const swarm = t.swarm || "";
+    // NOTE: not `t` - that name is the i18n function and shadowing it here
+    // made every t() call below throw (the old code used literal strings).
+    const team = await getJSON("/api/v1/team");
+    const code = team.join_code || (team.projects && team.projects[0] && team.projects[0].join_code) || "";
+    const sig = team.signal || (team.projects && team.projects[0] && team.projects[0].signal) || "";
+    const swarm = team.swarm || "";
     const codeEl = document.getElementById("connect-code");
     const hint = document.getElementById("connect-hint");
     const sigEl = document.getElementById("connect-signal");
     const sigAddr = document.getElementById("connect-signal-addr");
     const swarmEl = document.getElementById("connect-swarm");
     if (codeEl) { codeEl.textContent = code || "—"; codeEl.dataset.copy = code || ""; document.getElementById("connect-copy").dataset.copy = code || ""; }
-    if (hint) hint.textContent = code ? "Share this code with a teammate." : "No code yet — attach a project and ensure the signal server is running.";
-    if (sigEl) sigEl.textContent = sig ? "online" : "offline";
-    if (sigAddr) sigAddr.textContent = sig || "no signal";
-    if (swarmEl) swarmEl.textContent = swarm || "no swarm";
+    if (hint) hint.textContent = code ? t("connect.hintCode") : t("connect.hintNone");
+    if (sigEl) sigEl.textContent = sig ? t("connect.online") : t("connect.offline");
+    if (sigAddr) sigAddr.textContent = sig || t("connect.noSignal");
+    if (swarmEl) swarmEl.textContent = swarm || t("connect.noSwarm");
   } catch (e) { /* team not ready */ }
 }
 async function refreshReviewPage() {
   try {
     const r = await getJSON("/api/v1/review");
+    const entry = (r.review && r.review[0]) || null;
     const list = document.getElementById("review-list");
+    const linksWrap = document.getElementById("review-links");
     const notes = document.getElementById("review-notes");
     const count = document.getElementById("review-notes-count");
     if (list) {
-      if (!r.review || r.review.length === 0) list.innerHTML = '<p class="note">No versions yet — publish a cut first.</p>';
+      // r.review is PER-PROJECT entries; the old code iterated the array
+      // as if each entry were a version ("vundefined" rows). Versions
+      // live one level down.
+      const versions = (entry && entry.versions) || [];
+      if (!versions.length) list.innerHTML = `<p class="note">${esc(t("review.noVersions"))}</p>`;
       else {
         list.innerHTML = "";
-        for (const rev of r.review) {
+        for (const rev of versions) {
           const div = document.createElement("div");
           div.className = "mono";
           div.style.cssText = "padding:8px;border:1px solid var(--hairline);border-radius:8px;margin:4px 0";
-          div.textContent = `v${rev.number} — ${rev.title || "untitled"} — ${rev.frames || "?"} frames @${rev.fps || "?"} — ${rev.notes || 0} notes`;
+          div.textContent = t("review.versionRow", {
+            n: rev.number,
+            t: rev.label || entry.title || t("review.untitled"),
+            d: rev.duration || "?",
+            f: rev.frames ?? "?",
+            r: rev.fps_num && rev.fps_den ? `${rev.fps_num}/${rev.fps_den}` : "?",
+          });
           list.appendChild(div);
         }
       }
     }
+    // links you can SEE are links you can kill: expiry date, copy, revoke
+    if (linksWrap) {
+      const links = (entry && entry.links) || [];
+      linksWrap.innerHTML = "";
+      for (const l of links) {
+        const when = l.expired ? t("review.expired")
+          : l.expires_at > 0 ? t("review.expires", { d: new Date(l.expires_at).toLocaleDateString() })
+          : t("review.never");
+        const row = document.createElement("div");
+        row.style.cssText = "display:flex;gap:6px;align-items:center;padding:4px 0;flex-wrap:wrap";
+        row.innerHTML =
+          `<span class="mono" style="font-size:0.85em">…${esc(String(l.token || "").slice(-6))}</span>` +
+          `<span class="note" style="margin:0">${esc(l.note || "")} · ${esc(l.role || "")} · ${esc(when)}</span>` +
+          `<span style="flex:1"></span>` +
+          `<button type="button" class="btn btn-ghost btn-sm" data-copy="${esc(location.origin + "/r/" + (l.token || ""))}">${esc(t("btn.copy"))}</button>` +
+          (l.expired ? "" : `<button type="button" class="btn btn-ghost btn-sm" data-revoke="${esc(l.token || "")}">${esc(t("review.revoke"))}</button>`);
+        linksWrap.appendChild(row);
+      }
+    }
     if (count && notes) { count.textContent = "0"; }
+    refreshReviewMedia();
   } catch {}
+}
+
+/* the publish picker: the USER chooses which cut, not "first .mp4".
+   Placeholders stay out - a 0-byte stub has nothing to watch. */
+const REVIEW_MEDIA_RE = /\.(mp4|mov|m4v|mkv|avi|webm|mpg|mpeg|mxf|r3d|braw)$/i;
+let REVIEW_MEDIA_PID = "";
+async function refreshReviewMedia() {
+  const sel = document.getElementById("review-media-select");
+  if (!sel) return;
+  const project = selectedProject();
+  if (!project) { sel.innerHTML = ""; REVIEW_MEDIA_PID = ""; return; }
+  if (REVIEW_MEDIA_PID === project && sel.options.length) return; // stable
+  try {
+    const files = await getJSON(`/api/v1/files?project=${encodeURIComponent(project)}`);
+    const media = (files.files || []).filter((f) => !f.placeholder && REVIEW_MEDIA_RE.test(f.path));
+    sel.innerHTML = "";
+    for (const f of media) {
+      const o = document.createElement("option");
+      o.value = f.path;
+      o.textContent = f.path;
+      sel.appendChild(o);
+    }
+    REVIEW_MEDIA_PID = project;
+  } catch { /* files not ready; the next cycle retries */ }
 }
 // wire connect buttons
 document.getElementById("connect-copy")?.addEventListener("click", async (ev) => {
   const c = ev.currentTarget.dataset.copy || document.getElementById("connect-code")?.textContent || "";
-  if (!c || c === "—") return toast("No code to copy", true);
+  if (!c || c === "—") return toast(t("connect.noCode"), true);
   const ok = await copyText(c);
-  toast(ok ? "Join code copied: " + c : "clipboard blocked", !ok);
+  toast(ok ? t("connect.copied") : t("toast.denied", { e: "clipboard blocked" }), !ok);
 });
 document.getElementById("connect-regenerate")?.addEventListener("click", async () => {
   try {
     const r = await postJSON("/api/v1/team/regenerate", {});
-    toast(r.ok ? "New code: " + (r.join_code || r.code) : "regenerate failed: " + (r.error || "unknown"), !r.ok);
+    toast(r.ok ? t("connect.generated", { c: r.join_code || r.code }) : t("toast.failed", { e: r.error || "unknown" }), !r.ok);
     refreshConnect();
-  } catch (e) { toast("regenerate failed: " + e, true); }
+  } catch (e) { toast(t("toast.failed", { e }), true); }
 });
 document.getElementById("connect-join")?.addEventListener("click", async () => {
   const code = document.getElementById("connect-input")?.value?.trim();
-  if (!code) return toast("Paste a join code first", true);
+  if (!code) return toast(t("connect.joinFirst"), true);
   try {
     const r = await postJSON("/api/v1/team/join", { code });
     const out = document.getElementById("connect-join-result");
-    if (out) out.textContent = r.ok ? "Joined! Check Dashboard." : "Join failed: " + (r.error || "unknown");
-    toast(r.ok ? "Joined workspace" : "Join failed: " + (r.error || "unknown"), !r.ok);
+    if (out) out.textContent = r.ok ? t("connect.joined") : t("connect.joinFailed", { e: r.error || "unknown" });
+    toast(r.ok ? t("connect.joined") : t("connect.joinFailed", { e: r.error || "unknown" }), !r.ok);
     if (r.ok) refreshAll();
-  } catch (e) { toast("join failed: " + e, true); }
+  } catch (e) { toast(t("connect.joinFailed", { e }), true); }
 });
 // wire review buttons
 document.getElementById("review-link-create")?.addEventListener("click", async () => {
@@ -2518,27 +2683,39 @@ document.getElementById("review-link-create")?.addEventListener("click", async (
     if (out) {
       if (r.ok) {
         const full = `${location.origin}${r.link}`;
-        out.innerHTML = `<code class="mono" style="word-break:break-all;display:block;margin-bottom:8px">${full}</code><div style="display:flex;gap:8px"><button type="button" class="btn btn-ghost btn-sm" data-copy="${full}">Copy</button><a class="btn btn-primary btn-sm" href="${r.link}" target="_blank" rel="noopener">Open review</a></div><p class="note" style="margin-top:8px">Serve with: <code class="mono">cairn daemon --review 0.0.0.0:17778</code> so the client can reach it. No account needed.</p>`;
+        out.innerHTML = `<code class="mono" style="word-break:break-all;display:block;margin-bottom:8px">${esc(full)}</code><div style="display:flex;gap:8px"><button type="button" class="btn btn-ghost btn-sm" data-copy="${esc(full)}">${esc(t("btn.copy"))}</button><a class="btn btn-primary btn-sm" href="${r.link}" target="_blank" rel="noopener">Open review</a></div>`;
         await copyText(full);
-        toast("Review link copied", false);
+        toast(t("toast.copied"), false);
+        refreshReviewPage();
       } else {
-        out.textContent = `Failed: ${r.error}`;
+        out.textContent = t("toast.failed", { e: r.error });
       }
     }
-  } catch (e) { toast("link failed: " + e, true); }
+  } catch (e) { toast(t("toast.failed", { e }), true); }
 });
 document.getElementById("review-publish")?.addEventListener("click", async () => {
   const project = selectedProject();
-  if (!project) return toast("Attach a project first", true);
+  if (!project) return toast(t("connect.needProject"), true);
+  const media = document.getElementById("review-media-select")?.value;
+  if (!media) return toast(t("review.noMedia"), true);
   try {
-    const files = await getJSON(`/api/v1/files?project=${encodeURIComponent(project)}`);
-    const all = files.files || [];
-    const first = all.find((f) => /\.mp4$/i.test(f.path)) || all[0];
-    if (!first) return toast("Drop a media file in the project first", true);
-    const r = await postJSON("/api/v1/review/publish", { project_id: project, media: first.path, frames: 100, fps: "24", title: first.path });
-    toast(r.ok ? `Published v${r.version}` : `Publish failed: ${r.error}`, !r.ok);
+    // no frames/fps here ON PURPOSE: the backend probes the media file
+    // and owns the truth (a guessed fps is a wrong timecode for every
+    // reviewer downstream)
+    const r = await postJSON("/api/v1/review/publish", { project_id: project, media });
+    toast(r.ok ? t("review.published", { n: r.version }) : t("toast.failed", { e: r.error }), !r.ok);
     if (r.ok) refreshReviewPage();
-  } catch (e) { toast("publish failed: " + e, true); }
+  } catch (e) { toast(t("toast.failed", { e }), true); }
+});
+// revoke a guest link (delegated: the rows re-render every refresh)
+document.getElementById("review-links")?.addEventListener("click", async (ev) => {
+  const btn = ev.target.closest("[data-revoke]");
+  if (!btn) return;
+  try {
+    const r = await postJSON("/api/v1/review/revoke", { token: btn.dataset.revoke });
+    toast(r.ok ? t("review.revoked") : t("toast.failed", { e: r.error }), !r.ok);
+    if (r.ok) refreshReviewPage();
+  } catch (e) { toast(t("toast.failed", { e }), true); }
 });
 // wire merge
 document.getElementById("merge-run")?.addEventListener("click", async () => {
@@ -2547,31 +2724,27 @@ document.getElementById("merge-run")?.addEventListener("click", async () => {
   const theirs = document.getElementById("merge-theirs")?.files?.[0];
   const semantic = document.getElementById("merge-semantic")?.checked;
   const out = document.getElementById("merge-output");
-  if (!base || !ours || !theirs) { if (out) out.textContent = "Pick base, ours, and theirs files first."; return; }
-  if (out) out.textContent = "Merging... (uses cairn tl-merge logic, frame-accurate)";
+  if (!base || !ours || !theirs) { if (out) out.textContent = t("merge.pickThree"); return; }
+  if (out) out.textContent = t("merge.running");
   try {
     const read = (f) => f.text();
-    const [b, o, t] = await Promise.all([read(base), read(ours), read(theirs)]);
-    const r = await postJSON("/api/v1/tl-merge", { base_otio: b, ours_otio: o, theirs_otio: t, semantic: !!semantic });
+    // NOTE: not `[b, o, t]` - that shadowed the i18n function inside this
+    // try block (the old code only got away with it by using literals).
+    const [b, o, th] = await Promise.all([read(base), read(ours), read(theirs)]);
+    const r = await postJSON("/api/v1/tl-merge", { base_otio: b, ours_otio: o, theirs_otio: th, semantic: !!semantic });
     if (out) out.textContent = JSON.stringify(r, null, 2);
-    toast(r.ok ? `Merge: ${r.outcome || r.policy || "done"}` : `Merge failed: ${r.error}`, !r.ok);
+    toast(r.ok ? `Merge: ${r.outcome || r.policy || "done"}` : t("toast.failed", { e: r.error }), !r.ok);
   } catch (e) {
-    if (out) out.textContent = `cairn tl-merge --base ${base.name} --ours ${ours.name} --theirs ${theirs.name}${semantic ? " --semantic" : ""}\n\nFallback: ${e}`;
+    if (out) out.textContent = `cairn tl-merge --base ${base.name} --ours ${ours.name} --theirs ${theirs.name}${semantic ? " --semantic" : ""}\n\n${t("merge.fallback", { e })}`;
   }
 });
 document.getElementById("merge-search-btn")?.addEventListener("click", async () => {
   const q = document.getElementById("merge-search")?.value?.trim();
   if (!q) return;
   const out = document.getElementById("merge-search-out");
-  if (out) out.textContent = "Searching...";
+  if (out) out.textContent = t("merge.searching");
   try {
     const r = await getJSON(`/api/v1/search?q=${encodeURIComponent(q)}`);
     if (out) out.innerHTML = `<pre class="mono" style="background:var(--subtle);padding:8px;border-radius:8px;white-space:pre-wrap">${JSON.stringify(r, null, 2)}</pre>`;
-  } catch { const r2 = await getJSON(`/api/v1/files?project=${PROJECTS[0]?.project_id||""}`).then(j=>j.files||[]).catch(()=>[]); if (out) out.textContent = "Local search: " + r2.filter(f=>f.path.includes(q)).map(f=>f.path).join("\n") || "no matches"; }
+  } catch { const r2 = await getJSON(`/api/v1/files?project=${PROJECTS[0]?.project_id||""}`).then(j=>j.files||[]).catch(()=>[]); const hits = r2.filter(f=>f.path.includes(q)).map(f=>f.path).join("\n"); if (out) out.textContent = hits || t("merge.noMatches"); }
 });
-// hook into refresh cycle
-const _origRefreshAll = refreshAll;
-refreshAll = async function() { await _origRefreshAll(); refreshConnect(); refreshReviewPage(); };
-setInterval(refreshConnect, 8000);
-refreshConnect();
-refreshReviewPage();

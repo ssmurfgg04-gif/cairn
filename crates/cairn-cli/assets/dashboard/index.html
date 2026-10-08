@@ -24,6 +24,11 @@
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400..700&family=Google+Sans+Code:wght@400..600&display=swap" media="print" onload="this.media='all'">
 <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400..700&family=Google+Sans+Code:wght@400..600&display=swap"></noscript>
 <link rel="stylesheet" href="/assets/app.css">
+<!-- per-launch dashboard token: the daemon replaces %%CAIRN_TOKEN%% at
+     serve time; app.js carries it on every /api call (header for fetch,
+     ?t= for EventSource and download links). Without it the API answers
+     403 — that is the DNS-rebinding / drive-by POST gate. -->
+<script>window.CAIRN_TOKEN = "%%CAIRN_TOKEN%%";</script>
 </head>
 <body>
 <a class="skip" href="#main" data-i18n="a11y.skip">skip to content</a>
@@ -474,8 +479,8 @@
       </section>
       <!-- ============ CONNECT: join code + P2P ============ -->
       <section class="view" id="view-connect" aria-labelledby="connect-title">
-        <h2 class="view-title" id="connect-title">Connect</h2>
-        <p class="howto-lede">Before syncing, connect your team with a join code. Generate one below, share it, done.</p>
+        <h2 class="view-title" id="connect-title" data-i18n="view.connect">Connect</h2>
+        <p class="howto-lede" data-i18n="connect.lede">Before syncing, connect your team with a join code. Generate one below, share it, done.</p>
         <div class="settings-col">
           <article class="card">
             <header class="card-head"><h3 class="card-title">Your join code</h3><span class="tag" id="connect-signal">checking</span></header>
@@ -514,22 +519,42 @@
       </section>
       <!-- ============ REVIEW: publish + guest links ============ -->
       <section class="view" id="view-review" aria-labelledby="review-title">
-        <h2 class="view-title" id="review-title">Review</h2>
-        <p class="howto-lede">Publish a cut, generate a link, share it. Client opens in browser, leaves frame notes.</p>
+        <h2 class="view-title" id="review-title" data-i18n="view.review">Review</h2>
+        <p class="howto-lede" data-i18n="review.lede">Publish a cut, generate a link, share it. Client opens in browser, leaves frame notes.</p>
         <div class="settings-col">
           <article class="card">
-            <header class="card-head"><h3 class="card-title">Versions</h3><button type="button" class="btn btn-primary btn-sm" id="review-publish">Publish first file as v-next</button></header>
-            <div class="card-body"><div id="review-list"><div class="skel-row"></div></div></div>
+            <header class="card-head"><h3 class="card-title" data-i18n="review.versions">Versions</h3></header>
+            <div class="card-body">
+              <div id="review-list"><div class="skel-row"></div></div>
+              <!-- mom-test round: the user picks WHICH cut to publish; the
+                   backend probes its true frames/fps (the UI never invents
+                   media metadata). Placeholder rows stay out — there is
+                   nothing to watch in a 0-byte stub. -->
+              <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px">
+                <label style="flex:1;min-width:240px" data-i18n-attr="aria-label:review.chooseMediaA11y" aria-label="Choose the video to publish">
+                  <span data-i18n="review.chooseMedia">Video to publish</span>
+                  <select id="review-media-select" class="input" style="width:100%;margin-top:4px"></select>
+                </label>
+                <button type="button" class="btn btn-primary btn-sm" id="review-publish" data-i18n="review.publish">Publish for review</button>
+              </div>
+            </div>
           </article>
           <article class="card">
-            <header class="card-head"><h3 class="card-title">Generate review link</h3></header>
+            <header class="card-head"><h3 class="card-title" data-i18n="review.linkTitle">Generate review link</h3></header>
             <div class="card-body" style="display:flex;gap:8px;flex-wrap:wrap;align-items:end">
               <label style="flex:1">Note<input id="review-link-note" class="input" placeholder="Client A" style="width:100%"></label>
               <label>Role<select id="review-link-role" class="input"><option value="commenter">commenter</option><option value="viewer">viewer</option><option value="studio">studio</option></select></label>
-              <button type="button" class="btn btn-primary" id="review-link-create">Generate link</button>
+              <button type="button" class="btn btn-primary" id="review-link-create" data-i18n="review.linkCreate">Generate link</button>
             </div>
             <div id="review-link-result" style="margin-top:12px"></div>
-            <p class="note" style="margin-top:8px">Example: publish clip1.braw above, hit Generate link, copy the /r/&lt;token&gt; URL, open <span class="mono">http://127.0.0.1:17778/r/&lt;token&gt;</span> after starting <span class="mono">cairn daemon --review 0.0.0.0:17778</span>. No account needed.</p>
+            <p class="note" style="margin-top:8px" data-i18n="review.linkNote">Anyone with this link can view this version until it expires. Revoke it below anytime.</p>
+            <!-- mom-test round: links you can SEE are links you can KILL.
+                 Each row: who, role, expiry, copy, revoke. -->
+            <div id="review-links" style="margin-top:8px"></div>
+            <details style="margin-top:8px">
+              <summary class="note" data-i18n="review.selfHost">Self-hosting the review portal (advanced)</summary>
+              <p class="note mono" style="font-size:0.85em">cairn daemon --review &lt;addr&gt; — see docs/runbook-beta.md</p>
+            </details>
           </article>
           <article class="card">
             <header class="card-head"><h3 class="card-title">Frame notes</h3><span class="tag" id="review-notes-count">0</span></header>
@@ -539,8 +564,8 @@
       </section>
       <!-- ============ MERGE: three-way ============ -->
       <section class="view" id="view-merge" aria-labelledby="merge-title">
-        <h2 class="view-title" id="merge-title">Merge</h2>
-        <p class="howto-lede">Two editors, same timeline. Pick base/ours/theirs, preview the merge.</p>
+        <h2 class="view-title" id="merge-title" data-i18n="view.merge">Merge</h2>
+        <p class="howto-lede" data-i18n="merge.lede">Two editors, same timeline. Pick base/ours/theirs, preview the merge.</p>
         <div class="settings-col">
           <article class="card">
             <header class="card-head"><h3 class="card-title">Three-way merge</h3><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="merge-semantic"> <span class="note" style="margin:0">Semantic</span></label></header>
