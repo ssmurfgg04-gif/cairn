@@ -915,13 +915,9 @@ unsafe fn do_status(hwnd: HWND) {
 /// old show-the-details path). Ownership of the allocation transfers to
 /// the clipboard on success.
 unsafe fn set_clipboard_text(s: &str) -> bool {
-    use windows::Win32::Foundation::HANDLE;
-    use windows::Win32::System::DataExchange::{
-        CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
-    };
-    use windows::Win32::System::Memory::{
-        GlobalAlloc, GlobalFree, GlobalLock, GlobalUnlock, GMEM_MOVEABLE,
-    };
+    use windows::Win32::Foundation::{GlobalFree, HANDLE};
+    use windows::Win32::System::DataExchange::{CloseClipboard, OpenClipboard, SetClipboardData};
+    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
     // CF_UNICODETEXT = 13: the constant moved crates across windows-rs
     // versions; the Win32 ABI number never moved.
     const CF_UNICODETEXT: u32 = 13;
@@ -937,7 +933,9 @@ unsafe fn set_clipboard_text(s: &str) -> bool {
         if !dst.is_null() {
             std::ptr::copy_nonoverlapping(utf16.as_ptr(), dst as *mut u16, utf16.len());
             let _ = GlobalUnlock(h);
-            ok = !SetClipboardData(CF_UNICODETEXT, Some(HANDLE(h.0))).is_invalid();
+            // windows-rs 0.58: SetClipboardData takes HANDLE by value and
+            // returns Result<HANDLE> (is_invalid was the pre-0.58 API).
+            ok = SetClipboardData(CF_UNICODETEXT, HANDLE(h.0)).is_ok();
             if !ok {
                 // the clipboard did not take ownership — free our copy
                 let _ = GlobalFree(h);

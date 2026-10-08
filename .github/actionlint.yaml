@@ -1,5 +1,11 @@
-# actionlint config: custom self-hosted runner labels used by cairn workflows.
-# (fuse-mount-live.yml targets the /dev/fuse machine — docs/runbook-fuse-runner.md)
+# actionlint configuration: self-hosted runner labels used by this repo's
+# workflows that GitHub's built-in label list does not know about.
+#
+# nle-matrix.yml runs `runs-on: [self-hosted, windows, premiere]` — a
+# dispatch-only job documenting intent for a future studio box (see the
+# workflow header + docs/nle-matrix-results/premiere-uxp-README.md). Without
+# this config, actionlint fails the whole ci.yml actionlint gate on the
+# unknown label.
 self-hosted-runner:
   labels:
-    - "fuse"
+    - premiere
