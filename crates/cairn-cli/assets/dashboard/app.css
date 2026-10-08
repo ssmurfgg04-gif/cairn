@@ -1093,6 +1093,17 @@ kbd {
 .audit-action { font-family: var(--font-mono); font-size: 12px; }
 .muted-note { color: var(--text-3); font-size: 12.5px; }
 
+/* People: synced membership records (state-records family=member) */
+.records-list { list-style: none; margin: 8px 0 0; padding: 0; }
+.records-list li {
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12.5px;
+}
+.records-list li:last-child { border-bottom: 0; }
+.records-list .sans { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* locks */
 .lock-list { margin-top: 8px; }
 .lock-row {
@@ -1529,3 +1540,320 @@ tr:hover .row-actions .btn-qa,
 .howto-card .card-body > p:last-child { margin-bottom: 0; }
 .howto-card .note { margin-top: 4px; }
 .howto-card .note.mono { font-family: var(--font-mono); font-size: 11.5px; word-break: break-all; }
+
+/* ======================================================================
+   Task 2-b plain-language pass: styles for the components the redesign
+   introduced - Home status card, rail More disclosure, row ••• menus,
+   the confirm/merge modals, proxy + merge-offer chips, Advanced folds,
+   language menu polish, review link result. Same tokens, same weight.
+   ====================================================================== */
+
+/* ============================== Home status card ======================
+   "is everything okay?" - the SAME derivation that feeds the topbar
+   chip, painted as a wide calm card. Color lives in the icon + left
+   edge only; words stay quiet. */
+
+.home-status {
+  position: relative;
+  overflow: hidden;
+  padding: 18px 20px;
+  margin-bottom: 18px;
+  border-left: 3px solid var(--border-strong);
+}
+.home-status.is-ok { border-left-color: #46a352; }
+.home-status.is-warn { border-left-color: #d9a13c; }
+.home-status.is-retry,
+.home-status.is-error { border-left-color: #d96b66; }
+.home-status.is-bad { border-left-color: #d96b66; }
+
+.hs-main {
+  display: flex; align-items: center; gap: 14px;
+}
+.hs-ic {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 40px; height: 40px; flex: none;
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+.hs-ic .ic { width: 20px; height: 20px; }
+.home-status.is-ok .hs-ic { background: var(--ok-bg); color: var(--ok-fg); }
+.home-status.is-warn .hs-ic { background: var(--warn-bg); color: var(--warn-fg); }
+.home-status.is-retry .hs-ic,
+.home-status.is-error .hs-ic,
+.home-status.is-bad .hs-ic { background: var(--bad-bg); color: var(--bad-fg); }
+.hs-copy { min-width: 0; flex: 1; }
+.hs-title {
+  margin: 0;
+  font: 600 16px/1.3 var(--font-sans);
+  letter-spacing: -0.01em;
+}
+.hs-sub { margin: 2px 0 0; color: var(--text-2); font-size: 13px; }
+.hs-main .btn { flex: none; }
+
+.hs-stats {
+  list-style: none;
+  display: flex; gap: 26px;
+  margin: 14px 0 0; padding: 12px 0 0;
+  border-top: 1px solid var(--border);
+}
+.hs-stats li { display: flex; align-items: baseline; gap: 6px; color: var(--text-2); font-size: 12.5px; }
+.hs-stats .num { font: 600 17px/1 var(--font-sans); color: var(--text); letter-spacing: -0.01em; }
+
+.hs-issues {
+  list-style: none;
+  margin: 12px 0 0; padding: 0;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.hs-issue {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+  background: var(--surface-2);
+  font-size: 13px;
+}
+.hs-issue-text { flex: 1; min-width: 0; }
+
+/* ============================== rail: the More disclosure ============ */
+
+.rail-more { border-top: 1px solid var(--border); margin-top: 10px; }
+.rail-more > summary {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px;
+  margin: 0 6px;
+  border-radius: var(--r-ctl);
+  cursor: pointer;
+  list-style: none;
+  font: 500 13px/1.2 var(--font-sans);
+  color: var(--text-2);
+  user-select: none;
+}
+.rail-more > summary::-webkit-details-marker { display: none; }
+.rail-more > summary:hover { background: var(--surface-2); color: var(--text); }
+.rail-more > summary .ic { width: 15px; height: 15px; }
+.rail-more > summary .fold-chev { margin-left: auto; }
+.rail-more-body {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 4px 6px 6px;
+}
+
+/* ============================== row ••• menu =========================
+   The always-visible per-row actions button (#44: nothing essential
+   hover-only) and the floating menu it opens. Touch targets >= 44px. */
+
+.btn-dots {
+  display: inline-flex; align-items: center; justify-content: center;
+  /* 44px: the ••• is the PRIMARY row affordance (nothing essential is
+     hover-only), so its touch target meets the 44px minimum even though
+     the glyph stays visually quiet */
+  width: 44px; height: 44px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--r-ctl);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.btn-dots svg { width: 16px; height: 16px; }
+.btn-dots:hover { background: var(--surface-2); color: var(--text); }
+.btn-dots[aria-expanded="true"] { background: var(--surface-2); color: var(--text); }
+
+.row-menu {
+  position: fixed;
+  z-index: 90;
+  min-width: 218px;
+  padding: 5px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 10px 32px rgba(31, 31, 30, 0.14);
+  display: flex; flex-direction: column;
+  animation: rise 160ms var(--ease);
+}
+.row-menu-item {
+  display: flex; align-items: center; gap: 10px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 0; border-radius: 7px;
+  background: transparent;
+  font: 400 13.5px/1.3 var(--font-sans);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.row-menu-item .ic { width: 15px; height: 15px; color: var(--text-2); flex: none; }
+.row-menu-item:hover, .row-menu-item:focus-visible { background: var(--surface-2); outline: none; }
+.row-menu-item.is-danger { color: var(--bad-fg); }
+.row-menu-item.is-danger .ic { color: var(--bad-fg); }
+.row-menu-item.is-danger:hover { background: var(--bad-bg); }
+.row-menu-sep { height: 1px; margin: 5px 8px; background: var(--border); }
+
+/* ============================== modals ===============================
+   Shared by the confirm dialog and the merge-offer dialog: a centered
+   card on a scrim, role=dialog, focus-trapped by app.js. */
+
+.modal {
+  position: fixed; inset: 0;
+  z-index: 110; /* above the slide-over panels (90) and help overlay (100):
+                    restore is confirmed from inside the Versions panel */
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+  background: var(--scrim);
+  animation: fade 140ms var(--ease);
+}
+.modal-card {
+  width: min(460px, 94vw);
+  max-height: 86vh;
+  overflow: auto;
+  padding: 20px 22px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  box-shadow: 0 18px 48px rgba(31, 31, 30, 0.18);
+  animation: rise 180ms var(--ease);
+}
+.modal-title { margin: 0 0 8px; font: 600 16px/1.3 var(--font-sans); letter-spacing: -0.01em; }
+.modal-body { margin: 0 0 6px; color: var(--text-2); font-size: 13.5px; line-height: 1.55; }
+.modal-actions {
+  display: flex; justify-content: flex-end; gap: 8px;
+  margin-top: 16px;
+}
+.btn-danger {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 7px 14px;
+  border: 1px solid transparent;
+  border-radius: var(--r-ctl);
+  background: var(--bad-fg);
+  color: #fff;
+  font: 500 13px/1.2 var(--font-sans);
+  cursor: pointer;
+}
+.btn-danger:hover { filter: brightness(1.08); }
+.btn-danger:active { transform: scale(0.98); }
+
+/* merge-offer dialog specifics: the file in question + the three sides */
+.merge-dlg-path {
+  margin: 10px 0;
+  padding: 7px 10px;
+  background: var(--surface-2);
+  border-radius: var(--r-ctl);
+  font-size: 12px;
+  word-break: break-all;
+  color: var(--text-2);
+}
+.merge-dlg-sides {
+  margin: 12px 0 0;
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px;
+}
+.merge-dlg-sides div {
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-ctl);
+  background: var(--surface-2);
+}
+.merge-dlg-sides dt { font: 600 12.5px/1.3 var(--font-sans); color: var(--text); }
+.merge-dlg-sides dd { margin: 3px 0 0; font-size: 11.5px; line-height: 1.45; color: var(--text-3); }
+.merge-dlg-sides + .note { margin-top: 12px; }
+
+/* ============================== files: chips + proxy badge ========== */
+
+.chip-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 9px;
+  border: 1px solid var(--warn-fg);
+  border-radius: var(--r-tag);
+  background: var(--warn-bg);
+  color: var(--warn-fg);
+  font: 500 11.5px/1.4 var(--font-sans);
+  cursor: pointer;
+  vertical-align: middle;
+}
+.chip-btn .ic { width: 12px; height: 12px; }
+.chip-btn:hover { filter: brightness(0.97); }
+.chip-btn.is-merge { border-color: var(--info-fg); background: var(--info-bg); color: var(--info-fg); }
+
+.f-proxy {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin-left: 6px;
+  padding: 2px 8px;
+  border-radius: var(--r-tag);
+  font-size: 11px;
+  vertical-align: middle;
+}
+.f-proxy.is-ready { background: var(--ok-bg); color: var(--ok-fg); }
+.f-proxy.is-working { background: var(--warn-bg); color: var(--warn-fg); }
+
+.f-state.s-dim { color: var(--text-3); }
+
+/* file icon tints (doc shares the quiet default) */
+.f-film { color: var(--info-fg); }
+.f-audio { color: var(--ok-fg); }
+
+/* skeleton file rows */
+.f-skel td { padding: 11px 8px; }
+
+/* ============================== Advanced / Command line folds ======= */
+
+details.adv {
+  margin-top: 12px;
+  padding: 9px 12px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--r-ctl);
+  background: transparent;
+}
+details.adv summary {
+  cursor: pointer;
+  list-style: none;
+  font: 500 12px/1.4 var(--font-sans);
+  color: var(--text-3);
+  user-select: none;
+}
+details.adv summary::-webkit-details-marker { display: none; }
+details.adv summary::before {
+  content: ""; display: inline-block;
+  width: 6px; height: 6px; margin-right: 7px;
+  border-right: 1.5px solid var(--text-3);
+  border-bottom: 1.5px solid var(--text-3);
+  transform: rotate(-45deg);
+  transition: transform 160ms var(--ease);
+}
+details.adv[open] summary::before { transform: rotate(45deg); }
+details.adv summary:hover, details.adv[open] summary { color: var(--text-2); }
+details.adv .note, details.adv .panel-cli { margin: 8px 0 0; }
+
+/* ============================== onboarding extras ==================== */
+
+.ob-hint { margin: 2px 0 0; color: var(--text-2); }
+.ob-sub2 { margin: 4px 0 0; color: var(--text-2); }
+.ob-error {
+  margin-top: 22px;
+  padding: 18px 20px;
+  max-width: 460px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-card);
+  background: var(--surface);
+}
+.ob-error .adv { margin-top: 14px; }
+
+/* ============================== settings extras ====================== */
+
+.join-code-row { flex-wrap: wrap; }
+.live-note { margin-top: 10px; }
+
+.recall-jobs { margin-top: 14px; display: flex; flex-direction: column; gap: 10px; }
+
+/* doctor container (the .check rows predate this block) */
+.doctor { margin-top: 8px; }
+
+/* ============================== review page ========================== */
+
+.review-version-title { font-weight: 600; font-size: 13.5px; }
+.review-version-detail { color: var(--text-3); }
+.review-link-ok { margin: 0 0 8px; font: 600 13.5px/1.4 var(--font-sans); color: var(--ok-fg); }
+
+/* ============================== language menu: selected option ======= */
+/* color + weight follow the option state; the check glyph would be
+   redundant with aria-selected, so emphasis is enough */
+
+.lang-opt:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }

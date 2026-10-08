@@ -22,10 +22,11 @@
      font stacks in app.css (--font-sans / --font-mono fallbacks)
      carry the identity until fonts are vendored into /assets. -->
 <link rel="stylesheet" href="/assets/app.css">
-<!-- per-launch dashboard token: the daemon replaces %%CAIRN_TOKEN%% at
-     serve time; app.js carries it on every /api call (header for fetch,
-     ?t= for EventSource and download links). Without it the API answers
-     403 — that is the DNS-rebinding / drive-by POST gate. -->
+<!-- per-launch dashboard token: the daemon injects one per dashboard
+     start into the script below (the %%CAIRN_TOKEN%% marker lives ONLY
+     there - putting the marker in this comment made the daemon's
+     String.replace swap the comment instead of the script, so the API
+     tokenized every request with the literal marker and answered 403). -->
 <script>window.CAIRN_TOKEN = "%%CAIRN_TOKEN%%";</script>
 </head>
 <body>
@@ -33,8 +34,9 @@
 
 <!-- ================= zero roots: the onboarding stage =================
      One mark, one headline, one sentence. The first Continue reveals
-     the attach scene; the second attaches. Daemon down -> the honest
-     error card. No aurora, no glass: a quiet canvas and one soft light. -->
+     the attach scene; the second attaches. Cairn down -> the honest
+     error card with a human explanation plus an advanced escape hatch.
+     No aurora, no glass: a quiet canvas and one soft light. -->
 <section class="ob" id="onboarding" hidden>
   <div class="ob-tint" aria-hidden="true"></div>
   <div class="ob-copy reveal">
@@ -46,17 +48,21 @@
       </svg>
     </span>
     <h1 class="ob-title" id="ob-title" data-i18n="ob.title">Welcome to Cairn</h1>
-    <p class="ob-sub" id="ob-sub" data-i18n="ob.sub">One folder — Premiere and DaVinci see the same files. Pick it to link.</p>
+    <p class="ob-sub" id="ob-sub" data-i18n="ob.sub">Choose the folder where your project lives.</p>
+    <p class="ob-sub2" id="ob-sub2" data-i18n="ob.sub2">Cairn keeps it available on your other computers automatically.</p>
 
     <!-- single-button onboard: no Continue → Browse two-step, one click does it -->
     <button type="button" class="btn btn-primary ob-browse" id="ob-browse" data-i18n="btn.browse">Browse for folder...</button>
-    <p class="ob-hint" style="margin-top:10px;font-size:13px;opacity:.7" data-i18n="ob.hint">Heavy BRAW stays as lightweight proxy on laptop (GPU-made) — no 5-hour export.</p>
+    <p class="ob-hint" style="margin-top:10px;font-size:13px;opacity:.7" data-i18n="ob.hint">Working on a less powerful computer? Cairn can use lighter editing copies automatically.</p>
     <div class="ob-scene" id="ob-attach" hidden>
       <input id="ob-root" class="input" type="text" spellcheck="false" autocomplete="off"
-             data-i18n-attr="placeholder:attach.root" placeholder="/path/to/workspace"
+             data-i18n-attr="placeholder:attach.root" placeholder="/path/to/project"
              aria-label="project folder path">
-      <button type="button" class="btn btn-primary" id="ob-attach-btn" data-i18n="btn.attach">attach</button>
-      <p class="ob-cli"><code id="ob-cli-cmd">cairn attach /path/to/project</code><button type="button" class="btn btn-ghost btn-copy" id="ob-cli-copy" data-copy="cairn attach /path/to/project" data-i18n="btn.copy">copy</button></p>
+      <button type="button" class="btn btn-primary" id="ob-attach-btn" data-i18n="btn.attach">Add folder</button>
+      <details class="adv">
+        <summary data-i18n="adv.label">Advanced / Command line</summary>
+        <p class="ob-cli"><code id="ob-cli-cmd">cairn attach /path/to/project</code><button type="button" class="btn btn-ghost btn-copy" id="ob-cli-copy" data-copy="cairn attach /path/to/project" data-i18n="btn.copy">copy</button></p>
+      </details>
     </div>
 
     <div class="ob-error" id="ob-error" hidden>
@@ -67,8 +73,13 @@
           <rect x="3.5" y="14.5" width="17" height="4" rx="1.2" opacity="0.65"/>
         </svg>
       </span>
-      <p class="ob-error-title" data-i18n="ob.daemonDown">Cannot reach the daemon</p>
-      <p class="ob-error-sub" data-i18n="ob.daemonDownSub">Start it with cairn daemon, then reload.</p>
+      <p class="ob-error-title" data-i18n="ob.daemonDown">Cairn isn't running</p>
+      <p class="ob-error-sub" data-i18n="ob.daemonDownSub">We're trying to restart it.</p>
+      <button type="button" class="btn btn-primary" id="ob-retry" data-i18n="btn.retry">Try again</button>
+      <details class="adv">
+        <summary data-i18n="adv.label">Advanced / Command line</summary>
+        <p class="note mono">cairn daemon</p>
+      </details>
     </div>
   </div>
 </section>
@@ -87,43 +98,59 @@
       <span class="rail-name">cairn</span>
     </div>
 
+    <!-- plain-language nav (review #13/#14): exactly three primary
+         destinations - Home answers "is everything okay?", Files is
+         the working surface, People is who shares the project.
+         Everything else lives under the More disclosure. -->
     <nav class="rail-nav" id="nav">
       <button type="button" class="rail-item is-active" data-view="dashboard" id="nav-dashboard">
-        <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><rect x="1.75" y="1.75" width="5" height="5" rx="1.5"/><rect x="9.25" y="1.75" width="5" height="5" rx="1.5"/><rect x="1.75" y="9.25" width="5" height="5" rx="1.5"/><rect x="9.25" y="9.25" width="5" height="5" rx="1.5"/></svg>
-        <span data-i18n="nav.dashboard">Dashboard</span>
+        <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 8.6l3.6 3.6 7-8.4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span data-i18n="nav.home">Home</span>
       </button>
       <button type="button" class="rail-item" data-view="files" id="nav-files">
         <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3.5 1.75h6L12.5 4.75v9.5h-9z" stroke-linejoin="round"/><path d="M9.5 1.75v3h3" stroke-linejoin="round"/></svg>
         <span data-i18n="nav.files">Files</span>
       </button>
-      <button type="button" class="rail-item" data-view="settings" id="nav-settings">
-        <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2 4.25h12M2 8h12M2 11.75h12"/><circle cx="5.75" cy="4.25" r="1.55" fill="currentColor" stroke="none"/><circle cx="10.25" cy="8" r="1.55" fill="currentColor" stroke="none"/><circle cx="6.75" cy="11.75" r="1.55" fill="currentColor" stroke="none"/></svg>
-        <span data-i18n="nav.settings">Settings</span>
+      <button type="button" class="rail-item" data-view="people" id="nav-people">
+        <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><circle cx="5.75" cy="5.25" r="2.4"/><path d="M1.9 13.4c.5-2.4 2-3.6 3.85-3.6s3.35 1.2 3.85 3.6"/><circle cx="11.4" cy="5.9" r="1.9"/><path d="M11.6 9.9c1.5.2 2.6 1.3 3 3.1"/></svg>
+        <span data-i18n="nav.people">People</span>
       </button>
-      <!-- round 27: the layman's guide — our buyers are editors, not
-           sync engineers. "How to use" sits under Settings in the rail,
-           simple words, the five promises up front. -->
-      <button type="button" class="rail-item" data-view="howto" id="nav-howto">
-        <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="6.25"/><path d="M6.2 6.1c.3-1 1-1.6 1.9-1.6 1.1 0 1.9.7 1.9 1.6 0 1.3-1.9 1.5-1.9 2.8"/><circle cx="8" cy="11.3" r="0.2" fill="currentColor" stroke="none"/></svg>
-        <span data-i18n="nav.howto">How to use</span>
-      </button>
-      <div class="rail-sep" aria-hidden="true"></div>
-      <button type="button" class="rail-item" data-view="connect" id="nav-connect" title="Connect another computer (join code)">
-        <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="5"/><path d="M5.5 8h5M8 5.5v5"/></svg>
-        <span>Connect</span>
-      </button>
-      <button type="button" class="rail-item" data-view="review" id="nav-review" title="Client review links">
-        <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M2 3h12v7H6l-2 2v-2H2z"/></svg>
-        <span>Review</span>
-      </button>
-      <button type="button" class="rail-item" data-view="merge" id="nav-merge" title="Timeline merge">
-        <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M4 3v3a3 3 0 0 0 3 3h1a3 3 0 0 1 3 3v1"/><circle cx="4" cy="3" r="1.2" fill="currentColor" stroke="none"/><circle cx="12" cy="13" r="1.2" fill="currentColor" stroke="none"/><circle cx="4" cy="10" r="1.2" fill="currentColor" stroke="none"/></svg>
-        <span>Merge</span>
-      </button>
+
+      <!-- the More group: real tools, not mental-model load. A native
+           disclosure so keyboard and screen readers get it for free. -->
+      <details class="rail-more" id="nav-more">
+        <summary>
+          <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><circle cx="3" cy="8" r="1.4" fill="currentColor"/><circle cx="8" cy="8" r="1.4" fill="currentColor"/><circle cx="13" cy="8" r="1.4" fill="currentColor"/></svg>
+          <span data-i18n="nav.more">More</span>
+          <span class="fold-chev" aria-hidden="true"></span>
+        </summary>
+        <div class="rail-more-body">
+          <button type="button" class="rail-item" data-view="review" id="nav-review" title="Client review links">
+            <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M2 3h12v7H6l-2 2v-2H2z"/></svg>
+            <span data-i18n="nav.review">Review</span>
+          </button>
+          <button type="button" class="rail-item" data-view="merge" id="nav-merge" title="Timeline merge">
+            <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M4 3v3a3 3 0 0 0 3 3h1a3 3 0 0 1 3 3v1"/><circle cx="4" cy="3" r="1.2" fill="currentColor" stroke="none"/><circle cx="12" cy="13" r="1.2" fill="currentColor" stroke="none"/><circle cx="4" cy="10" r="1.2" fill="currentColor" stroke="none"/></svg>
+            <span data-i18n="nav.merge">Merge</span>
+          </button>
+          <button type="button" class="rail-item" data-view="connect" id="nav-connect" title="Connect another computer (join code)">
+            <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="8" cy="8" r="5"/><path d="M5.5 8h5M8 5.5v5"/></svg>
+            <span data-i18n="nav.connect">Connect</span>
+          </button>
+          <button type="button" class="rail-item" data-view="settings" id="nav-settings">
+            <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true"><path d="M2 4.25h12M2 8h12M2 11.75h12"/><circle cx="5.75" cy="4.25" r="1.55" fill="currentColor" stroke="none"/><circle cx="10.25" cy="8" r="1.55" fill="currentColor" stroke="none"/><circle cx="6.75" cy="11.75" r="1.55" fill="currentColor" stroke="none"/></svg>
+            <span data-i18n="nav.settings">Settings</span>
+          </button>
+          <button type="button" class="rail-item" data-view="howto" id="nav-howto">
+            <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="8" r="6.25"/><path d="M6.2 6.1c.3-1 1-1.6 1.9-1.6 1.1 0 1.9.7 1.9 1.6 0 1.3-1.9 1.5-1.9 2.8"/><circle cx="8" cy="11.3" r="0.2" fill="currentColor" stroke="none"/></svg>
+            <span data-i18n="nav.howto">How to use</span>
+          </button>
+        </div>
+      </details>
     </nav>
 
     <div class="rail-foot">
-      <p class="rail-meta dim" id="rail-version">daemon</p>
+      <p class="rail-meta dim" id="rail-version">Cairn</p>
     </div>
   </aside>
 
@@ -146,19 +173,19 @@
         <span class="state-chip" id="state-chip"><span class="chip-ic" id="state-ic"></span><span id="state-label">checking</span></span>
         <span class="state-chip chip-update" id="update-chip" hidden><span class="dot"></span><span id="update-label">update</span></span>
 
-        <button type="button" class="btn btn-icon" id="theme-toggle" aria-label="toggle dark mode" title="dark / light">
+        <button type="button" class="btn btn-icon" id="theme-toggle" data-i18n-attr="aria-label:a11y.theme;title:a11y.theme" aria-label="switch dark or light" title="dark / light">
           <svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 1 0-13z"/></svg>
         </button>
 
         <!-- language: globe + current name, the mockup's topbar selector.
              The footer used to carry four buttons; one menu is calmer. -->
         <div class="lang-wrap" id="lang-wrap">
-          <button type="button" class="lang-btn" id="lang-btn" aria-haspopup="listbox" aria-expanded="false" aria-label="language">
+          <button type="button" class="lang-btn" id="lang-btn" aria-haspopup="listbox" aria-expanded="false" data-i18n-attr="aria-label:a11y.lang" aria-label="language">
             <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="8" cy="8" r="6.25"/><path d="M1.9 6.5h12.2M1.9 9.5h12.2" stroke-linecap="round"/><path d="M8 1.75c-1.8 2-2.6 4-2.6 6.25S6.2 12.3 8 14.25c1.8-1.95 2.6-4 2.6-6.25S9.8 3.75 8 1.75z"/></svg>
             <span class="lang-cur" id="lang-cur">English</span>
             <svg class="caret" viewBox="0 0 10 6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M1.5 1.5L5 4.5l3.5-3"/></svg>
           </button>
-          <div class="lang-menu" id="lang-menu" role="listbox" aria-label="language" hidden>
+          <div class="lang-menu" id="lang-menu" role="listbox" data-i18n-attr="aria-label:a11y.lang" aria-label="language" hidden>
             <button type="button" class="lang-opt" role="option" data-lang="en">English</button>
             <button type="button" class="lang-opt" role="option" data-lang="de-DE">Deutsch</button>
             <button type="button" class="lang-opt" role="option" data-lang="ja-JP">日本語</button>
@@ -169,19 +196,34 @@
     </header>
 
     <main class="main" id="main">
-      <!-- ============ DASHBOARD: hero + two panels ============
-           One heading, one action — then the two panels the mockup
-           draws. Round 27: the path input moved INTO the Add panel
-           (the retro called the always-visible field "prime real
-           estate for a power-user feature"); + Add to Workspace is
-           now the single prominent action. -->
+      <!-- ============ HOME: "is everything okay?" ============
+           Review #13: the first thing on Home is ONE plain-language
+           status card - the same state derivation that feeds the
+           topbar chip, so the two can never disagree. The hero and
+           the two panels stay below it (regrouped, not deleted). -->
       <section class="view is-active" id="view-dashboard" aria-labelledby="dash-title">
+        <article class="card home-status" id="home-status" aria-live="polite">
+          <div class="hs-main">
+            <span class="hs-ic" id="hs-ic" aria-hidden="true"></span>
+            <div class="hs-copy">
+              <h2 class="hs-title" id="hs-title">Everything is up to date</h2>
+              <p class="hs-sub" id="hs-sub"></p>
+            </div>
+            <button type="button" class="btn btn-ghost" id="hs-open" data-i18n="home.openFolder">Open folder</button>
+          </div>
+          <ul class="hs-stats">
+            <li><b class="num" id="hs-files">0</b> <span data-i18n="home.files">files</span></li>
+            <li><b class="num" id="hs-computers">1</b> <span id="hs-computers-label" data-i18n="home.computers">computers connected</span></li>
+          </ul>
+          <ul class="hs-issues" id="hs-issues" hidden></ul>
+        </article>
+
         <div class="hero">
           <div class="hero-head">
-            <h2 class="hero-title" id="dash-title" data-i18n="dash.title">Premiere ↔ DaVinci Sync</h2>
+            <h2 class="hero-title" id="dash-title" data-i18n="dash.title">Your projects, in sync</h2>
             <button type="button" class="btn btn-primary btn-add-ws" id="btn-add-ws">
               <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg>
-              <span data-i18n="btn.addWs">Add folder</span>
+              <span data-i18n="btn.addWs">Add project folder</span>
             </button>
           </div>
           <p class="hero-sub" id="hero-sub"></p>
@@ -190,7 +232,7 @@
         <div class="dash-grid">
           <article class="card" id="card-assets">
             <header class="card-head">
-              <h3 class="card-title" data-i18n="card.assets">Recent assets</h3>
+              <h3 class="card-title" data-i18n="card.assets">Recent files</h3>
               <span class="card-count" id="assets-count"></span>
             </header>
             <div class="card-body">
@@ -201,25 +243,25 @@
                        48 GB BRAW row must SAY it is 48 GB -->
                   <th class="th-size num" data-i18n="th.size">size</th>
                   <th class="th-status" data-i18n="th.status">status</th>
-                  <th class="th-pin"><span class="sr-only" data-i18n="th.pinned">pinned</span></th>
+                  <th class="th-pin"><span class="sr-only" data-i18n="th.actions">actions</span></th>
                 </tr></thead>
                 <tbody id="assets-body">
-                  <tr><td colspan="4" class="empty" data-i18n="empty.files">No files yet - attach a project and drop media in.</td></tr>
+                  <tr><td colspan="4" class="empty" data-i18n="empty.files">No files yet - add a project folder and drop media in.</td></tr>
                 </tbody>
               </table>
             </div>
-            <footer class="card-foot"><p class="note" data-i18n="note.assetsRecent">The newest files across this workspace. The pin keeps a file on this machine.</p></footer>
+            <footer class="card-foot"><p class="note" data-i18n="note.assetsRecent">The newest files in your project. Use the row menu to keep a file on this computer.</p></footer>
           </article>
 
           <article class="card" id="card-sessions">
             <header class="card-head">
-              <h3 class="card-title" data-i18n="card.sessions">Recent sessions</h3>
+              <h3 class="card-title" data-i18n="card.sessions">Recent activity</h3>
               <span class="card-count" id="sessions-count"></span>
             </header>
             <div class="card-body">
               <div id="presence-strip" class="presence" hidden></div>
               <section class="rs-sec" id="rs-session" aria-labelledby="rs-session-label">
-                <h4 class="sec-label" id="rs-session-label" data-i18n="label.recentSession">Recent session</h4>
+                <h4 class="sec-label" id="rs-session-label" data-i18n="label.recentSession">Recent project</h4>
                 <div id="rs-session-body"><div class="skel-row"></div></div>
               </section>
               <section class="rs-sec" id="rs-projects" aria-labelledby="rs-projects-label">
@@ -244,8 +286,9 @@
       </section>
 
       <!-- ============ FILES: the focused workspace ============
-           Full-height table, one project at a time, quick actions
-           on the row. Status reads as icons, not words shouting. -->
+           Full-height table, one project at a time. Every row carries
+           an always-visible ••• menu (nothing essential is hover-only)
+           plus the hover quick-actions as a second affordance. -->
       <section class="view" id="view-files" aria-labelledby="files-title">
         <div class="files-bar">
           <h2 class="view-title" id="files-title" data-i18n="nav.files">Files</h2>
@@ -259,7 +302,7 @@
             </button>
             <button type="button" class="btn btn-ghost" id="btn-recall-open">
               <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2.5v8M4.75 7.25L8 10.5l3.25-3.25M2.75 13.25h10.5"/></svg>
-              <span data-i18n="btn.recall">Recall</span>
+              <span data-i18n="btn.makeAvailable">Make available</span>
             </button>
           </div>
         </div>
@@ -269,19 +312,55 @@
             <thead><tr>
               <th class="th-file" data-i18n="th.file">file</th>
               <th class="num" data-i18n="th.size">size</th>
-              <th data-i18n="th.sync">sync</th>
+              <th data-i18n="th.sync">status</th>
               <th class="th-actions"><span class="sr-only" data-i18n="th.actions">actions</span></th>
             </tr></thead>
             <tbody id="files-body">
-              <tr><td colspan="4" class="empty" data-i18n="empty.files">No files yet - attach a project and drop media in.</td></tr>
+              <tr><td colspan="4" class="empty" data-i18n="empty.files">No files yet - add a project folder and drop media in.</td></tr>
             </tbody>
           </table>
         </div>
       </section>
 
+      <!-- ============ PEOPLE: who shares this project ============
+           Review #15: the team roster leaves Settings and becomes a
+           primary destination, joined by "Who's editing" (review #17). -->
+      <section class="view" id="view-people" aria-labelledby="people-title">
+        <h2 class="view-title" id="people-title" data-i18n="nav.people">People</h2>
+        <p class="howto-lede" data-i18n="people.lede">Who shares this project, and what each computer is doing right now.</p>
+        <div class="settings-col">
+          <article class="card" id="set-team">
+            <header class="card-head"><h3 class="card-title" data-i18n="card.team">People &amp; computers</h3></header>
+            <div class="card-body" id="team-body">
+              <div class="skel-row"></div>
+            </div>
+          </article>
+
+          <article class="card" id="set-locks">
+            <header class="card-head"><h3 class="card-title" data-i18n="card.locks">Who's editing</h3></header>
+            <div class="card-body">
+              <p class="note" data-i18n="note.locks">When someone opens a project file, Cairn marks it so you never overwrite each other's work.</p>
+              <div class="lock-list" id="lock-list"></div>
+            </div>
+          </article>
+
+          <!-- the synced roster record table (ADR-0031 Phase 1 read
+               surface): the same synced records every computer agrees
+               on, rendered as human membership news -->
+          <article class="card" id="set-records">
+            <header class="card-head"><h3 class="card-title" data-i18n="people.recordsTitle">Membership changes</h3></header>
+            <div class="card-body">
+              <p class="note" data-i18n="people.recordsNote">Roster changes sync to every computer. These are the latest ones this computer knows about.</p>
+              <ul class="records-list" id="records-list"><li class="note">·</li></ul>
+            </div>
+          </article>
+        </div>
+      </section>
+
       <!-- ============ SETTINGS: everything technical, in drawers ============
-           System telemetry, feature flags, storage + paths, team,
-           locks. Creative users never need to open this view to work. -->
+           System telemetry, feature flags, storage + paths, appearance.
+           Engineering numbers fold away; People and Who's editing moved
+           to their own destination (review #16). -->
       <section class="view" id="view-settings" aria-labelledby="settings-title">
         <h2 class="view-title" id="settings-title" data-i18n="nav.settings">Settings</h2>
         <div class="settings-col">
@@ -290,12 +369,17 @@
             <header class="card-head"><h3 class="card-title" data-i18n="set.system">System</h3></header>
             <div class="card-body">
               <dl class="kv">
-                <div class="kv-row"><dt data-i18n="set.daemon">daemon</dt><dd class="mono" id="set-daemon">·</dd></div>
-                <div class="kv-row"><dt data-i18n="set.proto">protocol</dt><dd class="mono" id="set-proto">·</dd></div>
-                <div class="kv-row"><dt data-i18n="set.uptime">uptime</dt><dd class="mono" id="set-uptime">·</dd></div>
                 <div class="kv-row"><dt data-i18n="set.node">node</dt><dd id="set-node">·</dd></div>
                 <div class="kv-row"><dt data-i18n="set.update">update</dt><dd id="set-update" data-i18n="set.updateOk">up to date</dd></div>
               </dl>
+              <details class="fold adv">
+                <summary data-i18n="set.sysAdv">System details</summary>
+                <dl class="kv">
+                  <div class="kv-row"><dt data-i18n="set.daemon">Cairn version</dt><dd class="mono" id="set-daemon">·</dd></div>
+                  <div class="kv-row"><dt data-i18n="set.proto">protocol</dt><dd class="mono" id="set-proto">·</dd></div>
+                  <div class="kv-row"><dt data-i18n="set.uptime">uptime</dt><dd class="mono" id="set-uptime">·</dd></div>
+                </dl>
+              </details>
               <details class="fold" id="set-doctor-fold">
                 <summary><span data-i18n="set.doctor">System health (doctor)</span><span class="fold-chev" aria-hidden="true"></span></summary>
                 <div class="doctor" id="doctor-body"></div>
@@ -322,13 +406,18 @@
             </header>
             <div class="card-body">
               <dl class="kv">
-                <div class="kv-row"><dt data-i18n="stat.chunks">local chunks</dt><dd class="num mono" id="stat-blobs">0</dd></div>
-                <div class="kv-row"><dt data-i18n="stat.cached">cached</dt><dd class="num mono" id="stat-bytes">0 B</dd></div>
-                <div class="kv-row"><dt data-i18n="stat.pinned">pinned chunks</dt><dd class="num mono" id="stat-pinned">0</dd></div>
-                <div class="kv-row"><dt data-i18n="set.quota">disk usage</dt><dd class="mono" id="set-quota">·</dd></div>
+                <div class="kv-row"><dt data-i18n="set.quota">Storage used</dt><dd class="mono" id="set-quota">·</dd></div>
               </dl>
               <div class="meter quota-meter"><div class="meter-fill" id="quota-fill"></div></div>
-              <p class="note" id="storage-note" data-i18n="note.storage">NLE media caches belong on local scratch; pinned chunks are never evicted.</p>
+              <p class="note" id="storage-note" data-i18n="note.storage">Cairn keeps the files you use here. Files marked "Keep on this computer" are never removed automatically.</p>
+              <details class="fold adv">
+                <summary data-i18n="set.storageAdv">Storage details</summary>
+                <dl class="kv">
+                  <div class="kv-row"><dt data-i18n="stat.chunks">pieces of files stored here</dt><dd class="num mono" id="stat-blobs">0</dd></div>
+                  <div class="kv-row"><dt data-i18n="stat.cached">space used by the cache</dt><dd class="num mono" id="stat-bytes">0 B</dd></div>
+                  <div class="kv-row"><dt data-i18n="stat.pinned">files kept on this computer</dt><dd class="num mono" id="stat-pinned">0</dd></div>
+                </dl>
+              </details>
             </div>
           </article>
 
@@ -341,21 +430,6 @@
               <div class="proj-list" id="proj-list">
                 <div class="skel-row"></div>
               </div>
-            </div>
-          </article>
-
-          <article class="card" id="set-team">
-            <header class="card-head"><h3 class="card-title" data-i18n="card.team">Team &amp; devices</h3></header>
-            <div class="card-body" id="team-body">
-              <div class="skel-row"></div>
-            </div>
-          </article>
-
-          <article class="card" id="set-locks">
-            <header class="card-head"><h3 class="card-title" data-i18n="card.locks">Locks</h3></header>
-            <div class="card-body">
-              <p class="note" data-i18n="note.locks">NLE project files lock automatically on open; fencing tokens protect every append.</p>
-              <div class="lock-list" id="lock-list"></div>
             </div>
           </article>
 
@@ -372,90 +446,90 @@
           </article>
         </div>
       </section>
-      <!-- ============ HOW TO USE: the layman's guide ============
-           Round 27. Our customers are editors and studio owners, not
-           sync engineers — the retro's sharpest line: "most of this
-           terms stuff usability how to use is new to our customers".
-           Five cards = the five promises (the things that sell),
-           each: what it replaces, what to do, one sentence of plain
-           words. No jargon, no flags, no namespaces. -->
+
+      <!-- ============ HOW TO USE: six tasks, one click each ============
+           Review #26/#27: task language, no terminal in the flow. Every
+           command lives in a per-card "Advanced / Command line" fold. -->
       <section class="view" id="view-howto" aria-labelledby="howto-title">
         <h2 class="view-title" id="howto-title" data-i18n="howto.title">How to use Cairn</h2>
-        <p class="howto-lede" data-i18n="howto.lede">Cairn keeps your whole studio's footage in sync between computers - no upload sites, no hard drives in bags. Get started below; everything else happens automatically.</p>
+        <p class="howto-lede" data-i18n="howto.lede">Cairn keeps your whole studio's work on every computer - no upload sites, no hard drives in bags. The six things below are everything you need.</p>
         <div class="settings-col howto-grid">
 
           <article class="card howto-card" id="howto-start">
             <header class="card-head">
               <span class="howto-step">1</span>
-              <h3 class="card-title" data-i18n="howto.start.title">Get started (2 minutes)</h3>
+              <h3 class="card-title" data-i18n="howto.t1.title">Add your project</h3>
             </header>
             <div class="card-body">
-              <ol class="howto-list">
-                <li data-i18n="howto.start.1">Click <b>Add to Workspace</b> above and pick your project folder (the one with your footage).</li>
-                <li data-i18n="howto.start.2">Do the same on the other computers in your studio - they join the same project.</li>
-                <li data-i18n="howto.start.3">That's it. Files you drop in the folder appear on every machine, automatically.</li>
-              </ol>
-              <p class="note" data-i18n="howto.start.note">The folder works like a normal folder. Edit, save, move files as you always do - Cairn handles the copying.</p>
+              <p data-i18n="howto.t1.body">Click <b>Add project folder</b> and pick the folder where your project lives - the one with your footage.</p>
+              <p class="note" data-i18n="howto.t1.note">Your teammates do the same on their computers and join with a code (see step 5).</p>
+              <details class="adv">
+                <summary data-i18n="howto.adv">Advanced / Command line</summary>
+                <p class="note mono">cairn attach /path/to/project</p>
+              </details>
             </div>
           </article>
 
-          <article class="card howto-card" id="howto-transfer">
+          <article class="card howto-card" id="howto-open">
             <header class="card-head">
               <span class="howto-step">2</span>
-              <h3 class="card-title" data-i18n="howto.transfer.title">Sending big files to each other</h3>
+              <h3 class="card-title" data-i18n="howto.t2.title">Open your normal folder</h3>
             </header>
             <div class="card-body">
-              <p data-i18n="howto.transfer.body">Replaces: SwissTransfer / WeTransfer waits (a 50 GB upload can take 5+ hours).</p>
-              <p data-i18n="howto.transfer.how">Drop the file in the project folder. It travels <b>straight</b> to the other computer - no cloud upload in the middle. On the same network this is minutes, not hours.</p>
-              <p class="note" data-i18n="howto.transfer.note">It even works through firewalls - if a direct line can't be found, an encrypted relay carries it.</p>
+              <p data-i18n="howto.t2.body">The project folder works like any folder on your computer. Open it in Explorer or Finder - Premiere and DaVinci see the same files.</p>
+              <p class="note" data-i18n="howto.t2.note">Home → <b>Open folder</b> takes you straight there.</p>
             </div>
           </article>
 
-          <article class="card howto-card" id="howto-merge">
+          <article class="card howto-card" id="howto-work">
             <header class="card-head">
               <span class="howto-step">3</span>
-              <h3 class="card-title" data-i18n="howto.merge.title">Two people editing the same timeline</h3>
+              <h3 class="card-title" data-i18n="howto.t3.title">Work normally</h3>
             </header>
             <div class="card-body">
-              <p data-i18n="howto.merge.body">Replaces: "who has the newest version?" and merged-copy chaos.</p>
-              <p data-i18n="howto.merge.how">Everyone works on their own copy of the timeline. Cairn's <b>Timeline Merge</b> puts the changes together automatically - frame-accurate, nothing lost, no "conflict copy 47" files.</p>
-              <p class="note mono" data-i18n="howto.merge.note">From a terminal: cairn tl-merge --base old.otio --ours mine.otio --theirs theirs.otio</p>
+              <p data-i18n="howto.t3.body">Edit, save, move files as you always do. Cairn copies every change to your other computers in the background.</p>
+              <p class="note" data-i18n="howto.t3.note">The dot at the top says <b>Working…</b> while copies are in flight - you can keep editing.</p>
             </div>
           </article>
 
-          <article class="card howto-card" id="howto-vfs">
+          <article class="card howto-card" id="howto-offline">
             <header class="card-head">
               <span class="howto-step">4</span>
-              <h3 class="card-title" data-i18n="howto.vfs.title">Seeing footage that isn't on this computer</h3>
+              <h3 class="card-title" data-i18n="howto.t4.title">Make a file available offline</h3>
             </header>
             <div class="card-body">
-              <p data-i18n="howto.vfs.body">Replaces: carrying hard drives between offices.</p>
-              <p data-i18n="howto.vfs.how">Files from other machines show up in the folder as <b>lightweight placeholders</b> - they look real, and the moment you open one, Cairn fetches it in the background. On Windows the folder is a real Explorer folder.</p>
-              <p class="note" data-i18n="howto.vfs.note">Need a file offline (a shoot, a flight)? Hover it and press the pin - it stays on this machine forever.</p>
+              <p data-i18n="howto.t4.body">Files that live on other computers show <b>Online only</b> in Files. Open the row's <b>•••</b> menu and choose <b>Make available</b> - the full file copies onto this computer.</p>
+              <p class="note" data-i18n="howto.t4.note">Going on a shoot or a flight? Also choose <b>Keep on this computer</b> so it never gets cleaned up.</p>
             </div>
           </article>
 
-          <article class="card howto-card" id="howto-proxy">
+          <article class="card howto-card" id="howto-share">
             <header class="card-head">
               <span class="howto-step">5</span>
-              <h3 class="card-title" data-i18n="howto.proxy.title">Editing heavy footage on a weak laptop</h3>
+              <h3 class="card-title" data-i18n="howto.t5.title">Share with a teammate</h3>
             </header>
             <div class="card-body">
-              <p data-i18n="howto.proxy.body">Replaces: waiting for renders, or being chained to the powerful machine.</p>
-              <p data-i18n="howto.proxy.how">Ask Cairn for a <b>proxy</b> - a small, light copy of a huge file that edits exactly the same. Cut on the laptop with proxies; the office machine swaps them back to full quality when it renders.</p>
-              <p class="note mono" data-i18n="howto.proxy.note">From a terminal: cairn proxy generate --media clip1.braw</p>
+              <p data-i18n="howto.t5.body">Open <b>More → Connect</b>, click <b>Generate code</b>, and send the code to your teammate. They paste it in the same place on their computer.</p>
+              <p class="note" data-i18n="howto.t5.note">Sharing one file instead? The row's <b>•••</b> menu has <b>Share project link</b>.</p>
+              <details class="adv">
+                <summary data-i18n="howto.adv">Advanced / Command line</summary>
+                <p class="note mono">cairn login --server &lt;server&gt; --code &lt;code&gt; --name theirbox</p>
+              </details>
             </div>
           </article>
 
           <article class="card howto-card" id="howto-review">
             <header class="card-head">
               <span class="howto-step">6</span>
-              <h3 class="card-title" data-i18n="howto.review.title">Showing work to a client</h3>
+              <h3 class="card-title" data-i18n="howto.t6.title">Send a review link</h3>
             </header>
             <div class="card-body">
-              <p data-i18n="howto.review.body">Replaces: exporting, uploading, and emailing links just for feedback.</p>
-              <p data-i18n="howto.review.how">Publish the cut, then send a <b>review link</b>. The client opens it in their browser, plays the video, and leaves notes pinned to exact frames. No account, no software.</p>
-              <p class="note mono" data-i18n="howto.review.note">From a terminal: cairn review link --note "Client A" (add --role studio for internal notes the client cannot see)</p>
+              <p data-i18n="howto.t6.body">Open <b>More → Review</b>, publish the cut, then click <b>Generate link</b>. The client opens it in a browser and leaves notes pinned to exact frames. No account, no software.</p>
+              <p class="note" data-i18n="howto.t6.note">Pick how long the link stays open before you generate it.</p>
+              <details class="adv">
+                <summary data-i18n="howto.adv">Advanced / Command line</summary>
+                <p class="note mono">cairn review link --note "Client A" (add --role studio for internal notes the client cannot see)</p>
+              </details>
             </div>
           </article>
 
@@ -466,10 +540,10 @@
             </header>
             <div class="card-body">
               <ul class="howto-list">
-                <li data-i18n="howto.faq.1"><b>Yellow dot / "reconnecting"</b> - a sync is in flight or one machine is briefly offline. It fixes itself; give it a moment.</li>
-                <li data-i18n="howto.faq.2"><b>Red dot</b> - open Settings and read the health panel. If a project folder was deleted or moved, remove it under Projects and add the folder again.</li>
-                <li data-i18n="howto.faq.3"><b>A file I need is a placeholder</b> - hover it and press Recall; it materializes from the other machines.</li>
-                <li data-i18n="howto.faq.4"><b>Nothing syncing at all</b> - the green cairn icon in the system tray (near the clock) restarts everything. Right-click it for status.</li>
+                <li data-i18n="howto.faq.1"><b>Working… dot</b> - a copy is in flight or one computer is briefly offline. It fixes itself; give it a moment.</li>
+                <li data-i18n="howto.faq.2"><b>Needs attention</b> - the Home card lists exactly what to click. If a project folder was deleted or moved, remove the project under Projects &amp; paths and add the folder again.</li>
+                <li data-i18n="howto.faq.3"><b>A file shows Online only</b> - open its ••• menu and choose Make available; it copies from your other computers.</li>
+                <li data-i18n="howto.faq.4"><b>Nothing is moving</b> - the green Cairn icon in the system tray (near the clock) restarts everything. Right-click it for status.</li>
               </ul>
             </div>
           </article>
@@ -478,39 +552,42 @@
       <!-- ============ CONNECT: join code + P2P ============ -->
       <section class="view" id="view-connect" aria-labelledby="connect-title">
         <h2 class="view-title" id="connect-title" data-i18n="view.connect">Connect</h2>
-        <p class="howto-lede" data-i18n="connect.lede">Before syncing, connect your team with a join code. Generate one below, share it, done.</p>
+        <p class="howto-lede" data-i18n="connect.lede">Before your computers can share files, connect them with a join code. Generate one below, share it, done.</p>
         <div class="settings-col">
           <article class="card">
-            <header class="card-head"><h3 class="card-title">Your join code</h3><span class="tag" id="connect-signal">checking</span></header>
+            <header class="card-head"><h3 class="card-title" data-i18n="connect.codeTitle">Your join code</h3><span class="tag" id="connect-signal">checking</span></header>
             <div class="card-body">
-              <p class="note">Click Generate, then share the code. Teammate pastes it under Join below (or runs the login command).</p>
+              <p class="note" data-i18n="connect.codeHint">Click Generate code, then share the code. Your teammate pastes it under Join below.</p>
               <div class="join-code-row" style="display:flex;gap:8px;align-items:center;margin:12px 0">
                 <code class="join-code mono" id="connect-code" style="flex:1;padding:12px;background:var(--subtle);border-radius:8px;font-size:1.1em">-</code>
-                <button type="button" class="btn btn-ghost btn-sm" id="connect-copy" data-copy="">Copy</button>
-                <button type="button" class="btn btn-primary btn-sm" id="connect-regenerate">Generate code</button>
+                <button type="button" class="btn btn-ghost btn-sm" id="connect-copy" data-copy="" data-i18n="btn.copy">Copy</button>
+                <button type="button" class="btn btn-primary btn-sm" id="connect-regenerate" data-i18n="connect.generate">Generate code</button>
               </div>
-              <p class="note" id="connect-hint">No code yet. Hit Generate code.</p>
-              <dl class="kv" style="margin-top:12px">
-                <div class="kv-row"><dt>Signal</dt><dd class="mono" id="connect-signal-addr">-</dd></div>
-                <div class="kv-row"><dt>Swarm</dt><dd class="mono" id="connect-swarm">-</dd></div>
-              </dl>
-              <p class="note mono" style="font-size:0.85em">Teammate terminal: cairn login --server &lt;server&gt; --code &lt;code&gt; --name theirbox</p>
+              <p class="note" id="connect-hint" data-i18n="connect.hintNone">No code yet. Hit Generate code.</p>
+              <details class="adv">
+                <summary data-i18n="connect.details">Connection details</summary>
+                <dl class="kv" style="margin-top:12px">
+                  <div class="kv-row"><dt data-i18n="connect.signal">Signal</dt><dd class="mono" id="connect-signal-addr">-</dd></div>
+                  <div class="kv-row"><dt data-i18n="connect.swarm">Swarm</dt><dd class="mono" id="connect-swarm">-</dd></div>
+                </dl>
+                <p class="note mono" style="font-size:0.85em">cairn login --server &lt;server&gt; --code &lt;code&gt; --name theirbox</p>
+              </details>
             </div>
           </article>
           <article class="card">
-            <header class="card-head"><h3 class="card-title">Join another workspace</h3></header>
+            <header class="card-head"><h3 class="card-title" data-i18n="connect.joinTitle">Join another computer</h3></header>
             <div class="card-body">
               <div style="display:flex;gap:8px">
-                <input id="connect-input" class="input" placeholder="Paste join code (enr-...)" style="flex:1" autocomplete="off" spellcheck="false">
-                <button type="button" class="btn btn-primary" id="connect-join">Join</button>
+                <input id="connect-input" class="input" data-i18n-attr="placeholder:connect.codePh" placeholder="Paste join code" style="flex:1" autocomplete="off" spellcheck="false">
+                <button type="button" class="btn btn-primary" id="connect-join" data-i18n="connect.join">Join</button>
               </div>
               <p class="note" id="connect-join-result" style="margin-top:8px"></p>
             </div>
           </article>
           <article class="card">
-            <header class="card-head"><h3 class="card-title">How it connects</h3></header>
+            <header class="card-head"><h3 class="card-title" data-i18n="connect.howTitle">How it connects</h3></header>
             <div class="card-body">
-              <p class="note">Direct P2P first (STUN punch). Relay fallback when punching fails. Same network is minutes, not 5.5h SwissTransfer.</p>
+              <p class="note" data-i18n="connect.how">Computers connect directly when possible - on the same network a big copy takes minutes, not hours. When a direct line can't be found, an encrypted relay carries the files.</p>
             </div>
           </article>
         </div>
@@ -518,7 +595,7 @@
       <!-- ============ REVIEW: publish + guest links ============ -->
       <section class="view" id="view-review" aria-labelledby="review-title">
         <h2 class="view-title" id="review-title" data-i18n="view.review">Review</h2>
-        <p class="howto-lede" data-i18n="review.lede">Publish a cut, generate a link, share it. Client opens in browser, leaves frame notes.</p>
+        <p class="howto-lede" data-i18n="review.lede">Publish a cut, generate a link, share it. Your client opens it in a browser and leaves frame notes.</p>
         <div class="settings-col">
           <article class="card">
             <header class="card-head"><h3 class="card-title" data-i18n="review.versions">Versions</h3></header>
@@ -526,7 +603,7 @@
               <div id="review-list"><div class="skel-row"></div></div>
               <!-- mom-test round: the user picks WHICH cut to publish; the
                    backend probes its true frames/fps (the UI never invents
-                   media metadata). Placeholder rows stay out — there is
+                   media metadata). Online-only rows stay out — there is
                    nothing to watch in a 0-byte stub. -->
               <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px">
                 <label style="flex:1;min-width:240px" data-i18n-attr="aria-label:review.chooseMediaA11y" aria-label="Choose the video to publish">
@@ -540,48 +617,51 @@
           <article class="card">
             <header class="card-head"><h3 class="card-title" data-i18n="review.linkTitle">Generate review link</h3></header>
             <div class="card-body" style="display:flex;gap:8px;flex-wrap:wrap;align-items:end">
-              <label style="flex:1">Note<input id="review-link-note" class="input" placeholder="Client A" style="width:100%"></label>
-              <label>Role<select id="review-link-role" class="input"><option value="commenter">commenter</option><option value="viewer">viewer</option><option value="studio">studio</option></select></label>
+              <label style="flex:1"><span data-i18n="review.noteLabel">Note</span><input id="review-link-note" class="input" data-i18n-attr="placeholder:review.notePh" placeholder="Client A" style="width:100%"></label>
+              <label><span data-i18n="review.roleLabel">Role</span><select id="review-link-role" class="input"><option value="commenter" data-i18n="review.roleCommenter">Can comment</option><option value="viewer" data-i18n="review.roleViewer">View only</option><option value="studio" data-i18n="review.roleStudio">Studio (internal)</option></select></label>
+              <label><span data-i18n="review.expiresLabel">Expires</span><select id="review-link-ttl" class="input"><option value="168" data-i18n="review.ttl7">7 days</option><option value="720" selected data-i18n="review.ttl30">30 days</option><option value="2160" data-i18n="review.ttl90">90 days</option></select></label>
               <button type="button" class="btn btn-primary" id="review-link-create" data-i18n="review.linkCreate">Generate link</button>
             </div>
             <div id="review-link-result" style="margin-top:12px"></div>
-            <p class="note" style="margin-top:8px" data-i18n="review.linkNote">Anyone with this link can view this version until it expires. Revoke it below anytime.</p>
+            <p class="note" style="margin-top:8px" data-i18n="review.linkNote">Anyone with the link can view this cut until it expires. Remove it below anytime.</p>
             <!-- mom-test round: links you can SEE are links you can KILL.
                  Each row: who, role, expiry, copy, revoke. -->
             <div id="review-links" style="margin-top:8px"></div>
-            <details style="margin-top:8px">
-              <summary class="note" data-i18n="review.selfHost">Self-hosting the review portal (advanced)</summary>
-              <p class="note mono" style="font-size:0.85em">cairn daemon --review &lt;addr&gt; — see docs/runbook-beta.md</p>
+            <details class="adv" style="margin-top:8px">
+              <summary data-i18n="review.selfHost">Self-hosting the review portal (advanced)</summary>
+              <p class="note mono" style="font-size:0.85em">cairn daemon --review &lt;addr&gt; - see docs/runbook-beta.md</p>
             </details>
           </article>
           <article class="card">
-            <header class="card-head"><h3 class="card-title">Frame notes</h3><span class="tag" id="review-notes-count">0</span></header>
+            <header class="card-head"><h3 class="card-title" data-i18n="review.frameNotes">Frame notes</h3><span class="tag" id="review-notes-count">0</span></header>
             <div class="card-body"><div id="review-notes"><div class="skel-row"></div></div></div>
           </article>
         </div>
       </section>
-      <!-- ============ MERGE: three-way ============ -->
+      <!-- ============ MERGE: expert tool under a human surface ============
+           Review #89: keep the expert three-way UI, but speak human
+           first - the row-level dialog (Files) is the normal path. -->
       <section class="view" id="view-merge" aria-labelledby="merge-title">
         <h2 class="view-title" id="merge-title" data-i18n="view.merge">Merge</h2>
-        <p class="howto-lede" data-i18n="merge.lede">Two editors, same timeline. Pick base/ours/theirs, preview the merge.</p>
+        <p class="howto-lede" data-i18n="merge.lede">Two editors, one timeline. Cairn puts both versions together - every edit kept. When both of you changed the same place, a dialog offers the merge right in Files.</p>
         <div class="settings-col">
           <article class="card">
-            <header class="card-head"><h3 class="card-title">Three-way merge</h3><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="merge-semantic"> <span class="note" style="margin:0">Semantic</span></label></header>
+            <header class="card-head"><h3 class="card-title" data-i18n="merge.expertTitle">Three-way merge</h3><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="merge-semantic"> <span class="note" style="margin:0" data-i18n="merge.semantic">Semantic</span></label></header>
             <div class="card-body">
               <div style="display:grid;gap:10px">
-                <label>Base<input type="file" id="merge-base" class="input" accept=".otio,.xml,.fcp*"></label>
-                <label>Ours<input type="file" id="merge-ours" class="input" accept=".otio,.xml,.fcp*"></label>
-                <label>Theirs<input type="file" id="merge-theirs" class="input" accept=".otio,.xml,.fcp*"></label>
-                <button type="button" class="btn btn-primary" id="merge-run">Merge preview</button>
+                <label><span data-i18n="merge.humanOriginal">Original</span> <span class="dim" data-i18n="merge.baseLabel">(Base)</span><input type="file" id="merge-base" class="input" accept=".otio,.xml,.fcp*"></label>
+                <label><span data-i18n="merge.humanYours">Your changes</span> <span class="dim" data-i18n="merge.oursLabel">(Ours)</span><input type="file" id="merge-ours" class="input" accept=".otio,.xml,.fcp*"></label>
+                <label><span data-i18n="merge.humanTheirs">Their changes</span> <span class="dim" data-i18n="merge.theirsLabel">(Theirs)</span><input type="file" id="merge-theirs" class="input" accept=".otio,.xml,.fcp*"></label>
+                <button type="button" class="btn btn-primary" id="merge-run" data-i18n="merge.run">Preview merge</button>
               </div>
-              <pre id="merge-output" class="mono" style="background:var(--subtle);padding:12px;border-radius:8px;margin-top:12px;overflow:auto;max-height:300px;white-space:pre-wrap">No merge yet.</pre>
+              <pre id="merge-output" class="mono" style="background:var(--subtle);padding:12px;border-radius:8px;margin-top:12px;overflow:auto;max-height:300px;white-space:pre-wrap" data-i18n="merge.noMerge">No merge yet.</pre>
             </div>
           </article>
           <article class="card">
-            <header class="card-head"><h3 class="card-title">Search clips</h3></header>
+            <header class="card-head"><h3 class="card-title" data-i18n="merge.searchTitle">Search clips</h3></header>
             <div class="card-body" style="display:flex;gap:8px">
-              <input id="merge-search" class="input" placeholder="worried closeup" style="flex:1">
-              <button type="button" class="btn btn-primary" id="merge-search-btn">Search</button>
+              <input id="merge-search" class="input" data-i18n-attr="placeholder:merge.searchPh" placeholder="worried closeup" style="flex:1">
+              <button type="button" class="btn btn-primary" id="merge-search-btn" data-i18n="btn.search">Search</button>
             </div>
             <div id="merge-search-out" style="margin-top:12px"></div>
           </article>
@@ -598,25 +678,25 @@
         </div>
         <div class="sb-group" id="foot-status" hidden>
           <span class="sb-state"><span class="dot" id="foot-dot"></span><span id="foot-state-label">checking</span></span>
-          <span class="sb-pill" id="foot-sync-pill"><b id="foot-sync-n" class="mono">·</b> <span data-i18n="files.synced">synced</span></span>
+          <span class="sb-pill" id="foot-sync-pill"><b id="foot-sync-n" class="mono">·</b> <span data-i18n="files.synced">ready</span></span>
           <span class="sb-meter" aria-hidden="true"><span id="foot-files-fill"></span></span>
           <span class="sb-pill mono" id="foot-quota-pill">·</span>
         </div>
       </div>
       <div class="sb-right">
-        <button type="button" class="sb-help" id="foot-help" aria-label="shortcuts and cheatsheet">?</button>
+        <button type="button" class="sb-help" id="foot-help" data-i18n-attr="aria-label:a11y.help" aria-label="shortcuts and cheatsheet">?</button>
       </div>
     </footer>
   </div>
 </div>
 
-<!-- ============ slide-over panels: add / versions / recall ============ -->
+<!-- ============ slide-over panels: add / versions / make available ============ -->
 <div class="scrim" id="scrim" hidden></div>
 
 <aside class="panel" id="panel-add" role="dialog" aria-modal="true" aria-labelledby="panel-add-title" hidden>
   <header class="panel-head">
     <h3 class="panel-title" id="panel-add-title" data-i18n="panel.add">Add a project</h3>
-    <button type="button" class="btn btn-icon panel-close" data-close aria-label="close">
+    <button type="button" class="btn btn-icon panel-close" data-close data-i18n-attr="aria-label:a11y.close" aria-label="close">
       <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/></svg>
     </button>
   </header>
@@ -631,36 +711,39 @@
     <div class="or-line" aria-hidden="true"><span data-i18n="or.type">or type a path</span></div>
     <label class="field-label" for="attach-root" data-i18n="field.root">Project folder</label>
     <input id="attach-root" class="input" type="text" spellcheck="false" autocomplete="off"
-           data-i18n-attr="placeholder:attach.root" placeholder="/path/to/workspace">
+           data-i18n-attr="placeholder:attach.root" placeholder="/path/to/project">
     <label class="field-label" for="attach-project" data-i18n="field.project">Project id <span class="dim" data-i18n="field.optional">optional</span></label>
     <input id="attach-project" class="input" type="text" spellcheck="false" autocomplete="off"
            data-i18n-attr="placeholder:attach.project" placeholder="project id (optional)">
-    <button type="button" class="btn btn-primary btn-block" id="btn-attach" data-i18n="btn.attach">attach</button>
-    <p class="panel-cli"><span data-i18n="or.cli">or from the terminal</span><br>
-      <code>cairn attach /path/to/project</code>
-      <button type="button" class="btn btn-ghost btn-copy" id="attach-cli-copy" data-copy="cairn attach /path/to/project" data-i18n="btn.copy">copy</button>
-    </p>
+    <button type="button" class="btn btn-primary btn-block" id="btn-attach" data-i18n="btn.attach">Add folder</button>
+    <details class="adv">
+      <summary data-i18n="adv.label">Advanced / Command line</summary>
+      <p class="panel-cli"><span data-i18n="or.cli">or from the terminal</span><br>
+        <code>cairn attach /path/to/project</code>
+        <button type="button" class="btn btn-ghost btn-copy" id="attach-cli-copy" data-copy="cairn attach /path/to/project" data-i18n="btn.copy">copy</button>
+      </p>
+    </details>
   </div>
 </aside>
 
 <aside class="panel" id="panel-history" role="dialog" aria-modal="true" aria-labelledby="panel-history-title" hidden>
   <header class="panel-head">
     <h3 class="panel-title" id="panel-history-title" data-i18n="panel.versions">Versions</h3>
-    <button type="button" class="btn btn-icon panel-close" data-close aria-label="close">
+    <button type="button" class="btn btn-icon panel-close" data-close data-i18n-attr="aria-label:a11y.close" aria-label="close">
       <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/></svg>
     </button>
   </header>
   <div class="panel-body">
-    <p class="note" data-i18n="note.versions">Versions fold from the journal every 5,000 entries, every 24h, on demand, or at project close. Every fold is a restore point.</p>
+    <p class="note" data-i18n="note.versions">Saved versions are restore points. Cairn creates them automatically - and you can save one before any big change.</p>
     <div class="action-row">
       <input id="snapshot-label" class="input" type="text" spellcheck="false" autocomplete="off"
              data-i18n-attr="placeholder:versions.label" placeholder="label (e.g. before color pass)">
-      <button type="button" class="btn btn-primary" id="btn-snapshot" data-i18n="btn.snapshot">create version</button>
+      <button type="button" class="btn btn-primary" id="btn-snapshot" data-i18n="btn.snapshot">Save a version</button>
     </div>
     <table class="table">
       <thead><tr><th data-i18n="th.label">label</th><th data-i18n="th.author">author</th><th></th></tr></thead>
       <tbody id="snapshot-body">
-        <tr><td colspan="3" class="empty" data-i18n="empty.versions">No versions yet - create one after the first sync.</td></tr>
+        <tr><td colspan="3" class="empty" data-i18n="empty.versions">No versions yet - save one after the first sync.</td></tr>
       </tbody>
     </table>
   </div>
@@ -668,30 +751,63 @@
 
 <aside class="panel" id="panel-recall" role="dialog" aria-modal="true" aria-labelledby="panel-recall-title" hidden>
   <header class="panel-head">
-    <h3 class="panel-title" id="panel-recall-title" data-i18n="panel.recall">Recall</h3>
-    <button type="button" class="btn btn-icon panel-close" data-close aria-label="close">
+    <h3 class="panel-title" id="panel-recall-title" data-i18n="panel.makeAvail">Make files available</h3>
+    <button type="button" class="btn btn-icon panel-close" data-close data-i18n-attr="aria-label:a11y.close" aria-label="close">
       <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/></svg>
     </button>
   </header>
   <div class="panel-body">
-    <p class="note" data-i18n="note.recall">Recall materializes files from the bucket into local storage. Whole project when the path is empty.</p>
+    <p class="note" data-i18n="note.makeAvail">Copy files from your other computers onto this one. Leave the box empty for the whole project.</p>
     <div class="action-row">
       <input id="recall-path" class="input" type="text" spellcheck="false" autocomplete="off"
-             data-i18n-attr="placeholder:recall.path" placeholder="one path (optional)">
-      <button type="button" class="btn btn-primary" id="btn-recall" data-i18n="btn.recall">start recall</button>
+             data-i18n-attr="placeholder:recall.path" placeholder="one file (optional)">
+      <button type="button" class="btn btn-primary" id="btn-recall" data-i18n="btn.makeAvailable">Make available</button>
     </div>
     <div id="recall-jobs" class="recall-jobs">
-      <p class="note" data-i18n="empty.recall">No recall jobs yet.</p>
+      <p class="note" data-i18n="empty.makeAvail">Nothing is being copied right now.</p>
     </div>
   </div>
 </aside>
+
+<!-- ============ the confirm dialog (review #38-#41): every
+     window.confirm is replaced by this in-page modal - focus trap,
+     Escape closes, focus returns to the opener ============ -->
+<div class="modal" id="modal-confirm" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-describedby="modal-body">
+    <h3 class="modal-title" id="modal-title"></h3>
+    <p class="modal-body" id="modal-body"></p>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" id="modal-cancel" data-i18n="modal.cancel">Cancel</button>
+      <button type="button" class="btn btn-danger" id="modal-ok"></button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ the merge-offer dialog (CONTRACT-DEBT #1, human copy) ============ -->
+<div class="modal" id="modal-merge" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="merge-dlg-title" aria-describedby="merge-dlg-body">
+    <h3 class="modal-title" id="merge-dlg-title" data-i18n="mergeDlg.title">Two versions changed</h3>
+    <p class="modal-body" id="merge-dlg-body" data-i18n="mergeDlg.body">Cairn found two versions that changed in different places. Merge puts both sets of changes together - nothing is lost.</p>
+    <p class="merge-dlg-path mono" id="merge-dlg-path"></p>
+    <dl class="merge-dlg-sides">
+      <div><dt data-i18n="merge.humanOriginal">Original</dt><dd data-i18n="mergeDlg.sideOriginal">The version everyone started from</dd></div>
+      <div><dt data-i18n="merge.humanYours">Your changes</dt><dd data-i18n="mergeDlg.sideYours">Edits made on this computer</dd></div>
+      <div><dt data-i18n="merge.humanTheirs">Their changes</dt><dd data-i18n="mergeDlg.sideTheirs">Edits that arrived from other computers</dd></div>
+    </dl>
+    <p class="note" data-i18n="mergeDlg.keepNote">Choosing Keep both keeps a separate copy of your version - nothing is deleted.</p>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-ghost" id="merge-dlg-keep" data-i18n="mergeDlg.keepBoth">Keep both</button>
+      <button type="button" class="btn btn-primary" id="merge-dlg-merge" data-i18n="mergeDlg.merge">Merge</button>
+    </div>
+  </div>
+</div>
 
 <!-- ============ help overlay ============ -->
 <div class="overlay" id="help-overlay" hidden>
   <div class="overlay-card" role="dialog" aria-modal="true" aria-labelledby="help-title">
     <header class="panel-head">
       <h3 class="panel-title" id="help-title" data-i18n="help.title">Shortcuts &amp; cheatsheet</h3>
-      <button type="button" class="btn btn-icon" id="help-close" aria-label="close">
+      <button type="button" class="btn btn-icon" id="help-close" data-i18n-attr="aria-label:a11y.close" aria-label="close">
         <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3.5 3.5l9 9M12.5 3.5l-9 9"/></svg>
       </button>
     </header>
@@ -701,10 +817,10 @@
         <ul class="help-list">
           <li><kbd>/</kbd> <span data-i18n="help.search">focus search</span></li>
           <li><kbd>?</kbd> <span data-i18n="help.help">toggle this panel</span></li>
-          <li><kbd>g</kbd> <kbd>d</kbd> <span data-i18n="help.goDash">go to dashboard</span></li>
+          <li><kbd>g</kbd> <kbd>h</kbd> <span data-i18n="help.goDash">go to Home</span></li>
           <li><kbd>g</kbd> <kbd>f</kbd> <span data-i18n="help.goFiles">go to files</span></li>
+          <li><kbd>g</kbd> <kbd>p</kbd> <span data-i18n="help.goPeople">go to People</span></li>
           <li><kbd>g</kbd> <kbd>s</kbd> <span data-i18n="help.goSettings">go to settings</span></li>
-          <li><kbd>g</kbd> <kbd>h</kbd> <span data-i18n="help.goHowto">go to the how-to guide</span></li>
           <li><kbd>esc</kbd> <span data-i18n="help.esc">close panels and overlays</span></li>
         </ul>
       </div>
@@ -722,9 +838,9 @@
       <div>
         <p class="help-h" data-i18n="help.states">What the dot means</p>
         <ul class="help-list">
-          <li><span class="dot dot-ok"></span> <span data-i18n="help.dotOk">all files synced, safe to edit</span></li>
-          <li><span class="dot dot-warn"></span> <span data-i18n="help.dotWarn">syncing, chunks in flight</span></li>
-          <li><span class="dot dot-bad"></span> <span data-i18n="help.dotBad">attention, open Settings</span></li>
+          <li><span class="dot dot-ok"></span> <span data-i18n="help.dotOk">everything ready - safe to edit</span></li>
+          <li><span class="dot dot-warn"></span> <span data-i18n="help.dotWarn">copying in the background</span></li>
+          <li><span class="dot dot-bad"></span> <span data-i18n="help.dotBad">needs attention - see Home</span></li>
         </ul>
       </div>
     </div>
