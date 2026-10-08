@@ -1,0 +1,83 @@
+# systemd unit for the Cairn SWARM leg (signal directory + encrypted relay,
+# ADR-0017) — the optional peer-transport meeting point.
+#
+# This is a DIFFERENT role from cairn-server.service (the metadata plane):
+#   - `cairn signal` is a tiny in-memory UDP rendezvous: nodes register
+#     "business cards" (identity, pubkey, candidates — never media bytes) and
+#     hand out relay grants when NAT punching fails (signal.rs, relay.rs).
+#   - It stores NOTHING on disk — no StateDirectory, no database. All state
+#     evaporates on restart; every client re-registers within one keepalive
+#     period (PEER_TTL is 10s, signal.rs:44).
+#   - Admission is the join code: the code's cluster key HMAC-gates every
+#     registration (ADR-0017 §7). Pin yours with --join-code (validated on
+#     start) or let it print a fresh code per start (team re-pastes it).
+#     Rotating the code = restart with a new one = everyone holding the old
+#     code is locked out.
+#
+# PORTS / TRANSPORT — read before touching the firewall:
+#   17780/udp  signal directory   17781/udp  relay pass-through
+#   Both are UDP. (The relay's QUIC-upgrade leg exists in the library —
+#   cairn-p2p relay.rs `spawn_with_quic` + cairn-quic, round 28 — and it is
+#   ALSO UDP; the `cairn signal` subcommand spawns the UDP-only relay
+#   (RelayServer::spawn) today, so 17781 is a plain UDP pass-through.)
+#   DO NOT proxy these through nginx/TLS termination: the protocol depends on
+#   the OBSERVED source address of each datagram (signal.rs canonicalizes
+#   unspecified binds to where the packet actually came from — that is the
+#   NAT-discovery mechanism). A proxy rewrites the source and poisons
+#   candidates. Expose the UDP ports directly.
+#
+# Install: mirror cairn-server.service (useradd cairn, install binary), then
+#   sudo cp cairn-signal.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now cairn-signal
+# Read the printed join code once: journalctl -u cairn-signal -n 50
+
+[Unit]
+Description=Cairn swarm signal + relay (rendezvous, never stores media)
+After=network-online.target
+Wants=network-online.target
+Documentation=https://github.com/ssmurfgg04-gif/cairn/blob/main/docs/runbook-meeting-point.md
+
+[Service]
+Type=simple
+User=cairn
+Group=cairn
+# Pin the team's join code here (validate locally first: `cairn signal --join-code CODE`
+# on any box fails fast with the checksum message on a typo). Omitting --join-code
+# generates a fresh code at every start and prints it to the journal.
+ExecStart=/usr/local/bin/cairn signal --bind 0.0.0.0:17780 --relay-bind 0.0.0.0:17781 --no-mdns
+# --no-mdns: the LAN beacon is useless on a public VPS (there is no LAN to
+# join from) and only announces the code fingerprint to anyone listening.
+Restart=on-failure
+RestartSec=5s
+LimitNOFILE=16384
+
+# ---- hardening (nothing writable is needed — no disk state at all) --------
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+ProcSubset=pid
+# no AF_UNIX needed: pure UDP in/out
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

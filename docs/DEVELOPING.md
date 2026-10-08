@@ -95,6 +95,19 @@ process-per-test isolation, better failure surfacing). Locally:
 (plain `cargo test --workspace`). Install locally with
 `cargo install cargo-nextest --locked`.
 
+## 11. Installers
+
+The Windows install ships two interchangeable paths — the double-click NSIS
+installer (`installer/windows/cairn.nsi`, built + gate-tested by
+`.github/workflows/installer.yml` on every `v*` tag) and the scripted
+`install.ps1` — and they share a hard contract (install dir, the `CairnTray`
+HKCU autostart key/value, hidden daemon start): **never change one side
+without the other**. Build steps, staging layout (`dist\`), the RUSTFLAGS
+trap, the silent switches, and the CI gate's assertions are documented in
+[installer/windows/README.md](../installer/windows/README.md); the
+self-hosting artifacts (systemd units, Dockerfile, compose, nginx) live in
+`deploy/` with the runbook at `docs/runbook-meeting-point.md`.
+
 ---
 
 ## The runtime contract (ADR-0025, read before touching async paths)

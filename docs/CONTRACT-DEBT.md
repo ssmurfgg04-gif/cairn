@@ -91,7 +91,7 @@ missing, the acceptance test that closes it.
   re-run `scripts/bench_waveform.sh` on a production-class host and
   paste the row.
 
-## 5. Synced collaborative state (roster / review / audit across devices) — **Phase 1 landed this round; Phase 2 (cross-machine revoke) is the next rock**
+## 5. Synced collaborative state (roster / review / audit across devices) — **Phase 1 + Phase 2 (cross-machine revoke) landed; Phase 3 is the last phase**
 
 - **Existed:** the durable bindings, the engine's keyed append-only
   journal with tombstone semantics, and per-machine members/audit/review
@@ -114,6 +114,11 @@ missing, the acceptance test that closes it.
   attached machine is dead on every portal within one sync pass (the
   tombstone records already flow — the wiring is the remaining work).
   Phase 3: `.cairn` becomes a materialized view of the records.
+- **Phase 2 (LANDED round 31, Task 2-a):** the RootProvider
+  `link_revocations(project)` lookup now exists and is consulted before
+  minting/validating — the revoke-anywhere-dead-everywhere behavior holds
+  within one sync pass. Phase 3 remains: `.cairn` as a materialized view
+  of the records.
 - **Acceptance (Phase 1, met by tests):**
   `crates/cairn-sync/tests/state_records.rs` (two engines, one journal:
   LWW convergence, audit union, tombstone propagation) and
@@ -135,6 +140,61 @@ machine-local until Phase 3). #2 was closed last round. Remaining: #5
 Phase 2 (tombstone-backed revoke everywhere — the security payoff) and
 #3 (a real Premiere host run on a self-hosted runner; the CI scaffold
 and collector are ready).
+
+---
+
+Ordering update (2026-10-08, round 31) — what moved, honestly:
+
+- **#5 Phase 2 (cross-machine revoke): LANDED** (Task 2-a): the portal
+  consults the synced `review_link` tombstones before minting/validating,
+  so a revoke on any attached machine kills the link on every portal
+  within one sync pass. The register's phase-2 acceptance (roster as
+  Team-view authority, cross-device comments, cross-machine revoke) is
+  the test surface 2-a ships against. Phase 3 (`.cairn` as a materialized
+  view of the records) remains the last phase.
+- **Review-link TTL: LANDED** at the route + UI layer (Task 2-a plumb,
+  Task 2-b chooser): `POST /api/v1/review/link` takes optional
+  `ttl_hours` (1..=8760, default 720).
+- **Portal rate limiting: LANDED** (Task 2-a) on the anonymous guest
+  surfaces — closes the second-review "#57–#60… review-endpoint rate
+  limiting" item's core (review-side; the full #65–#72
+  cargo-deny/SBOM/provenance/signing cluster stays open — see the
+  installer row below for the supply-chain-light slice that landed).
+- **Join codes: LANDED LOCALLY, SERVER-SIDE STILL TRACKED** (Task 2-a):
+  the swarm join code (ADR-0017) gained single-use burn / revocation /
+  lockout on the hosting side. The SERVER-authoritative enroll-code
+  protocol — admin-scoped minting on a clean server, expiring+revocable
+  server codes, explicit fail-closed default for unknown devices —
+  REMAINS OPEN (the meeting-point runbook documents the current
+  dev-insecure-window bootstrap and its limit).
+- **Proxy editing copies: LANDED** end to end (Task 2-d service + routes
+  per the frozen contract, Task 2-b UI), so the ADR-0020 proxy story is
+  wired: generate/status/state surfaces + ffmpeg-backed transcode.
+- **ffmpeg/ffprobe/merge off the async runtime: LANDED** (Task 2-d) —
+  closes the substance of "#45–#51: move ffmpeg/ffprobe out of the async
+  runtime" (bundling-or-dropping media tooling remains a product call).
+- **#41–#44 cluster: LANDED** (Task 2-d): duplicate-collision guard made
+  atomic (single transaction), restore takes a safety checkpoint, confirm
+  hardening. Idempotent-mutation + disable-during-mutation finishes stay
+  with the 2-b UI pass at merge.
+- **Two-home cross-network E2E: LANDED** (Task 2-d,
+  `crates/cairn-sim/tests/two_homes_e2e.rs`) — amber until a real
+  two-homes HUMAN test (BETA.md §8); **real-media editing-session E2E:
+  LANDED** in CI, amber until the Premiere host run (#3 above).
+- **NSIS installer: LANDED** (Task 2-c): `installer/windows/cairn.nsi` +
+  `.github/workflows/installer.yml` with a silent-install gate on a clean
+  runner and SHA256 + build metadata in the job summary — the
+  supply-chain-LIGHT slice of #65–#72. Signing (Authenticode, review-item
+  #72) stays open: the installer is unsigned today.
+- **Meeting-point runbook: LANDED** (Task 2-c):
+  `docs/runbook-meeting-point.md` + hardened systemd units, Dockerfile,
+  compose, nginx — including the honest admission gap (no admin-scoped
+  minting on a clean server; the bootstrap workaround is documented).
+- **Plain-language pass: LANDED** (Task 2-b) — closes the wording half of
+  "#73–#78 (user-facing error language, i18n audit, a11y finishes)".
+- **#3 Premiere host run: STILL OPEN, AMBER** — nothing in this round
+  changes its gate: it needs a real self-hosted Premiere run
+  (`[self-hosted, windows, premiere]` label unclaimed).
 
 ---
 

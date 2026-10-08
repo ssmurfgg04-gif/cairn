@@ -1,0 +1,20 @@
+# BuildKit per-Dockerfile ignore file (deploy/Dockerfile → THIS file).
+# Supported by any BuildKit-capable engine (Docker 23+ default, podman, buildah).
+# It keeps the build context to exactly what the build reads — without it,
+# `docker build -f deploy/Dockerfile .` would ship gigabytes of target/ to the daemon.
+target/
+.git/
+.github/
+docs/
+installer/
+deploy/
+**/*.md
+**/corpus/
+crates/*/tests/
+# fuzz/ is manifest-excluded (root Cargo.toml) — safe to skip.
+# NOTE: cairn-x ITSELF must ship: it is a workspace member, and cargo
+# refuses to load the workspace if a member's manifest is missing from
+# the build context (the failure is "failed to load manifest for
+# workspace member", not a missing-source error — easy to misread).
+crates/cairn-x/fuzz/
+crates/cairn-app/

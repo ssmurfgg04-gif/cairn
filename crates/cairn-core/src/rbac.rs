@@ -1,11 +1,17 @@
 //! Role-based access control (ADR-0020 §4): studios have hierarchies — the
 //! Lead locks the timeline, the Assistant organizes bins without touching
 //! the edit, the Colorist only grades, the Client only comments. The
-//! permission matrix is data, enforced at every mutating cairn surface
-//! (CLI now; the daemon-side gRPC hooks land with the ctl proto change).
+//! permission matrix is data, enforced at every mutating cairn surface —
+//! CLI and daemon alike (the daemon-side hooks exist now: `rbac_guard`
+//! fronts the ctl mutations and the dashboard service boundary, actions
+//! tagged "POLICY BOUNDARY (ADR-0030)").
 //!
-//! Membership lives in `<root>/.cairn/members.json` — a synced project
-//! file like review/proxy state, owner-editable, deterministically
+//! Membership lives in `<root>/.cairn/members.json` — a MACHINE-LOCAL file
+//! (`.cairn*` is sync-ignored, SPEC §10 / ADR-0031) and the enforcement
+//! authority until ADR-0031 Phase 3 materializes it from the synced state
+//! records (the synced roster is already VISIBLE via `GET
+//! /api/v1/state-records`; Phase 2 put cross-machine review-link
+//! revocation on the same substrate). Owner-editable, deterministically
 //! serialized. Device ids (not names) are the keys: a device's role
 //! travels with the machine, and renaming a human never changes access.
 //!

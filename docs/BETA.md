@@ -10,21 +10,35 @@ cover the client side end to end (no terminal). The storage SERVER still
 needs one terminal command in this beta — there is no hosted default server
 yet, and joining a teammate's machine still needs the enroll/login step from
 section 3. That is the gap between "5 minutes" and reality; it is the top
-product priority, and this guide no longer pretends otherwise.
+product priority, and this guide no longer pretends otherwise. If you are
+ready to host the meeting point yourself (a small VPS, systemd or Docker,
+TLS), the runbook is `docs/runbook-meeting-point.md` — it also documents
+what is still missing (admin-scoped code minting, /healthz) so nothing here
+overpromises.
 
-## 1. Install (one command)
+## 1. Install (one command — or zero commands)
 
-PowerShell:
+Two interchangeable paths, same layout (the release page has both):
+
+**Double-click (no terminal at all):** download `cairn-setup-<tag>.exe`
+from the GitHub release and run it. NSIS installer, per-user (no admin),
+Apache-2.0 license page, Start-Menu shortcut, optional ffmpeg download
+(SHA256-pinned, fails closed on mismatch), tray autostart, and the daemon
+starts hidden at the end — the dashboard opens from the finish page. Details
++ the CI gate that tests a silent install/uninstall on a clean Windows
+runner every tag: `installer/windows/README.md`.
+
+**PowerShell:**
 
 ```powershell
 irm https://raw.githubusercontent.com/ssmurfgg04-gif/cairn/main/install.ps1 | iex
 ```
 
-The installer detects your Windows version (10/11) and edition, downloads the
-latest `cairn-windows-*.exe` from GitHub Releases, verifies it against the
-release's SHA256 file, adds it to your PATH, and runs `cairn init` (creates
-`%USERPROFILE%\.cairn`). If SmartScreen ever asks about the downloaded file:
-**More info → Run anyway**.
+Either way: the engine + tray land in `%LOCALAPPDATA%\Programs\Cairn`, the
+installer verifies downloads against SHA256, adds the install dir to your
+user PATH, and runs `cairn init` (creates `%USERPROFILE%\.cairn`). If
+SmartScreen ever asks about the downloaded file (the installer is unsigned
+in this beta): **More info → Run anyway**.
 
 ## 2. Start the stack (one terminal, beta only)
 
@@ -74,7 +88,34 @@ cairn doctor     # every check ok
 Stress it once: kill the daemon window mid-save, restart it, and watch
 `cairn status` converge (crash-safety is a designed property, not a hope).
 
-## 6. Report back (the human part)
+## 6. Why is the first upload slow?
+
+Because the bytes have to move — that part is physics, not software. A 50 GB
+project over a 20 Mbit/s uplink is hours on the first push no matter what
+runs on either end. What Cairn controls is that you pay that cost **once
+per unique byte** and that the work never evaporates mid-flight:
+
+- **Chunked.** Files are split at content-defined boundaries
+  (`cairn-core::chunker`, FastCDC-style; 16 MiB max chunks — `CHUNK_MAX`,
+  `crates/cairn-core/src/lib.rs`), each chunk hashed (BLAKE3) and
+  compressed (zstd, with a cross-device dictionary, ADR-0013).
+- **Deduplicated.** The server answers "which chunks do I already have?"
+  before you upload (bloom-filter pre-filter over its chunk table —
+  `crates/cairn-server/src/upload.rs` `BatchExists`; a bloom false positive
+  can never skip an upload, property-tested adversarially). A re-save of
+  the 50 GB edit uploads the delta, not the file; a teammate attaching the
+  same footage re-uploads none of the chunks the server already has.
+- **Resumable.** Uploads ride persisted sessions that resume at chunk
+  granularity across daemon AND server restarts (`crates/cairn-server/src/
+  upload.rs` — session rows survive restarts; `crates/cairn-sync/src/
+  outbox_worker.rs` retries the outbox with AIMD pacing). The crash-safety
+  gate is a tested property: kill -9 mid-upload → resume → byte-identical
+  (M3, verified at 512 MB; 5 GB-class soak behind `CAIRN_E2E_BYTES`).
+
+What it does NOT do: make your uplink faster. For the first bulk load,
+wire real bandwidth or co-locate with the meeting point.
+
+## 7. Report back (the human part)
 
 That hour of real use is worth more than 100 hours of CI. Note down:
 
@@ -83,6 +124,26 @@ That hour of real use is worth more than 100 hours of CI. Note down:
 - **what confused you** — any word or screen you had to think about twice
 
 Send it with `cairn doctor --json` output and the daemon window's last lines.
+
+## 8. Testing between two homes
+
+The localhost beta above exercises one machine. The next honest step is two
+machines in two places:
+
+- **Host a meeting point** (`docs/runbook-meeting-point.md`): a small VPS
+  runs `cairn server` (+ optionally `cairn signal` for the direct-peer
+  swarm leg). Both homes `cairn login --server https://…` against it.
+- **Automated coverage exists:**
+  `crates/cairn-sim/tests/two_homes_e2e.rs` (landing this round) drives two
+  full daemons — two "homes" — through the real server: initial upload,
+  cross-machine edits, conflict truth, revoke propagation, with the network
+  partitioned and restored. That proves the mechanics in CI.
+- **What the E2E cannot prove:** home routers (CGNAT especially), Wi-Fi
+  drops, laptops that sleep at 11pm, a 5 GB library opening for the first
+  time over a real uplink, and whether a second human finds the flow
+  obvious. Run the real two-homes test with a teammate before you trust it
+  with production work — the automated suite is the floor, not the
+  substitute. Report what breaks per section 7.
 
 ---
 
@@ -115,14 +176,19 @@ the rest. Both matter; neither replaces the other.
 For the everyday flow you should never need the CLI at all. Everyone else
 installs and lives in the tray:
 
-1. **Install (one command, no admin):**
+1. **Install (zero or one command, no admin):** the double-click NSIS
+   installer (`cairn-setup-<tag>.exe` on the release page — section 1) or:
 
    ```powershell
    irm https://raw.githubusercontent.com/ssmurfgg04-gif/cairn/main/install.ps1 | iex
    ```
 
-   SHA-verified engine + tray, per-user autostart, desktop shortcut, tray
-   starts immediately.
+   Both are per-user, register the tray autostart, and start the daemon
+   hidden — the tray icon appears immediately (the installer's finish page
+   opens the dashboard). install.ps1 SHA-verifies every download; the
+   installer ships with a `.sha256` sidecar on the release (checking it is
+   `sha256sum -c`, one command) — the workflow that builds it prints the
+   hash in the job summary.
 
 2. **Day 2 operation is four clicks:** tray icon → Connect to Project…
    (folder picker — attach, scan, and mount run in the daemon) → Status
