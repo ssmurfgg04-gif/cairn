@@ -245,7 +245,9 @@ impl CtlPresence for CtlPresenceSvc {
             local: true,
         });
         // 2) relay into the project's swarm (encrypted sessions; no-op when
-        //    the project has no swarm or the join predates the flag flip)
+        //    the project has no live swarm — a join-time flag flip restarts
+        //    swarms immediately, CONTRACT-DEBT #2, so a live swarm never
+        //    predates the flip)
         let reached = {
             let rt = self.state.projects.find_by_project(&project).await;
             rt.and_then(|rt| rt.swarm.blocking_lock().clone())
