@@ -93,7 +93,10 @@ impl Store {
         // never block writers.
         conn.pragma_update(None, "wal_autocheckpoint", 1000)
             .map_err(|e| {
-                CairnError::new(cairn_core::ErrorKind::Io, format!("wal_autocheckpoint: {e}"))
+                CairnError::new(
+                    cairn_core::ErrorKind::Io,
+                    format!("wal_autocheckpoint: {e}"),
+                )
             })?;
         let store = Store {
             conn: std::sync::Arc::new(Mutex::new(conn)),
@@ -316,11 +319,7 @@ impl Store {
         Self::query_files(&conn, &sql, params)
     }
 
-    fn query_files(
-        conn: &rusqlite::Connection,
-        sql: &str,
-        params: Vec<String>,
-    ) -> Vec<FileRow> {
+    fn query_files(conn: &rusqlite::Connection, sql: &str, params: Vec<String>) -> Vec<FileRow> {
         let mut stmt = match conn.prepare(sql) {
             Ok(s) => s,
             Err(_) => return Vec::new(),
@@ -904,7 +903,9 @@ mod tests {
     #[test]
     fn network_mount_tripwire() {
         use std::path::Path;
-        assert!(super::root_on_network_mount(Path::new(r"\\nas\share\cairn")));
+        assert!(super::root_on_network_mount(Path::new(
+            r"\\nas\share\cairn"
+        )));
         assert!(super::root_on_network_mount(Path::new("//nas/share/cairn")));
         assert!(!super::root_on_network_mount(Path::new(
             r"C:\Users\ed\cairn-home"

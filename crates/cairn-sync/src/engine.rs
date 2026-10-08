@@ -87,10 +87,7 @@ impl Engine {
         // filter — dirty/conflict only; unknown strings never match either).
         for f in self.store.list_files_in_states(
             &self.local_ns,
-            &[
-                LocalState::Dirty.as_str(),
-                LocalState::Conflict.as_str(),
-            ],
+            &[LocalState::Dirty.as_str(), LocalState::Conflict.as_str()],
         ) {
             let Some(state) = LocalState::parse(&f.local_state) else {
                 continue;
@@ -255,8 +252,12 @@ impl Engine {
             // zstd-stored chunks rejects every upload.)
             // O(1) span lookup per chunk (was an O(n) .find() per chunk →
             // O(n²) per file with many chunks).
-            let span_by_hash: std::collections::HashMap<Hash, &cairn_core::chunker::ChunkSpan> =
-                sh.spans.iter().zip(sh.chunk_hashes.iter()).map(|(s, h)| (*h, s)).collect();
+            let span_by_hash: std::collections::HashMap<Hash, &cairn_core::chunker::ChunkSpan> = sh
+                .spans
+                .iter()
+                .zip(sh.chunk_hashes.iter())
+                .map(|(s, h)| (*h, s))
+                .collect();
             // Bounded-parallel upload (was strictly serial: N chunks = N
             // sequential compress + round trips). Each PUT is independent and
             // idempotent (content-addressed); receipts are still built from
@@ -277,28 +278,27 @@ impl Engine {
             let spans = &span_by_hash;
             let body: &[u8] = &content;
             let d = dict.as_ref();
-            let uploaded: Vec<Result<(String, u64), CairnError>> =
-                futures::stream::iter(puts)
-                    .map(|(hash_hex, url)| async move {
-                        let h = Hash::from_hex(&hash_hex).ok_or_else(|| {
-                            CairnError::new(ErrorKind::Internal, "bad hash in session")
-                        })?;
-                        let span = spans.get(&h).ok_or_else(|| {
-                            CairnError::new(
-                                ErrorKind::Internal,
-                                format!("session hash {hash_hex} not in local chunk set"),
-                            )
-                        })?;
-                        let raw = &body[span.offset as usize
-                            ..(span.offset + u64::from(span.len)) as usize];
-                        let stored = compress::compress_chunk(raw, policy, d)?;
-                        let checksum = cairn_core::hash::hex_encode(&Sha256::digest(&stored));
-                        self.upload_with_aimd(&url, &stored, &checksum).await?;
-                        Ok((hash_hex, stored.len() as u64))
-                    })
-                    .buffered(bound)
-                    .collect()
-                    .await;
+            let uploaded: Vec<Result<(String, u64), CairnError>> = futures::stream::iter(puts)
+                .map(|(hash_hex, url)| async move {
+                    let h = Hash::from_hex(&hash_hex).ok_or_else(|| {
+                        CairnError::new(ErrorKind::Internal, "bad hash in session")
+                    })?;
+                    let span = spans.get(&h).ok_or_else(|| {
+                        CairnError::new(
+                            ErrorKind::Internal,
+                            format!("session hash {hash_hex} not in local chunk set"),
+                        )
+                    })?;
+                    let raw =
+                        &body[span.offset as usize..(span.offset + u64::from(span.len)) as usize];
+                    let stored = compress::compress_chunk(raw, policy, d)?;
+                    let checksum = cairn_core::hash::hex_encode(&Sha256::digest(&stored));
+                    self.upload_with_aimd(&url, &stored, &checksum).await?;
+                    Ok((hash_hex, stored.len() as u64))
+                })
+                .buffered(bound)
+                .collect()
+                .await;
             let mut stored_sizes: std::collections::HashMap<String, u64> =
                 std::collections::HashMap::new();
             for r in uploaded {
@@ -825,8 +825,7 @@ impl Engine {
                 }
             }
         };
-        match append_out
-        {
+        match append_out {
             Ok((_seq, _dedup)) => {
                 self.outbox.ack(request_id)?;
                 // complete the row's pipeline for FileUpserts: content identity lands with

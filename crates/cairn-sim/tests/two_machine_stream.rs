@@ -11,12 +11,12 @@ use std::sync::{
 
 use async_trait::async_trait;
 use cairn_core::CairnError;
-use rand::{Rng, SeedableRng};
 use cairn_proto::pb::{JournalOp, UploadReceipt};
 use cairn_sim::world::World;
 use cairn_store::state::LocalState;
 use cairn_store::FileRow;
 use cairn_sync::plane::{CompleteOut, Entry, Plane, Session};
+use rand::{Rng, SeedableRng};
 
 /// Deterministic incompressible-ish payload (xorshift64 — no external deps).
 fn payload(len: usize, seed: u64) -> Vec<u8> {
@@ -123,11 +123,7 @@ impl Plane for LatencyPlane {
     ) -> Result<Session, CairnError> {
         self.inner.create_session(t, d, p, m).await
     }
-    async fn complete(
-        &self,
-        s: &str,
-        r: &[UploadReceipt],
-    ) -> Result<CompleteOut, CairnError> {
+    async fn complete(&self, s: &str, r: &[UploadReceipt]) -> Result<CompleteOut, CairnError> {
         self.inner.complete(s, r).await
     }
     async fn put_presigned(
@@ -142,12 +138,7 @@ impl Plane for LatencyPlane {
         Self::release(&self.put_in_flight);
         r
     }
-    async fn put_manifest(
-        &self,
-        t: &str,
-        mh: &str,
-        b: &[u8],
-    ) -> Result<(), CairnError> {
+    async fn put_manifest(&self, t: &str, mh: &str, b: &[u8]) -> Result<(), CairnError> {
         self.inner.put_manifest(t, mh, b).await
     }
     async fn get_manifest(&self, t: &str, mh: &str) -> Result<Vec<u8>, CairnError> {
@@ -293,11 +284,7 @@ impl Plane for FlakyPlane {
         }
         self.inner.create_session(t, d, p, m).await
     }
-    async fn complete(
-        &self,
-        s: &str,
-        r: &[UploadReceipt],
-    ) -> Result<CompleteOut, CairnError> {
+    async fn complete(&self, s: &str, r: &[UploadReceipt]) -> Result<CompleteOut, CairnError> {
         if let Some(e) = self.maybe_fail("complete") {
             return Err(e);
         }
@@ -314,12 +301,7 @@ impl Plane for FlakyPlane {
         }
         self.inner.put_presigned(url, bytes, checksum_hex).await
     }
-    async fn put_manifest(
-        &self,
-        t: &str,
-        mh: &str,
-        b: &[u8],
-    ) -> Result<(), CairnError> {
+    async fn put_manifest(&self, t: &str, mh: &str, b: &[u8]) -> Result<(), CairnError> {
         if let Some(e) = self.maybe_fail("put_manifest") {
             return Err(e);
         }

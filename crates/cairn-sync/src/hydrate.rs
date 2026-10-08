@@ -328,9 +328,9 @@ pub async fn hydrate_one_into<W: std::io::Write>(
             // whole materialize). Auto-class only, capped, full-jitter —
             // same discipline as the upload path; the GET is idempotent.
             // Deterministic rng per chunk keeps sim schedules reproducible.
-            let mut rng = rand::rngs::StdRng::seed_from_u64(
-                u64::from_le_bytes(h.0[..8].try_into().unwrap_or([0xF1; 8])),
-            );
+            let mut rng = rand::rngs::StdRng::seed_from_u64(u64::from_le_bytes(
+                h.0[..8].try_into().unwrap_or([0xF1; 8]),
+            ));
             let mut attempts = 0u32;
             let stored = loop {
                 match plane.fetch_object(tenant, &h.hex()).await {

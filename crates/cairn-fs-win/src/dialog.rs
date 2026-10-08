@@ -139,14 +139,23 @@ pub fn pick_folder() -> Picked {
     // zenity: most desktop Linux
     if let Some(p) = try_helper(
         "zenity",
-        &["--file-selection", "--directory", "--title=Choose a project folder"],
+        &[
+            "--file-selection",
+            "--directory",
+            "--title=Choose a project folder",
+        ],
     ) {
         return p;
     }
     // kdialog: KDE Plasma
     if let Some(p) = try_helper(
         "kdialog",
-        &["--getexistingdirectory", ".", "--title", "Choose a project folder"],
+        &[
+            "--getexistingdirectory",
+            ".",
+            "--title",
+            "Choose a project folder",
+        ],
     ) {
         return p;
     }
