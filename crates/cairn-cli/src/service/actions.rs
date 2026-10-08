@@ -460,6 +460,10 @@ pub async fn file_duplicate(state: &Arc<DaemonState>, project: &str, path: &str)
 /// ctl path always enforced it; the dashboard path does too now — the
 /// "service action = direct mutation" drift the review flagged is closed
 /// (every dashboard mutation funnels through rbac_guard like ctl does).
+///
+/// Review #4 (local-scope hardening): regenerating also clears the
+/// burn/revocation/lockout state of the PREVIOUS code — a fresh invite
+/// starts clean, and whatever was wrong with the old one is moot.
 pub async fn team_regenerate(state: &Arc<DaemonState>, project: &str) -> Json {
     let project = project.trim().to_string();
     let project = if project.is_empty() {
@@ -488,26 +492,197 @@ pub async fn team_regenerate(state: &Arc<DaemonState>, project: &str) -> Json {
         let _ = store.meta_set("swarm/join-code", &code);
         let _ = store.meta_set(
             "swarm/join-code-exp",
-            &(WallClock.now_millis() + 600_000).to_string(),
+            &(WallClock.now_millis() + JOIN_TTL_MS).to_string(),
         );
+        // fresh code, fresh state: burn/revocation/lockout never carry over
+        let _ = store.meta_clear("swarm/join-code-used");
+        let _ = store.meta_clear("swarm/join-code-revoked");
+        let _ = store.meta_clear("swarm/join-fails");
+        let _ = store.meta_clear("swarm/join-locked-until");
     }
-    json!({"ok": true, "join_code": code, "ttl_ms": 600_000})
+    json!({"ok": true, "join_code": code, "ttl_ms": JOIN_TTL_MS})
+}
+
+// ---------- join codes: local single-use burn + revocation + lockout ----------
+//
+// Review #4, honest local scope. The machine-local `enr-` code minted for
+// the WS rendezvous is the only invite primitive today; since Phase 2 it
+// carries:
+//   * SINGLE-USE BURN — a successful team_join validation consumes the code
+//     (`swarm/join-code-used`); one code, one join;
+//   * REVOCATION — `team_revoke_code` (dashboard POST
+//     /api/v1/team/code/revoke) kills the current invite NOW;
+//   * LOCKOUT — 5 failed join attempts lock the join surface for 15 minutes
+//     (a guessed-code budget; regenerating clears it instantly, so an
+//     attacker cannot DoS the owner into a corner);
+//   * AUDIT — every join outcome lands in the project ledger
+//     ("dash/team-join") when an attached root exists.
+// ALL stored-code rejections share ONE generic error — consumed, expired,
+// revoked, unknown and locked are indistinguishable from the outside (no
+// existence leak). The server-authoritative invitation protocol
+// (server-side hash + atomic consume, synced across machines) stays future
+// work — tracked in CONTRACT-DEBT #4.
+
+const JOIN_TTL_MS: i64 = 600_000;
+const JOIN_MAX_FAILURES: i64 = 5;
+const JOIN_LOCKOUT_MS: i64 = 15 * 60_000;
+
+/// The one generic join rejection (no existence leak — see module comment).
+fn join_refused() -> Json {
+    json!({"ok": false, "error": "join code not accepted"})
+}
+
+/// Best-effort audit for a join outcome on the first attached project's
+/// ledger (the ledger is per-root; with nothing attached there is no
+/// ledger — the decision still enforced). Never blocks the decision.
+async fn audit_join_decision(state: &Arc<DaemonState>, action: &str, allowed: bool) {
+    let Some((_pid, root, _, _)) = state.projects.first().await else {
+        return;
+    };
+    let device = open_store(state.home.as_path())
+        .and_then(|s| crate::projects::load_identity(&s))
+        .map(|i| i.device_id)
+        .unwrap_or_else(|| "local".into());
+    let role = crate::members::load(&root)
+        .map(|f| cairn_core::rbac::Role::as_str(f.role_of(&device)).to_string())
+        .unwrap_or_else(|_| cairn_core::rbac::Role::Editor.as_str().to_string());
+    if let Err(e) = crate::audit::AuditFile::decision(
+        &root,
+        WallClock.now_millis(),
+        &device,
+        &role,
+        action,
+        "team",
+        allowed,
+    ) {
+        tracing::warn!(error = %e, "join audit write failed (decision unaffected)");
+    }
+}
+
+/// One failed join attempt: bump the failure budget for the CURRENT invite
+/// and lock the join surface once it is spent. Failures count against the
+/// stored code (the only one that could ever validate) — a flood of
+/// guessed codes locks the invite out, and the owner regenerates.
+fn record_join_failure(store: &cairn_store::Store, now_ms: i64) {
+    let fails = store
+        .meta_get("swarm/join-fails")
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(0)
+        + 1;
+    let _ = store.meta_set("swarm/join-fails", &fails.to_string());
+    if fails >= JOIN_MAX_FAILURES {
+        let _ = store.meta_set(
+            "swarm/join-locked-until",
+            &(now_ms + JOIN_LOCKOUT_MS).to_string(),
+        );
+        tracing::warn!("join surface locked after {fails} failed attempts");
+    }
 }
 
 /// POST /api/v1/team/join {code} — accept a teammate code, persist peer intent.
 /// Full enroll still runs via `cairn login --server … --code …`; this records
 /// intent + validates shape so the UI can guide (join-code gated admission).
-pub fn team_join(state: &Arc<DaemonState>, code: &str) -> Json {
+///
+/// Review #4: the validation is now REAL against the machine-local invite
+/// state — expired, consumed (single-use burn), revoked, locked-out and
+/// unknown codes all get the same generic refusal, and a successful
+/// validation BURNS the code. Failures are budgeted and audited.
+pub async fn team_join(state: &Arc<DaemonState>, code: &str) -> Json {
     let code = code.trim().to_string();
     if !(code.starts_with("enr-") && code.len() > 8) {
+        // shape feedback is safe: it says nothing about stored codes
         return json!({"ok": false, "error": "invalid join code shape (expected enr-…)"});
     }
-    if let Some(store) = open_store(state.home.as_path()) {
-        let _ = store.meta_set("swarm/peer-join", &code);
+    let Some(store) = open_store(state.home.as_path()) else {
+        // nothing to validate against: the code cannot be accepted
+        return join_refused();
+    };
+    let now = WallClock.now_millis();
+    // lockout first: while locked, even the valid code is refused (and the
+    // clock is not extended by further attempts)
+    if let Some(until) = store
+        .meta_get("swarm/join-locked-until")
+        .and_then(|s| s.parse::<i64>().ok())
+    {
+        if now < until {
+            audit_join_decision(state, "dash/team-join", false).await;
+            return join_refused();
+        }
+        // lockout served in full: a fresh failure budget starts now
+        let _ = store.meta_clear("swarm/join-locked-until");
+        let _ = store.meta_clear("swarm/join-fails");
     }
+    let expired = store
+        .meta_get("swarm/join-code-exp")
+        .and_then(|s| s.parse::<i64>().ok())
+        .map(|exp| now >= exp)
+        .unwrap_or(true); // no expiry stamped = no live invite ever minted
+    let consumed = store.meta_get("swarm/join-code-used").as_deref() == Some("1");
+    let revoked = store.meta_get("swarm/join-code-revoked").as_deref() == Some("1");
+    let stored = store.meta_get("swarm/join-code").unwrap_or_default();
+    let accepted = !stored.is_empty() && stored == code && !expired && !consumed && !revoked;
+    if !accepted {
+        record_join_failure(&store, now);
+        audit_join_decision(state, "dash/team-join", false).await;
+        return join_refused();
+    }
+    // SUCCESS: burn the code (single use) and clear the failure budget
+    let _ = store.meta_set("swarm/join-code-used", "1");
+    let _ = store.meta_clear("swarm/join-fails");
+    let _ = store.meta_set("swarm/peer-join", &code);
+    audit_join_decision(state, "dash/team-join", true).await;
     json!(
         {"ok": true, "code": code, "next": "run: cairn dev-enroll-code --server <server>, then cairn login --server <server> --code <code>"}
     )
+}
+
+/// The revoke mutation, factored from the guarded action so tests can drive
+/// it against a plain store. `true` = the code matched the current invite
+/// and is now revoked; `false` = unknown code (the caller answers).
+fn revoke_join_code(store: &cairn_store::Store, code: &str) -> bool {
+    let stored = store.meta_get("swarm/join-code").unwrap_or_default();
+    if stored.is_empty() || stored != code {
+        return false;
+    }
+    let _ = store.meta_set("swarm/join-code-revoked", "1");
+    true
+}
+
+/// POST /api/v1/team/code/revoke {code} — kill the current invite NOW
+/// (review #4: invites are revocable, not just expiring). POLICY BOUNDARY
+/// (ADR-0030): revoking an invite is a ManageMembers act, like minting one.
+/// The OWNER surface answers honestly ("unknown code") — that is a
+/// privileged, authenticated caller; the no-leak generic refusal stays on
+/// the GUEST join surface only.
+pub async fn team_revoke_code(state: &Arc<DaemonState>, code: &str) -> Json {
+    let code = code.trim().to_string();
+    if code.is_empty() {
+        return json!({"ok": false, "error": "code required"});
+    }
+    // project context for the guard: the first attached project (the same
+    // acting-context fallback team_regenerate uses)
+    let Some(rt) = state.projects.list().await.into_iter().next() else {
+        return json!({"ok": false, "error": "no attached project"});
+    };
+    if let Err(s) = crate::daemon::rbac_guard(
+        state,
+        &rt.project_id,
+        None,
+        cairn_core::rbac::Permission::ManageMembers,
+        "dash/team-code-revoke",
+    )
+    .await
+    {
+        return json!({"ok": false, "error": s.message()});
+    }
+    let Some(store) = open_store(state.home.as_path()) else {
+        return json!({"ok": false, "error": "store unavailable"});
+    };
+    if revoke_join_code(&store, &code) {
+        json!({"ok": true})
+    } else {
+        json!({"ok": false, "error": "unknown code"})
+    }
 }
 
 /// POST /api/v1/review/publish {project_id, media, title?, frames?, fps?} —
@@ -637,6 +812,11 @@ pub async fn review_publish(
 
 /// POST /api/v1/review/link {project_id?, note?, role?, ttl_hours?} —
 /// mint a guest link (token is identity, no account). Studio role sees internal.
+///
+/// CONTRACT (worklog freeze #2): `ttl_hours` is optional, clamped to
+/// 1..=8760, default 720 (=30 days) — the clamp lives HERE so every caller
+/// (dashboard route, panel, tests) gets identical bounds. Response shape
+/// unchanged.
 pub async fn review_link(
     state: &Arc<DaemonState>,
     project: &str,
@@ -644,6 +824,8 @@ pub async fn review_link(
     role: &str,
     ttl_h: i64,
 ) -> Json {
+    // the route's contract bounds: 1h..=1y, default 30 days
+    let ttl_h = clamp_ttl_hours(ttl_h);
     let root = resolve_root(state, project).await;
     let Some(root) = root else {
         return json!({"ok": false, "error": if project.is_empty() { "no attached project" } else { "project not attached" }});
@@ -759,6 +941,13 @@ pub async fn review_revoke(state: &Arc<DaemonState>, project: &str, token: &str)
         }
         Err(e) => json!({"ok": false, "error": e}),
     }
+}
+
+/// The route's TTL contract (worklog freeze #2): `ttl_hours` clamps to
+/// 1..=8760 (1h..=1y); the route default of 720 (=30 days) lives in the
+/// dashboard adapter. Extracted so tests pin the bounds directly.
+fn clamp_ttl_hours(ttl_h: i64) -> i64 {
+    ttl_h.clamp(1, 8_760)
 }
 
 /// The root for a review action: the named project, else the first
@@ -952,5 +1141,146 @@ pub fn merge_offer_decline(state: &Arc<DaemonState>, project: &str, path: &str) 
             Ok(()) => json!({"ok": true, "removed": true}),
             Err(e) => json!({"ok": false, "error": e.message}),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+
+    /// A daemon state over a temp home (no attached projects: the join
+    /// surface works against the home store's invite state alone, and the
+    /// audit helper degrades to a no-op without a root).
+    fn state() -> (tempfile::TempDir, Arc<DaemonState>) {
+        let home = tempfile::tempdir().unwrap();
+        let path = home.path().to_path_buf();
+        (home, Arc::new(DaemonState::new(path)))
+    }
+
+    /// Seed the invite state exactly like `team_regenerate` would (minting
+    /// needs an attached project + RBAC; the invite STATE is what the join
+    /// surface validates against).
+    fn seed_invite(
+        home: &std::path::Path,
+        code: &str,
+        exp_ms: i64,
+    ) {
+        let store = open_store(home).unwrap();
+        store.meta_set("swarm/join-code", code).unwrap();
+        store
+            .meta_set("swarm/join-code-exp", &exp_ms.to_string())
+            .unwrap();
+    }
+
+    fn fresh_code() -> String {
+        format!("enr-{}", uuid::Uuid::now_v7().simple())
+    }
+
+    fn now() -> i64 {
+        WallClock.now_millis()
+    }
+
+    /// The full happy path: valid live code joins ONCE; the single-use
+    /// burn makes the second attempt fail with the SAME generic error as
+    /// any other rejection (no existence leak).
+    #[tokio::test]
+    async fn join_burns_the_code_after_one_successful_use() {
+        let (_home, st) = state();
+        let code = fresh_code();
+        seed_invite(st.home.as_path(), &code, now() + 600_000);
+
+        let ok = team_join(&st, &code).await;
+        assert_eq!(ok["ok"], true, "first join validates: {ok}");
+
+        let again = team_join(&st, &code).await;
+        assert_eq!(again["ok"], false);
+        assert_eq!(
+            again["error"], "join code not accepted",
+            "burned code gets the generic refusal"
+        );
+        // the intent record exists (pre-existing peer-join contract)
+        let store = open_store(st.home.as_path()).unwrap();
+        assert_eq!(
+            store.meta_get("swarm/peer-join").as_deref(),
+            Some(code.as_str())
+        );
+    }
+
+    /// Expired, revoked, unknown and wrong codes all produce the SAME
+    /// generic error; revocation works through the factored mutation and
+    /// regenerating clears everything.
+    #[tokio::test]
+    async fn expired_revoked_and_unknown_share_one_refusal() {
+        let (_home, st) = state();
+        let code = fresh_code();
+        seed_invite(st.home.as_path(), &code, now() - 1); // already expired
+        let expired = team_join(&st, &code).await;
+        assert_eq!(expired["error"], "join code not accepted");
+
+        // revoked: a live code killed by the revoke mutation
+        let (_h2, st2) = state();
+        let code2 = fresh_code();
+        seed_invite(st2.home.as_path(), &code2, now() + 600_000);
+        let store = open_store(st2.home.as_path()).unwrap();
+        assert!(revoke_join_code(&store, &code2), "owner revokes the live invite");
+        // revoking again is a no-op on the flag (same current invite, still revoked)
+        assert!(revoke_join_code(&store, &code2));
+        assert!(!revoke_join_code(&store, "enr-notthecode"), "unknown refuses");
+        let revoked = team_join(&st2, &code2).await;
+        assert_eq!(
+            revoked["error"], "join code not accepted",
+            "revoked shares the generic refusal (no existence leak)"
+        );
+
+        // unknown code (no invite minted at all): same refusal
+        let (_h3, st3) = state();
+        let ghost = team_join(&st3, &fresh_code()).await;
+        assert_eq!(ghost["error"], "join code not accepted");
+
+        // shape feedback stays distinct (says nothing about stored codes)
+        let (_h4, st4) = state();
+        let malformed = team_join(&st4, "garbage").await;
+        assert!(malformed["error"].as_str().unwrap().contains("shape"));
+    }
+
+    /// Brute-force budget: 5 failed attempts lock the join surface — even
+    /// the VALID code is refused while locked (same generic error), and a
+    /// regenerate clears the lockout.
+    #[tokio::test]
+    async fn five_failures_lock_the_join_surface() {
+        let (_home, st) = state();
+        let code = fresh_code();
+        seed_invite(st.home.as_path(), &code, now() + 600_000);
+
+        for i in 0..JOIN_MAX_FAILURES {
+            let bad = team_join(&st, &format!("enr-wrong-attempt-{i}")).await;
+            assert_eq!(bad["error"], "join code not accepted");
+        }
+        // locked: even the valid code cannot join
+        let locked = team_join(&st, &code).await;
+        assert_eq!(
+            locked["error"], "join code not accepted",
+            "lockout refuses the valid code with the generic error"
+        );
+
+        // the lockout state is exactly what regenerate clears
+        let store = open_store(st.home.as_path()).unwrap();
+        assert!(store.meta_get("swarm/join-locked-until").is_some());
+        store.meta_clear("swarm/join-locked-until").unwrap();
+        store.meta_clear("swarm/join-fails").unwrap();
+        let ok = team_join(&st, &code).await;
+        assert_eq!(ok["ok"], true, "after the lock clears, the code still joins");
+    }
+
+    /// The route's TTL contract (worklog freeze #2): clamp to 1..=8760.
+    #[test]
+    fn review_link_ttl_clamps_to_the_contract_bounds() {
+        assert_eq!(clamp_ttl_hours(720), 720, "the 30-day default passes");
+        assert_eq!(clamp_ttl_hours(1), 1);
+        assert_eq!(clamp_ttl_hours(8_760), 8_760, "one year is the ceiling");
+        assert_eq!(clamp_ttl_hours(0), 1, "zero floors to 1h");
+        assert_eq!(clamp_ttl_hours(-42), 1, "negative floors to 1h");
+        assert_eq!(clamp_ttl_hours(99_999), 8_760, "beyond a year clamps down");
     }
 }

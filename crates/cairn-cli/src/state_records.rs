@@ -211,6 +211,35 @@ pub fn publish_review_link_revocation(store: &Store, target: &RecordTarget, toke
     }
 }
 
+// ---------- ADR-0031 Phase 2 read surface: synced revocations ----------
+
+/// Every token whose synced `review_link` record is a TOMBSTONE for
+/// `project_id` — the cross-machine revoke set (Phase 2's security
+/// payoff). A revoke published on any attached machine lands here after
+/// one sync pass, so the portal (`RuntimesProvider`) and the dashboard
+/// review views can kill a link that this machine's review.json still
+/// lists. Tombstones win by the family's LWW rule, so a stale live record
+/// can never resurrect a revoked token here.
+pub fn revoked_link_tokens(store: &Store, project_id: &str) -> Vec<String> {
+    store
+        .list_state_records(project_id, "review_link")
+        .into_iter()
+        .filter(|r| r.tombstone)
+        .map(|r| r.key)
+        .collect()
+}
+
+/// The point check for one token: `true` when the synced `review_link`
+/// record for (`project`, `token`) is a tombstone — revoked on THIS or ANY
+/// other machine. `false` covers both "no record" (the machine-local
+/// review.json governs that case) and "record still live".
+pub fn is_link_revoked_remotely(store: &Store, project: &str, token: &str) -> bool {
+    store
+        .get_state_record(project, "review_link", token)
+        .map(|r| r.tombstone)
+        .unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -325,6 +354,45 @@ mod tests {
             .get_state_record("brand-film", "review_link", "tok-1")
             .unwrap();
         assert!(link.tombstone, "revocation tombstones the link record");
+    }
+
+    /// ADR-0031 Phase 2: the synced-revocation read surface. A minted link
+    /// is not revoked; after the tombstone lands, the point check AND the
+    /// whole-set lookup report it — scoped per project, other projects and
+    /// unknown tokens stay clean.
+    #[test]
+    fn synced_revocations_read_back_from_the_record_table() {
+        let (_d, store, _root) = tmp();
+        // two projects, one link each; also an unrevoked sibling in p1
+        publish_review_link(&store, &target(), br#"{"token":"tok-1"}"#.to_vec(), "tok-1");
+        publish_review_link(
+            &store,
+            &target(),
+            br#"{"token":"tok-2"}"#.to_vec(),
+            "tok-2",
+        );
+        publish_review_link_revocation(&store, &target(), "tok-1");
+
+        assert!(
+            is_link_revoked_remotely(&store, "brand-film", "tok-1"),
+            "the tombstoned token is revoked"
+        );
+        assert!(
+            !is_link_revoked_remotely(&store, "brand-film", "tok-2"),
+            "the live sibling is not"
+        );
+        assert!(
+            !is_link_revoked_remotely(&store, "brand-film", "never-minted"),
+            "unknown to the record set: not remotely revoked (local file governs)"
+        );
+        assert_eq!(revoked_link_tokens(&store, "brand-film"), vec!["tok-1"]);
+
+        // project scoping: another project's records never leak in
+        assert!(
+            !is_link_revoked_remotely(&store, "other-project", "tok-1"),
+            "record scope is per project"
+        );
+        assert!(revoked_link_tokens(&store, "other-project").is_empty());
     }
 
     #[test]

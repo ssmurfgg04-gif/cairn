@@ -69,7 +69,9 @@ pub struct DaemonState {
 }
 
 impl DaemonState {
-    fn new(home: PathBuf) -> Self {
+    /// Crate-visible for service-layer tests (join-code flows); the real
+    /// daemon path is `run()` below.
+    pub(crate) fn new(home: PathBuf) -> Self {
         DaemonState {
             home,
             started: Instant::now(),

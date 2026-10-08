@@ -272,10 +272,25 @@ pub async fn storage(state: &DaemonState) -> serde_json::Value {
 /// GET /api/v1/review — the review portal state per attached project:
 /// version stack, live links, comment counts. Read-only; minting links is
 /// `actions::review_link`.
+///
+/// ADR-0031 Phase 2: a link tombstoned in the synced records is revoked on
+/// EVERY machine — even while this machine's review.json still lists it
+/// (the revoke may have happened elsewhere, before this machine's file was
+/// touched). Such links are flagged `revoked_remotely` and stop counting as
+/// live; the portal refuses them via `RootProvider::link_revocations`.
 pub async fn review_summary(state: &DaemonState) -> serde_json::Value {
     let mut out = Vec::new();
     for rt in state.projects.list().await {
         let root = rt.workspace.clone();
+        // ADR-0031 Phase 2 point check per link: tombstoned in the synced
+        // records = revoked on EVERY machine (the store may be unavailable —
+        // honest absence, the local file still governs)
+        let remote_revoked = |store: &Option<cairn_store::Store>, token: &str| {
+            store
+                .as_ref()
+                .is_some_and(|s| crate::state_records::is_link_revoked_remotely(s, &rt.project_id, token))
+        };
+        let store = open_store(state.home.as_path());
         let entry = match cairn_review::store::Store::load(&root) {
             Ok(Some(f)) => {
                 let now = WallClock.now_millis();
@@ -288,6 +303,11 @@ pub async fn review_summary(state: &DaemonState) -> serde_json::Value {
                             .unwrap_or(0)
                     })
                     .sum();
+                let revoked_flags: Vec<bool> = f
+                    .links
+                    .iter()
+                    .map(|l| remote_revoked(&store, &l.token))
+                    .collect();
                 json!({
                     "project_id": rt.project_id,
                     "root_path": root.to_string_lossy(),
@@ -302,16 +322,21 @@ pub async fn review_summary(state: &DaemonState) -> serde_json::Value {
                         "has_proxy": v.proxy_rel.is_some(),
                         "published_by": v.published_by,
                     })).collect::<Vec<_>>(),
-                    "live_links": f.links.iter().filter(|l| !l.is_expired(now)).count(),
+                    "live_links": f.links.iter().zip(&revoked_flags)
+                        .filter(|(l, revoked)| !l.is_expired(now) && !**revoked)
+                        .count(),
                     "expired_links": f.links.iter().filter(|l| l.is_expired(now)).count(),
+                    "revoked_remotely": revoked_flags.iter().filter(|r| **r).count(),
                     // mom-test round: the surface that makes revoke real —
                     // a user cannot kill a link they cannot see.
-                    "links": f.links.iter().map(|l| json!({
+                    "links": f.links.iter().zip(&revoked_flags).map(|(l, revoked)| json!({
                         "token": l.token,
                         "note": l.note,
                         "role": l.role.as_str(),
                         "expired": l.is_expired(now),
                         "expires_at": l.expires_at,
+                        // ADR-0031 Phase 2: tombstoned in the synced records
+                        "revoked_remotely": revoked,
                     })).collect::<Vec<_>>(),
                     "open_notes": comments,
                 })

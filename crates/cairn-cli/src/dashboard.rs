@@ -94,6 +94,7 @@ pub async fn serve(addr: String, state: Arc<DaemonState>) -> anyhow::Result<()> 
         .route("/api/v1/file/duplicate", post(file_duplicate))
         .route("/api/v1/team/regenerate", post(team_regenerate))
         .route("/api/v1/team/join", post(team_join))
+        .route("/api/v1/team/code/revoke", post(team_code_revoke))
         .route("/api/v1/review/publish", post(review_publish))
         .route("/api/v1/review/link", post(review_link))
         .route("/api/v1/review/revoke", post(review_revoke))
@@ -833,10 +834,28 @@ async fn team_join(
     let Some(Json(v)) = body else {
         return Json(json!({"ok": false, "error": "body required: {code}"}));
     };
-    Json(service::actions::team_join(
-        &state,
-        v["code"].as_str().unwrap_or(""),
-    ))
+    Json(
+        service::actions::team_join(
+            &state,
+            v["code"].as_str().unwrap_or(""),
+        )
+        .await,
+    )
+}
+
+/// POST /api/v1/team/code/revoke {code} — kill the current join code NOW
+/// (review #4; the service action enforces ManageMembers).
+async fn team_code_revoke(
+    State(state): State<Arc<DaemonState>>,
+    body: Option<Json<serde_json::Value>>,
+) -> Json<serde_json::Value> {
+    let Some(Json(v)) = body else {
+        return Json(json!({"ok": false, "error": "body required: {code}"}));
+    };
+    Json(
+        service::actions::team_revoke_code(&state, v["code"].as_str().unwrap_or_default())
+            .await,
+    )
 }
 
 async fn review_publish(
@@ -870,7 +889,9 @@ async fn review_link(
             v["project_id"].as_str().unwrap_or_default(),
             v["note"].as_str().unwrap_or("Client"),
             v["role"].as_str().unwrap_or("commenter"),
-            v["ttl_hours"].as_i64().unwrap_or(72),
+            // contract freeze #2: optional ttl_hours, default 720 (=30
+            // days); the service action clamps to 1..=8760
+            v["ttl_hours"].as_i64().unwrap_or(720),
         )
         .await,
     )

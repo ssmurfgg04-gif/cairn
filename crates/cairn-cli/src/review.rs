@@ -33,6 +33,23 @@ impl RootProvider for RuntimesProvider {
     fn blobs_root(&self) -> Option<PathBuf> {
         Some(self.home.join("blobs"))
     }
+
+    /// ADR-0031 Phase 2 (the security payoff): the portal consults the
+    /// SYNCED `review_link` tombstones before honoring a token, so a revoke
+    /// issued on any attached machine is dead here within one sync pass.
+    /// Reads the daemon home store's record table for `project_id` (the
+    /// portal resolves a token through a machine-local review.json and then
+    /// asks for THAT project's revocation scope). Fail-open by design: a
+    /// store hiccup degrades to "no synced revocations seen" — the
+    /// machine-local review.json still governs (belt and suspenders) and a
+    /// broken store must not kill every link on the machine.
+    async fn link_revocations(&self, project_id: &str) -> Vec<String> {
+        let Some(store) = crate::service::open_store(&self.home) else {
+            tracing::warn!("link revocation lookup skipped: home store unavailable");
+            return Vec::new();
+        };
+        crate::state_records::revoked_link_tokens(&store, project_id)
+    }
 }
 
 fn now_ms() -> i64 {
