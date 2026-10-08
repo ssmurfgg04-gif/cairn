@@ -1,0 +1,213 @@
+# Round 31: the NSIS installer pipeline (installer/windows/cairn.nsi).
+#
+# Triggers:
+#   - tag push (v*) -> build the installer, gate-test it, attach
+#     cairn-setup-<tag>.exe (+ .sha256) to the GitHub release that release.yml
+#     creates from the same tag (this job WAITS for the release to exist —
+#     release.yml's Windows build takes minutes; ordering is not guaranteed).
+#   - workflow_dispatch -> build + gate only (no release attach).
+#
+# Build parity with release.yml is load-bearing: the same static-CRT +
+# tokio_unstable RUSTFLAGS (see that workflow's comment — env RUSTFLAGS
+# REPLACES .cargo/config.toml's rustflags; dropping --cfg tokio_unstable
+# hard-errors the tokio io-uring build and killed the v1.0.0 re-tag run,
+# 33948944674). One binary bundles CLI + daemon + storage server; the tray is
+# the second binary; cairn-app is NOT built here (Tauri, own bundle/asset —
+# documented in installer/windows/cairn.nsi + README).
+name: installer
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: write   # release upload on tags
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  nsis:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          choco install nsis -y
+          $makensis = Join-Path ${env:ProgramFiles(x86)} "NSIS\makensis.exe"
+          if (-not (Test-Path $makensis)) { throw "makensis not found at $makensis" }
+          & $makensis /VERSION
+
+      # ⚠ RUSTFLAGS *replaces* .cargo/config.toml's rustflags (cargo's
+      # documented precedence). Keep BOTH flags or the build breaks loudly
+      # (tokio io-uring needs --cfg tokio_unstable). Mirrors release.yml.
+      - name: Build the engine (static CRT, self-contained)
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static --cfg tokio_unstable
+        run: cargo build --release -p cairn-cli --bin cairn
+
+      - name: Build the tray (static CRT)
+        env:
+          RUSTFLAGS: -C target-feature=+crt-static --cfg tokio_unstable
+        run: cargo build --release -p cairn-tray --bin cairn-tray
+
+      - name: Smoke test the binaries (exit-code contract)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          & target\release\cairn.exe --version
+          if ($LASTEXITCODE -ne 0) { throw "cairn --version exited $LASTEXITCODE" }
+          & target\release\cairn.exe status --json
+          if ($LASTEXITCODE -ne 0) { throw "cairn status exited $LASTEXITCODE" }
+          # the tray is a GUI-subsystem exe: NEVER run it on CI (it would
+          # detach, not wait) — existence is the assertion here
+          if (-not (Test-Path target\release\cairn-tray.exe)) { throw "cairn-tray.exe missing" }
+
+      - name: Stage the bundle inputs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          New-Item -ItemType Directory -Force installer\windows\dist | Out-Null
+          Copy-Item target\release\cairn.exe installer\windows\dist\
+          Copy-Item target\release\cairn-tray.exe installer\windows\dist\
+          Copy-Item LICENSE installer\windows\dist\LICENSE.txt
+          Copy-Item crates\cairn-tray\src\cairn.ico installer\windows\dist\
+          Get-ChildItem installer\windows\dist | Format-Table Name, Length
+
+      - name: makensis
+        shell: pwsh
+        working-directory: installer/windows
+        run: |
+          $ErrorActionPreference = "Stop"
+          $makensis = Join-Path ${env:ProgramFiles(x86)} "NSIS\makensis.exe"
+          & $makensis cairn.nsi
+          if ($LASTEXITCODE -ne 0) { throw "makensis exited $LASTEXITCODE" }
+          if (-not (Test-Path cairn-setup.exe)) { throw "cairn-setup.exe missing after makensis" }
+          Write-Host "cairn-setup.exe: $([int]((Get-Item cairn-setup.exe).Length / 1MB)) MiB"
+
+      # The gate: a real silent install on a clean runner, the same contract
+      # the product review cares about ("no terminal"), then a real uninstall.
+      - name: Gate — silent install, live daemon, uninstall, autostart gone
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $setup = Resolve-Path installer\windows\cairn-setup.exe
+          $dir = "$env:LOCALAPPDATA\Programs\Cairn"
+
+          # 1. silent install (/NOFFMPEG: a release gate must not depend on a
+          #    third-party mirror; the ffmpeg path is hash-pinned + degrade-
+          #    gracefully by design, documented in installer/windows/README.md)
+          $p = Start-Process -FilePath $setup -ArgumentList "/S", "/NOFFMPEG" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "silent install exited $($p.ExitCode)" }
+          if (-not (Test-Path "$dir\cairn.exe")) { throw "cairn.exe not installed to $dir" }
+          if (-not (Test-Path "$dir\cairn-tray.exe")) { throw "cairn-tray.exe not installed to $dir" }
+          $run = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "CairnTray" -ErrorAction SilentlyContinue).CairnTray
+          if (-not $run) { throw "autostart (HKCU Run CairnTray) not registered by the installer" }
+          Write-Host "installed to $dir; autostart = $run"
+
+          # 2. the installer-launched daemon serves the dashboard (no terminal,
+          #    install-and-it-just-works — the round-26 contract, now via NSIS)
+          $deadline = (Get-Date).AddSeconds(90)
+          $up = $false
+          while ((Get-Date) -lt $deadline) {
+            Start-Sleep -Milliseconds 800
+            try {
+              $r = Invoke-WebRequest "http://127.0.0.1:17778/" -UseBasicParsing -TimeoutSec 2
+              if ($r.StatusCode -eq 200) { $up = $true; break }
+            } catch { }
+          }
+          if (-not $up) {
+            $log = Join-Path $env:USERPROFILE ".cairn\daemon.log"
+            $tail = if (Test-Path $log) { (Get-Content $log -Tail 20) -join "`n" } else { "(no daemon.log)" }
+            throw "daemon did not serve the dashboard within 90s after silent install`n$tail"
+          }
+          # 3. status answers against the live daemon
+          & "$dir\cairn.exe" status --json | Out-Null
+          if ($LASTEXITCODE -ne 0) { throw "cairn status --json failed while the daemon was up" }
+          Write-Host "gate: silent install -> daemon up -> status GREEN"
+
+          # 4. silent uninstall (the `_?=` form runs the uninstaller in place
+          #    so Start-Process can wait for the REAL exit code)
+          $u = Start-Process -FilePath "$dir\uninstall.exe" -ArgumentList "/S", ('"_?=' + $dir + '"') -Wait -PassThru
+          if ($u.ExitCode -ne 0) { throw "silent uninstall exited $($u.ExitCode)" }
+          # `_?=` skips the uninstaller's self-delete by design (documented
+          # NSIS behavior) — remove what it leaves, then assert emptiness.
+          if (Test-Path $dir) { Remove-Item $dir -Recurse -Force }
+          if (Test-Path $dir) { throw "install dir survived uninstall" }
+          # 5. autostart key removed, user PATH cleaned
+          $run2 = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "CairnTray" -ErrorAction SilentlyContinue).CairnTray
+          if ($run2) { throw "autostart value survived uninstall" }
+          $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+          if ($userPath -and ($userPath -split ';' | Where-Object { $_.TrimEnd('\') -ieq $dir })) {
+            throw "user PATH still contains the install dir after uninstall"
+          }
+          Write-Host "gate: uninstall -> autostart gone -> PATH clean — installer gate GREEN"
+
+      - name: SHA256 + build metadata (supply-chain light, review-item #70)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $h = (Get-FileHash installer\windows\cairn-setup.exe -Algorithm SHA256).Hash.ToLower()
+          "$h  cairn-setup.exe" | Out-File installer\windows\cairn-setup.exe.sha256 -NoNewline -Encoding ascii
+          $mk = & (Join-Path ${env:ProgramFiles(x86)} "NSIS\makensis.exe") /VERSION
+          Add-Content $env:GITHUB_STEP_SUMMARY @"
+          ## installer artifact
+          | field | value |
+          |---|---|
+          | file | cairn-setup.exe ($([math]::Round((Get-Item installer\windows\cairn-setup.exe).Length / 1MB, 1)) MiB) |
+          | sha256 | ``$h`` |
+          | ref | ${{ github.ref_name }} (${{ github.sha }}) |
+          | rustc/toolchain | dtolnay/rust-toolchain@stable, RUSTFLAGS=-C target-feature=+crt-static --cfg tokio_unstable |
+          | makensis | $mk |
+          | signing | UNSIGNED (Authenticode = review-item #72 future work) |
+          "@
+          Write-Host "sha256: $h"
+
+      - name: Upload artifact (always)
+        uses: actions/upload-artifact@v4
+        with:
+          name: cairn-setup-${{ github.ref_name }}
+          path: |
+            installer/windows/cairn-setup.exe
+            installer/windows/cairn-setup.exe.sha256
+          if-no-files-found: error
+
+      - name: Attach to the GitHub release (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $tag = "${{ github.ref_name }}"
+          $asset = "cairn-setup-$tag.exe"
+          Copy-Item installer\windows\cairn-setup.exe $asset
+          Copy-Item installer\windows\cairn-setup.exe.sha256 "$asset.sha256"
+          # release.yml (same tag) creates the release; its Windows build takes
+          # minutes, so WAIT for it to exist instead of racing a duplicate.
+          $deadline = (Get-Date).AddMinutes(20)
+          while ($true) {
+            gh release view $tag --repo "${{ github.repository }}" --json id -q .id 2>$null
+            if ($LASTEXITCODE -eq 0) {
+              gh release upload $tag $asset "$asset.sha256" --repo "${{ github.repository }}" --clobber
+              if ($LASTEXITCODE -ne 0) { throw "release upload failed" }
+              Write-Host "attached $asset (+ .sha256) to release $tag"
+              break
+            }
+            if ((Get-Date) -gt $deadline) {
+              # release.yml never created it (e.g. it failed): create ours so
+              # the installer asset is never silently lost.
+              gh release create $tag $asset "$asset.sha256" --repo "${{ github.repository }}" --title "cairn $tag" --generate-notes
+              if ($LASTEXITCODE -ne 0) { throw "release create failed after the wait window" }
+              Write-Host "created release $tag (release.yml had not) with $asset"
+              break
+            }
+            Write-Host "release $tag not published yet - waiting 30s"
+            Start-Sleep -Seconds 30
+          }
