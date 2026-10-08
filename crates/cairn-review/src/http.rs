@@ -66,6 +66,9 @@ const RATE_COMMENT_PER_MIN: u32 = 30;
 /// `revocations` field on [`Portal`]).
 const REVOCATION_TTL: Duration = Duration::from_secs(3);
 
+/// One cached revocation lookup: (tombstoned tokens, fetched at).
+type CachedRevocations = (Vec<String>, Instant);
+
 /// A live reviewer signal (ephemeral by design — never persisted, never
 /// synced: presence is "who is watching right now", not state).
 #[derive(Clone, Debug)]
@@ -131,7 +134,7 @@ pub struct Portal {
     /// sync pass (≤1s engine cadence + network). A LOCAL revoke never
     /// waits on this cache — it removes the link from review.json, which
     /// the resolve loop re-reads on every request (belt and suspenders).
-    revocations: Arc<Mutex<HashMap<String, (Vec<String>, Instant)>>>,
+    revocations: Arc<Mutex<HashMap<String, CachedRevocations>>>,
 }
 impl Portal {
     pub fn new(provider: Arc<dyn RootProvider>) -> Portal {
@@ -199,10 +202,7 @@ impl Portal {
         if guard.len() > 256 {
             guard.retain(|_, (_, at)| at.elapsed() < REVOCATION_TTL);
         }
-        guard.insert(
-            project_id.to_string(),
-            (tokens.clone(), Instant::now()),
-        );
+        guard.insert(project_id.to_string(), (tokens.clone(), Instant::now()));
         tokens
     }
 
@@ -486,11 +486,7 @@ async fn comment(
     }
     // per-IP+token flood budget; the key embeds the token but lives only
     // inside the in-memory limiter (never logged)
-    if let Err(resp) = p.rate_gate(
-        "comment",
-        &format!("{ip}|{token}"),
-        RATE_COMMENT_PER_MIN,
-    ) {
+    if let Err(resp) = p.rate_gate("comment", &format!("{ip}|{token}"), RATE_COMMENT_PER_MIN) {
         return resp;
     }
     let Some(Json(v)) = body else {
@@ -1206,7 +1202,8 @@ mod tests {
         )
         .unwrap();
 
-        let body = body_json(session(State(p.clone()), caller(), UrlPath(client_token)).await).await;
+        let body =
+            body_json(session(State(p.clone()), caller(), UrlPath(client_token)).await).await;
         let comments = body["comments"].as_array().unwrap();
         assert_eq!(
             comments.len(),
@@ -1281,7 +1278,13 @@ mod tests {
             "version": 1, "frame": 14, "author": "team", "body": "recut this",
             "visibility": "internal",
         });
-        let r4 = comment(State(p.clone()), caller(), UrlPath(studio_token), Some(Json(ok))).await;
+        let r4 = comment(
+            State(p.clone()),
+            caller(),
+            UrlPath(studio_token),
+            Some(Json(ok)),
+        )
+        .await;
         assert_eq!(r4.status(), StatusCode::OK);
 
         // the store carries the v2 shapes (the 403'd note never wrote)
@@ -1826,34 +1829,40 @@ mod tests {
         Store::save(&root, &f).unwrap();
 
         // before the tombstone is seen: the link serves (session 200, media 200)
-        let p = Portal::new(Arc::new(FixedProvider::new(vec![(
+        let live_portal = Portal::new(Arc::new(FixedProvider::new(vec![(
             "p1".into(),
             root.clone(),
         )])));
-        let r = session(State(p.clone()), caller(), UrlPath(token.clone())).await;
-        assert_eq!(r.status(), StatusCode::OK);
-        let m = media(
-            State(p.clone()),
+        let session_ok =
+            session(State(live_portal.clone()), caller(), UrlPath(token.clone())).await;
+        assert_eq!(session_ok.status(), StatusCode::OK);
+        let media_ok = media(
+            State(live_portal.clone()),
             caller(),
             UrlPath((token.clone(), "1".into())),
             Query(HashMap::new()),
             HeaderMap::new(),
         )
         .await;
-        assert_eq!(m.status(), StatusCode::OK);
+        assert_eq!(media_ok.status(), StatusCode::OK);
         // the unknown-token response body — the shape revoked must match
-        let unknown = session(State(p.clone()), caller(), UrlPath("nope".into())).await;
+        let unknown = session(State(live_portal.clone()), caller(), UrlPath("nope".into())).await;
         assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
         let unknown_body = body_json(unknown).await;
 
         // the tombstone lands (fresh portal: what a fresh daemon/first
         // uncached resolution sees — a warm portal picks it up within the
         // 3s revocation-cache TTL, bounded well below one sync pass)
-        let p2 = Portal::new(Arc::new(FixedProvider {
+        let revoked_portal = Portal::new(Arc::new(FixedProvider {
             revoked: vec![token.clone()],
             ..FixedProvider::new(vec![("p1".into(), root.clone())])
         }));
-        let revoked = session(State(p2.clone()), caller(), UrlPath(token.clone())).await;
+        let revoked = session(
+            State(revoked_portal.clone()),
+            caller(),
+            UrlPath(token.clone()),
+        )
+        .await;
         assert_eq!(revoked.status(), StatusCode::NOT_FOUND, "revoked is dead");
         let revoked_body = body_json(revoked).await;
         assert_eq!(
@@ -1861,37 +1870,39 @@ mod tests {
             "no existence leak: revoked shares the unknown-token body"
         );
         // every token-validating route refuses the same way
-        let c = comment(
-            State(p2.clone()),
+        let comment_refused = comment(
+            State(revoked_portal.clone()),
             caller(),
             UrlPath(token.clone()),
-            Some(Json(json!({"version": 1, "frame": 5, "body": "x", "author": "j"}))),
+            Some(Json(
+                json!({"version": 1, "frame": 5, "body": "x", "author": "j"}),
+            )),
         )
         .await;
-        assert_eq!(c.status(), StatusCode::NOT_FOUND);
-        let m2 = media(
-            State(p2.clone()),
+        assert_eq!(comment_refused.status(), StatusCode::NOT_FOUND);
+        let media_refused = media(
+            State(revoked_portal.clone()),
             caller(),
             UrlPath((token.clone(), "1".into())),
             Query(HashMap::new()),
             HeaderMap::new(),
         )
         .await;
-        assert_eq!(m2.status(), StatusCode::NOT_FOUND);
+        assert_eq!(media_refused.status(), StatusCode::NOT_FOUND);
         // ...and the revocation cache TTL means the CACHED (pre-revoke)
         // answer can persist at most REVOCATION_TTL — the local review.json
         // governs instantly either way (below), so staleness is bounded.
 
         // belt and suspenders: the LOCAL revoke (review.json removal) is
         // honored even when the synced record set is silent.
-        let mut f = Store::load(&root).unwrap().unwrap();
-        assert!(f.revoke_link(&token));
-        Store::save(&root, &f).unwrap();
-        let p3 = Portal::new(Arc::new(FixedProvider::new(vec![(
+        let mut file = Store::load(&root).unwrap().unwrap();
+        assert!(file.revoke_link(&token));
+        Store::save(&root, &file).unwrap();
+        let local_portal = Portal::new(Arc::new(FixedProvider::new(vec![(
             "p1".into(),
             root.clone(),
         )])));
-        let local = session(State(p3), caller(), UrlPath(token)).await;
+        let local = session(State(local_portal), caller(), UrlPath(token)).await;
         assert_eq!(local.status(), StatusCode::NOT_FOUND);
     }
 
@@ -1949,25 +1960,23 @@ mod tests {
         let token = f.add_link(GuestRole::Commenter, "jane".into(), 0, false, 1);
         Store::save(&root, &f).unwrap();
 
-        let mk = |revoked_under: &str| {
-            ScopedProvider {
-                roots: vec![("p1".into(), root.clone()), ("p2".into(), root.clone())],
-                now: std::sync::atomic::AtomicI64::new(1_000),
-                revoked_by_project: HashMap::from([(
-                    revoked_under.to_string(),
-                    vec![token.clone()],
-                )]),
-            }
+        let mk = |revoked_under: &str| ScopedProvider {
+            roots: vec![("p1".into(), root.clone()), ("p2".into(), root.clone())],
+            now: std::sync::atomic::AtomicI64::new(1_000),
+            revoked_by_project: HashMap::from([(revoked_under.to_string(), vec![token.clone()])]),
         };
 
         // revoked under p2, p1 matches first -> the p1-scoped link lives
-        let p = Portal::new(Arc::new(mk("p2")));
-        assert!(p.resolve(&token).await.is_some(), "p1 scope is clean");
+        let clean_scope = Portal::new(Arc::new(mk("p2")));
+        assert!(
+            clean_scope.resolve(&token).await.is_some(),
+            "p1 scope is clean"
+        );
 
         // revoked under p1 (the matching project) -> dead, like unknown
-        let p2 = Portal::new(Arc::new(mk("p1")));
+        let killed_scope = Portal::new(Arc::new(mk("p1")));
         assert!(
-            p2.resolve(&token).await.is_none(),
+            killed_scope.resolve(&token).await.is_none(),
             "the matched project's tombstone kills the token"
         );
     }
@@ -1979,23 +1988,23 @@ mod tests {
     /// shape the waveform admission control answers with).
     #[tokio::test]
     async fn session_resolution_is_rate_limited_per_ip() {
-        let (p, _root, token) = setup();
+        let (portal, _root, token) = setup();
         let mut last = None;
         for _ in 0..=RATE_RESOLVE_PER_MIN {
-            last = Some(session(State(p.clone()), caller(), UrlPath(token.clone())).await);
+            last = Some(session(State(portal.clone()), caller(), UrlPath(token.clone())).await);
         }
-        let r = last.expect("at least one request");
-        assert_eq!(r.status(), StatusCode::TOO_MANY_REQUESTS);
+        let refused = last.expect("at least one request");
+        assert_eq!(refused.status(), StatusCode::TOO_MANY_REQUESTS);
         assert!(
-            r.headers().get(header::RETRY_AFTER).is_some(),
+            refused.headers().get(header::RETRY_AFTER).is_some(),
             "Retry-After must accompany the 429"
         );
-        let body = body_json(r).await;
+        let body = body_json(refused).await;
         assert_eq!(body["ok"], false);
         assert_eq!(body["error"], "RATE_LIMITED");
         // a DIFFERENT source IP has its own budget (per-IP, not global)
         let other = ConnectInfo("127.0.0.1:51000".parse().unwrap());
-        let fresh_ip = session(State(p), other, UrlPath(token)).await;
+        let fresh_ip = session(State(portal), other, UrlPath(token)).await;
         assert_eq!(fresh_ip.status(), StatusCode::OK, "per-IP budgets");
     }
 
@@ -2006,7 +2015,8 @@ mod tests {
         for i in 0..RATE_COMMENT_PER_MIN {
             // distinct notes: comments are content-deduped, so a repeated
             // body would collapse to one note and prove nothing
-            let body = json!({"version": 1, "frame": 10 + i, "body": format!("note {i}"), "author": "j"});
+            let body =
+                json!({"version": 1, "frame": 10 + i, "body": format!("note {i}"), "author": "j"});
             let r = comment(
                 State(p.clone()),
                 caller(),
@@ -2020,7 +2030,9 @@ mod tests {
             State(p.clone()),
             caller(),
             UrlPath(token.clone()),
-            Some(Json(json!({"version": 1, "frame": 10, "body": "over budget", "author": "j"}))),
+            Some(Json(
+                json!({"version": 1, "frame": 10, "body": "over budget", "author": "j"}),
+            )),
         )
         .await;
         assert_eq!(r.status(), StatusCode::TOO_MANY_REQUESTS);

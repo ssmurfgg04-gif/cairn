@@ -365,12 +365,7 @@ mod tests {
         let (_d, store, _root) = tmp();
         // two projects, one link each; also an unrevoked sibling in p1
         publish_review_link(&store, &target(), br#"{"token":"tok-1"}"#.to_vec(), "tok-1");
-        publish_review_link(
-            &store,
-            &target(),
-            br#"{"token":"tok-2"}"#.to_vec(),
-            "tok-2",
-        );
+        publish_review_link(&store, &target(), br#"{"token":"tok-2"}"#.to_vec(), "tok-2");
         publish_review_link_revocation(&store, &target(), "tok-1");
 
         assert!(

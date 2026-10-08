@@ -530,6 +530,7 @@ dependencies = [
  "async-trait",
  "cairn-core",
  "cairn-proto",
+ "cairn-review",
  "cairn-server",
  "cairn-store",
  "cairn-sync",

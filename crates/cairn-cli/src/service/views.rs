@@ -286,9 +286,9 @@ pub async fn review_summary(state: &DaemonState) -> serde_json::Value {
         // records = revoked on EVERY machine (the store may be unavailable —
         // honest absence, the local file still governs)
         let remote_revoked = |store: &Option<cairn_store::Store>, token: &str| {
-            store
-                .as_ref()
-                .is_some_and(|s| crate::state_records::is_link_revoked_remotely(s, &rt.project_id, token))
+            store.as_ref().is_some_and(|s| {
+                crate::state_records::is_link_revoked_remotely(s, &rt.project_id, token)
+            })
         };
         let store = open_store(state.home.as_path());
         let entry = match cairn_review::store::Store::load(&root) {

@@ -142,7 +142,9 @@ mod tests {
         {
             let mut guard = l.windows.lock().unwrap();
             let w = guard.get_mut(&key("roll")).unwrap();
-            w.start = Instant::now() - WINDOW - Duration::from_millis(1);
+            w.start = Instant::now()
+                .checked_sub(WINDOW + Duration::from_millis(1))
+                .unwrap();
         }
         assert!(l.check(&key("roll"), 5).is_ok(), "fresh window charges");
         assert_eq!(l.charged(&key("roll")), 1, "count restarted at 1");
@@ -161,13 +163,10 @@ mod tests {
         {
             let mut guard = l.windows.lock().unwrap();
             let w = guard.get_mut(&key("ra")).unwrap();
-            w.start = Instant::now() - Duration::from_secs(59);
+            w.start = Instant::now().checked_sub(Duration::from_secs(59)).unwrap();
         }
         let retry = l.check(&key("ra"), 2).expect_err("still blocked");
-        assert_eq!(
-            retry, 1,
-            "one second left in the window -> Retry-After: 1"
-        );
+        assert_eq!(retry, 1, "one second left in the window -> Retry-After: 1");
     }
 
     /// Pruning: floods of distinct identities cannot grow the map without
@@ -188,10 +187,15 @@ mod tests {
         {
             let mut guard = l.windows.lock().unwrap();
             for w in guard.values_mut() {
-                w.start = Instant::now() - WINDOW - Duration::from_millis(1);
+                w.start = Instant::now()
+                    .checked_sub(WINDOW + Duration::from_millis(1))
+                    .unwrap();
             }
         }
         let _ = l.check("fresh", 1);
-        assert!(l.windows.lock().unwrap().len() <= 1, "expired windows pruned");
+        assert!(
+            l.windows.lock().unwrap().len() <= 1,
+            "expired windows pruned"
+        );
     }
 }

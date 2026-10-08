@@ -834,13 +834,7 @@ async fn team_join(
     let Some(Json(v)) = body else {
         return Json(json!({"ok": false, "error": "body required: {code}"}));
     };
-    Json(
-        service::actions::team_join(
-            &state,
-            v["code"].as_str().unwrap_or(""),
-        )
-        .await,
-    )
+    Json(service::actions::team_join(&state, v["code"].as_str().unwrap_or("")).await)
 }
 
 /// POST /api/v1/team/code/revoke {code} — kill the current join code NOW
@@ -852,10 +846,7 @@ async fn team_code_revoke(
     let Some(Json(v)) = body else {
         return Json(json!({"ok": false, "error": "body required: {code}"}));
     };
-    Json(
-        service::actions::team_revoke_code(&state, v["code"].as_str().unwrap_or_default())
-            .await,
-    )
+    Json(service::actions::team_revoke_code(&state, v["code"].as_str().unwrap_or_default()).await)
 }
 
 async fn review_publish(

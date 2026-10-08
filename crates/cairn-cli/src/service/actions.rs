@@ -1161,11 +1161,7 @@ mod tests {
     /// Seed the invite state exactly like `team_regenerate` would (minting
     /// needs an attached project + RBAC; the invite STATE is what the join
     /// surface validates against).
-    fn seed_invite(
-        home: &std::path::Path,
-        code: &str,
-        exp_ms: i64,
-    ) {
+    fn seed_invite(home: &std::path::Path, code: &str, exp_ms: i64) {
         let store = open_store(home).unwrap();
         store.meta_set("swarm/join-code", code).unwrap();
         store
@@ -1223,10 +1219,16 @@ mod tests {
         let code2 = fresh_code();
         seed_invite(st2.home.as_path(), &code2, now() + 600_000);
         let store = open_store(st2.home.as_path()).unwrap();
-        assert!(revoke_join_code(&store, &code2), "owner revokes the live invite");
+        assert!(
+            revoke_join_code(&store, &code2),
+            "owner revokes the live invite"
+        );
         // revoking again is a no-op on the flag (same current invite, still revoked)
         assert!(revoke_join_code(&store, &code2));
-        assert!(!revoke_join_code(&store, "enr-notthecode"), "unknown refuses");
+        assert!(
+            !revoke_join_code(&store, "enr-notthecode"),
+            "unknown refuses"
+        );
         let revoked = team_join(&st2, &code2).await;
         assert_eq!(
             revoked["error"], "join code not accepted",
@@ -1270,7 +1272,10 @@ mod tests {
         store.meta_clear("swarm/join-locked-until").unwrap();
         store.meta_clear("swarm/join-fails").unwrap();
         let ok = team_join(&st, &code).await;
-        assert_eq!(ok["ok"], true, "after the lock clears, the code still joins");
+        assert_eq!(
+            ok["ok"], true,
+            "after the lock clears, the code still joins"
+        );
     }
 
     /// The route's TTL contract (worklog freeze #2): clamp to 1..=8760.
