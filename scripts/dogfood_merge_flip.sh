@@ -95,6 +95,26 @@ CAIRN_HOME="$ROOT/home-b" "$BIN" attach "$ROOT/root-b" --project brand-film \
   --server 127.0.0.1:17443 --ctl http://127.0.0.1:37771 >"$ROOT/attach-b.log" 2>&1 \
   && ok "B attached brand-film" || { bad "B attach failed"; cat "$ROOT/attach-b.log"; }
 
+# Bootstrap the owner (members.json does not exist yet — 'first owner is
+# whoever creates the file', members.rs bootstrap rule). Each home's own
+# device id comes from the team view.
+promote_owner() { # promote_owner <ui_port> <root>
+  local dev
+  dev=$(API "$1" "$(TOKEN_OF "$1")" GET /api/v1/team | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["projects"][0]["my_device"])' 2>/dev/null)
+  [ -n "$dev" ] || { bad "could not read device id on :$1"; return 1; }
+  mkdir -p "$2/.cairn"
+  python3 - "$2/.cairn/members.json" "$dev" <<'PY'
+import json, sys, time
+path, dev = sys.argv[1], sys.argv[2]
+json.dump({"members": {dev: {"device_id": dev, "name": "dogfood-owner",
+          "role": "owner", "added_at_ms": int(time.time()*1000),
+          "added_by": "bootstrap"}}}, open(path, "w"), indent=1)
+PY
+  echo "  ok: $dev promoted to owner (bootstrap) on :$1"
+}
+promote_owner 27772 "$ROOT/root-a"
+promote_owner 37772 "$ROOT/root-b"
+
 TA=$(TOKEN_OF 27772); TB=$(TOKEN_OF 37772)
 [ -n "$TA" ] && ok "dashboard A token extracted" || bad "no token from A"
 [ -n "$TB" ] && ok "dashboard B token extracted" || bad "no token from B"
@@ -106,19 +126,22 @@ for PT in "27772 $TA" "37772 $TB"; do
   echo "$R" | grep -q '"ok":true' && ok "semantic_merge flipped on :$1" || bad "flag flip on :$1 → $R"
 done
 R=$(API 27772 "$TA" GET /api/v1/flags)
-echo "$R" | grep -q '"semantic_merge":"true"' && ok "GET /flags confirms value" || bad "flags readback: $R"
+echo "$R" | grep -q '"name":"semantic_merge","value":"true"' && ok "GET /flags confirms value" || bad "flags readback: $R"
 
 echo "== 6. A authors the base; B pulls it =="
 poll "base cut.otio synced A→B" 60 test -f "$ROOT/root-b/notes/cut.otio"
 
 echo "== 7. deterministic conflict: kill B (kill -9), A edits, B edits stale =="
 kill -9 $DB 2>/dev/null; sleep 1
+# The exact C11 recipe from crates/cairn-sync/tests/merge_offer.rs::hero_conflict:
+# A re-cuts the HEAD (in-point 6, same out-point → start 6 dur 90);
+# B re-cuts the TAIL offline (8 frames off the end → start 0 dur 88).
 python3 - "$ROOT/root-a/notes/cut.otio" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 c = d["tracks"]["children"][0]["children"][0]
-c["source_range"]["start_time"]["value"] = 16.0   # head trim (A)
-c["source_range"]["duration"]["value"] = 80.0
+c["source_range"]["start_time"]["value"] = 6.0    # A: head re-cut (in-point 6)
+c["source_range"]["duration"]["value"] = 90.0     #     same out-point (6..96)
 json.dump(d, open(sys.argv[1], "w"), indent=1)
 PY
 sleep 8   # A's sync pass: v2 upload (the 5s ladder + a margin)
@@ -126,7 +149,8 @@ python3 - "$ROOT/root-b/notes/cut.otio" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 c = d["tracks"]["children"][0]["children"][0]
-c["source_range"]["duration"]["value"] = 80.0     # tail trim (B, still on base v1)
+c["source_range"]["start_time"]["value"] = 0.0    # B: tail re-cut (in-point kept)
+c["source_range"]["duration"]["value"] = 88.0     #     8 frames off the end (0..88)
 json.dump(d, open(sys.argv[1], "w"), indent=1)
 PY
 CAIRN_HOME="$ROOT/home-b" "$BIN" daemon --ctl-addr 127.0.0.1:37771 --ui-addr 127.0.0.1:37772 \
@@ -158,8 +182,9 @@ echo "== 9. accept the offer over the dashboard API =="
 # PAUSE_BEFORE_ACCEPT=1 leaves the affordance live on http://127.0.0.1:37772
 # (token echoed) for a human/agent browser pass, then waits for ENTER.
 if [ "${PAUSE_BEFORE_ACCEPT:-0}" = "1" ]; then
-  echo "  PAUSED: affordance live at http://127.0.0.1:37772 (token $TB) — press ENTER to accept"
-  read -r _
+  echo "  PAUSED: affordance live at http://127.0.0.1:37772 (token $TB)"
+  echo "  waiting for gate file /tmp/dogfood-go (rm it to skip the pause)"
+  while [ ! -e /tmp/dogfood-go ]; do sleep 2; done
 fi
 R=$(API 37772 "$TB" POST /api/v1/merge/offer/accept '{"project_id":"brand-film","path":"notes/cut.otio"}')
 echo "$R" | grep -q '"ok":true' && ok "accept ok: $(echo "$R" | head -c 160)" || bad "accept failed: $R"
@@ -173,11 +198,12 @@ for i in $(seq 1 60); do
   if [ -n "$A" ] && [ "$A" = "$B" ]; then conv="$A"; break; fi
   sleep 1
 done
-[ "$conv" = "16.0 80.0" ] && ok "both homes show the MERGED cut (head trim 16 + tail trim 80): $conv" \
+[ "$conv" = "6.0 82.0" ] && ok "both homes show the MERGED cut (in 6 = A's head, dur 82 = B's tail composed): $conv" \
   || bad "no convergence (A=$A B=$B)"
-BA=$(blake3 -h "$ROOT/root-a/notes/cut.otio" 2>/dev/null || b3sum "$ROOT/root-a/notes/cut.otio" 2>/dev/null | cut -d' ' -f1)
-BB=$(blake3 -h "$ROOT/root-b/notes/cut.otio" 2>/dev/null || b3sum "$ROOT/root-b/notes/cut.otio" 2>/dev/null | cut -d' ' -f1)
-[ -n "$BA" ] && [ "$BA" = "$BB" ] && ok "byte-identical merged timeline on both homes (${BA:0:16}…)" || bad "bytes differ (A=$BA B=$BB)"
+BA=$(sha256sum "$ROOT/root-a/notes/cut.otio" | cut -d' ' -f1)
+BB=$(sha256sum "$ROOT/root-b/notes/cut.otio" | cut -d' ' -f1)
+[ "$BA" = "$BB" ] && ok "byte-identical merged timeline on both homes (${BA:0:16}…)" || bad "bytes differ (A=$BA B=$BB)"
+ls "$ROOT/root-b/notes/" | grep -q "(conflict" && bad "conflict copy still on B after accept" || ok "conflict copy removed on B (accept = one journal upsert)"
 R=$(API 37772 "$TB" GET "/api/v1/files?project=brand-film")
 echo "$R" | grep -q 'merge_available.:true' && bad "offer still showing after accept" || ok "offer cleared after accept"
 

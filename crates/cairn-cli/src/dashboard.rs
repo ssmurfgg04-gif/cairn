@@ -144,6 +144,14 @@ async fn index(axum::Extension(token): axum::Extension<DashToken>) -> axum::resp
     (
         StatusCode::OK,
         [
+            // text/html MUST be explicit: with `nosniff` below, a browser
+            // renders a missing/`text/plain` type as source text — the live
+            // merge-offer dogfood caught exactly that (the hardening round's
+            // header array replaced the type-bearing one).
+            (
+                header::CONTENT_TYPE,
+                "text/html; charset=utf-8",
+            ),
             (header::CACHE_CONTROL, "no-store"),
             (
                 header::CONTENT_SECURITY_POLICY,
@@ -994,6 +1002,28 @@ mod security_gate_tests {
     use super::is_loopback_host;
     use super::is_loopback_origin;
     use super::token_eq;
+
+    /// Regression (live merge-offer dogfood, 2026-10-08): the hardening
+    /// round's header array dropped `content-type: text/html`, and with
+    /// `nosniff` every real browser then rendered the page as PLAIN TEXT —
+    /// the dashboard looked broken while every mock-based UI test stayed
+    /// green (the mock serves its own headers). The page MUST be text/html.
+    #[tokio::test]
+    async fn served_page_is_html_not_plain_text() {
+        let resp = super::index(axum::Extension(super::DashToken(std::sync::Arc::new(
+            "tok".into(),
+        ))))
+        .await;
+        let ct = resp
+            .headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert!(
+            ct.starts_with("text/html"),
+            "dashboard page must be text/html (nosniff renders anything else as source): {ct}"
+        );
+    }
 
     #[test]
     fn host_gate_accepts_only_loopback_forms() {
