@@ -1410,6 +1410,9 @@ mod tests {
         assert_eq!(clamp_ttl_hours(0), 1, "zero floors to 1h");
         assert_eq!(clamp_ttl_hours(-42), 1, "negative floors to 1h");
         assert_eq!(clamp_ttl_hours(99_999), 8_760, "beyond a year clamps down");
+    }
+
+    // ---- 2-d's test module (proxy / restore / async-runtime) ----
 
     use cairn_core::clock::WallClock;
     use cairn_store::state::LocalState;
