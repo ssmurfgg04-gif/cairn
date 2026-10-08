@@ -22,6 +22,7 @@ use cairn_store::{Cas, HeaderCache, Outbox, Store};
 use crate::aimd::Gate;
 use crate::plane::{upsert_op, Plane};
 use crate::retry::{backoff_millis, should_retry};
+use crate::state_records::{AppliedRecord, StateMaterializer};
 use crate::workspace::workspace_dir;
 
 /// Engine context for one device + project (+ optional root namespace,
@@ -50,6 +51,12 @@ pub struct Engine {
     pub plane: Arc<dyn Plane>,
     pub dicts: DictRegistry,
     pub gate: Gate,
+    /// ADR-0031 Phase 3: the optional machine-local cache refresher fired
+    /// after applied records commit (default `None` — the engine itself never
+    /// touches `.cairn` files; the daemon injects one, see
+    /// `state_records::StateMaterializer`). Set in the struct literal or via
+    /// [`Engine::with_materializer`].
+    pub materializer: Option<Arc<dyn StateMaterializer>>,
 }
 
 /// Outcome counters for a pass (status/doctor/dashboard).
@@ -74,6 +81,15 @@ pub struct PassStats {
 }
 
 impl Engine {
+    /// Builder: install the Phase-3 materializer (the daemon's `.cairn` cache
+    /// refresher). Optional by construction — every other call site keeps
+    /// `materializer: None` and the engine stays cache-agnostic.
+    #[must_use]
+    pub fn with_materializer(mut self, m: Arc<dyn StateMaterializer>) -> Self {
+        self.materializer = Some(m);
+        self
+    }
+
     /// Full pass: push local dirt, then pull remote entries (cursor replay is the guarantee).
     pub async fn sync_pass(&self) -> Result<PassStats, CairnError> {
         let mut stats = PassStats::default();
@@ -1029,6 +1045,7 @@ impl Engine {
                 }
             }
         };
+        let mut applied_records: Vec<AppliedRecord> = Vec::new();
         for e in &entries {
             // Own-device ops are already folded locally: the push path marked the row
             // synced (mark_synced) when the append was acked. Replaying them here would
@@ -1043,14 +1060,48 @@ impl Engine {
             if e.device_id == self.author_id {
                 continue;
             }
-            crate::apply::apply_entry(&self.store, &self.local_ns, &self.author_id, e)?;
+            if let Some(rec) =
+                crate::apply::apply_entry(&self.store, &self.local_ns, &self.author_id, e)?
+            {
+                applied_records.push(rec);
+            }
             stats.applied_entries += 1;
         }
         if let Some(last) = entries.last() {
             self.store
                 .set_cursor(&self.author_id, &self.local_ns, last.seq)?;
         }
+        // ADR-0031 Phase 3: the records above are committed (post-WAL, the
+        // cursor pins the replay point) — NOW the cache may follow. One call
+        // per pass with the whole applied delta; failures never fail the pass.
+        self.fire_materializer(&applied_records);
         Ok(())
+    }
+
+    /// Fire the injected materializer once per pass. Best-effort by contract:
+    /// a panic (or an impl-internal failure, which the impl logs itself) is a
+    /// SKIPPED cache refresh, never a sync error — the record table is the
+    /// truth, `.cairn` is only its view. Panics are caught under the unwind
+    /// profile; `panic = "abort"` builds abort the process like any other
+    /// panic (whole-process behavior, not materializer-specific).
+    fn fire_materializer(&self, applied: &[AppliedRecord]) {
+        let Some(m) = &self.materializer else {
+            return;
+        };
+        if applied.is_empty() {
+            return;
+        }
+        let project = &self.local_ns;
+        let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            m.materialize(project, applied);
+        }));
+        if res.is_err() {
+            tracing::warn!(
+                project = %self.local_ns,
+                records = applied.len(),
+                "state materializer failed — .cairn cache refresh skipped (records remain the truth)"
+            );
+        }
     }
 
     /// Cursor replay on demand (CONTRACT-DEBT #1): `merge_offer::accept_offer`

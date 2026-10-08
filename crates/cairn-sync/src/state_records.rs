@@ -32,6 +32,16 @@
 //! the publish path, the replay path (apply.rs `StateRecord` arm) and the
 //! tests. The store layer (cairn_store::state_records) is dumb CRUD.
 
+//! # Phase 3: the materializer seam (ADR-0031)
+//!
+//! `.cairn` is a VIEW of these records, not a source of truth: after records
+//! commit to the local table, the engine hands the applied set to an optional
+//! [`StateMaterializer`] (the daemon installs one that rebuilds members.json /
+//! audit / review.json / comment files — see cairn-cli's materialize module).
+//! The seam lives HERE, in cairn-sync, because the apply path owns the only
+//! moment "records changed" is known — and cairn-sync depends on nothing
+//! above the store, so the file-writing side is injected, never imported.
+
 use prost::Message as _;
 
 use cairn_core::pathutil::{state_record_path, validate_state_key};
@@ -73,6 +83,71 @@ pub fn validate_family(family: &str) -> Result<(), CairnError> {
     }
 }
 
+/// One record that COMMITTED to the local table during apply (ADR-0031
+/// Phase 3) — the post-merge winner for its key. This is exactly what the
+/// apply path computed (`apply_record_locally` already discarded losers and
+/// duplicate content ids), handed to the materializer as the honest delta:
+/// family + key + identity, the LWW rank (`ts_ms`, `device_id`), the payload
+/// bytes, and the tombstone flag.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AppliedRecord {
+    pub family: String,
+    /// Family-scoped key (device id / content id / token / version number).
+    pub key: String,
+    /// Table identity (LWW families: the key; append families: content id).
+    pub record_id: String,
+    /// Writer clock (the LWW rank's ts — the guard a materializer needs to
+    /// refuse regressing fresher file state with an older echo).
+    pub ts_ms: i64,
+    /// Journal authorship of the winning write.
+    pub device_id: String,
+    pub payload: Vec<u8>,
+    pub tombstone: bool,
+}
+
+impl From<cairn_store::StateRecordRow> for AppliedRecord {
+    fn from(r: cairn_store::StateRecordRow) -> Self {
+        AppliedRecord {
+            family: r.family,
+            key: r.key,
+            record_id: r.record_id,
+            ts_ms: r.ts_ms,
+            device_id: r.device_id,
+            payload: r.payload,
+            tombstone: r.tombstone,
+        }
+    }
+}
+
+/// The Phase-3 seam (ADR-0031): a consumer of applied records that refreshes
+/// a machine-local cache — the daemon's materializer rebuilds `.cairn`
+/// members/audit/review files so the directory stays a VIEW of the synced
+/// records while remaining locally readable (NLE tools, shell extension,
+/// offline machines).
+///
+/// Layering: cairn-sync must not know about files above the store, so the
+/// implementation is injected per engine (`Engine::materializer`, default
+/// `None`). The sync contract around it:
+///
+/// * called AFTER the records commit durably (post-WAL, post-merge) and the
+///   pass cursor is pinned — never speculatively before the table write;
+/// * called ONCE per sync pass with every record that changed (batch, not
+///   per record);
+/// * `project` is the LOCAL row scope the records merged under (equals the
+///   server project id for the default root; `<project>#<root_id>` for
+///   additional roots, ADR-0019 §2);
+/// * MUST NOT fail the pass: the engine catches panics and the method
+///   returns nothing — a materializer problem is a skipped cache refresh,
+///   never a lost record (the record table is the truth; the cache is
+///   best-effort by construction);
+/// * sync method by design: the apply path is synchronous (store writes run
+///   inline on the pass task), and one materializer call per pass keeps a
+///   single writer per engine — no cross-pass write races on the cache.
+pub trait StateMaterializer: Send + Sync {
+    /// Refresh the local cache for `project` from the applied records.
+    fn materialize(&self, project: &str, applied: &[AppliedRecord]);
+}
+
 /// The record id for a record (see the module doc for the scheme).
 #[must_use]
 pub fn record_id_for(family: &str, key: &str, payload: &[u8]) -> String {
@@ -97,6 +172,14 @@ pub fn record_id_for(family: &str, key: &str, payload: &[u8]) -> String {
 /// * Append families (`audit`, `review_version`): INSERT OR IGNORE by record
 ///   id (append-only union; tombstones never sent — a content id has no
 ///   "delete", and the audit ledger's honesty is exactly that it only grows).
+///
+/// Returns whether the table CHANGED (`false` = a losing LWW write or a
+/// duplicate content id): the Phase-3 materializer must only see records
+/// that actually committed new state, so the apply path can hand over the
+/// post-merge delta instead of replaying every pull.
+///
+/// # Errors
+/// Store failure.
 pub fn apply_record_locally(
     store: &Store,
     project_id: &str,
@@ -107,7 +190,7 @@ pub fn apply_record_locally(
     device_id: &str,
     payload: &[u8],
     tombstone: bool,
-) -> Result<(), CairnError> {
+) -> Result<bool, CairnError> {
     let row = cairn_store::StateRecordRow {
         family: family.to_string(),
         record_id: record_id.to_string(),
@@ -128,17 +211,21 @@ pub fn apply_record_locally(
             // the register keeps its current value.
             let tie_break_tombstone = tombstone && !existing.tombstone;
             if new_rank < old_rank || (new_rank == old_rank && !tie_break_tombstone) {
-                return Ok(());
+                return Ok(false);
             }
             store.upsert_state_record(project_id, &row)?;
-            return Ok(());
+            return Ok(true);
         }
         store.upsert_state_record(project_id, &row)?;
-        return Ok(());
+        return Ok(true);
     }
     // append families: union by content id — first writer wins the row,
     // replays and re-writes of the same content are no-ops
-    store.insert_state_record(project_id, &row)
+    let existed = store
+        .get_state_record(project_id, family, record_id)
+        .is_some();
+    store.insert_state_record(project_id, &row)?;
+    Ok(!existed)
 }
 
 /// Everything the publish and enqueue paths derive from the raw record input:

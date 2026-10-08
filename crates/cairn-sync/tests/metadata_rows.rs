@@ -107,6 +107,7 @@ fn engine_with() -> (tempfile::TempDir, Engine) {
         plane: Arc::new(WorkingPlane),
         dicts: DictRegistry::new(),
         gate: Gate::default(),
+        materializer: None,
     };
     (home, engine)
 }

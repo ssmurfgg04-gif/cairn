@@ -11,6 +11,7 @@ mod daemon;
 mod dashboard;
 mod doctor;
 mod handoff;
+mod materialize;
 mod members;
 mod projects;
 mod proxy;

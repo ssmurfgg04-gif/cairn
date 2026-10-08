@@ -1720,6 +1720,7 @@ mod tests {
             plane: Arc::new(plane),
             dicts: cairn_core::compress::DictRegistry::new(),
             gate: cairn_sync::Gate::new(),
+            materializer: None,
         };
         let meta = std::fs::metadata(root.join("media/notes.txt")).unwrap();
         engine

@@ -11,14 +11,24 @@ use crate::state_records;
 
 /// Apply one journal entry to the local view (idempotent: replaying a seq is a no-op via
 /// cursor monotonicity enforced by the caller).
+///
+/// Returns the applied state record when the entry was a `state_record` that
+/// CHANGED the local table (ADR-0031 Phase 3): the engine batches these per
+/// pass and hands them to the materializer. `None` = a file op, or a record
+/// whose merge was a no-op (LWW loser / duplicate content id).
+///
+/// # Errors
+/// Store failure (file ops) — a poisoned entry must not wedge the cursor, so
+/// the record arm deliberately never errors on unparseable input (see
+/// [`apply_state_record`]).
 pub fn apply_entry(
     store: &Store,
     project_id: &str,
     _self_device: &str,
     entry: &Entry,
-) -> Result<(), CairnError> {
+) -> Result<Option<state_records::AppliedRecord>, CairnError> {
     let Some(op) = entry.op.op.as_ref() else {
-        return Ok(());
+        return Ok(None);
     };
     // State records (ADR-0031 Phase 1) never touch the file table or the
     // filesystem — they merge into the state_records table with per-family
@@ -84,7 +94,7 @@ pub fn apply_entry(
                                  drifted: undiscovered local edit re-dirtied (conflict \
                                  path, SPEC 7.1); remote overwrite refused"
                             );
-                            return Ok(());
+                            return Ok(None);
                         }
                     }
                 }
@@ -193,32 +203,33 @@ pub fn apply_entry(
             // informational (§7.1)
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 /// Merge a replayed `state_record` entry into the local record table
 /// (ADR-0031 Phase 1). Contract matches an old client's unknown-oneof
 /// behavior for anything THIS build does not understand: an unknown family or
-/// an invalid key is a graceful `Ok(())` skip (loud in the logs, never an
+/// an invalid key is a graceful `Ok(None)` skip (loud in the logs, never an
 /// error that would wedge the cursor — a poisoned entry must not stop
 /// convergence), while valid records merge per-family via
-/// [`state_records::apply_record_locally`].
+/// [`state_records::apply_record_locally`]. The `Some` payload is the record
+/// that actually changed the table (the Phase-3 materializer delta).
 fn apply_state_record(
     store: &Store,
     project_id: &str,
     entry: &Entry,
     sr: &cairn_proto::pb::StateRecordOp,
-) -> Result<(), CairnError> {
+) -> Result<Option<state_records::AppliedRecord>, CairnError> {
     if state_records::validate_family(&sr.family).is_err() {
         tracing::warn!(family = %sr.family, "state record with unknown family — skipping (forward compat)");
-        return Ok(());
+        return Ok(None);
     }
     if cairn_core::pathutil::validate_state_key(&sr.key).is_err() {
         tracing::warn!(
             family = %sr.family,
             "state record with invalid key — skipping (a bad key aliases siblings)",
         );
-        return Ok(());
+        return Ok(None);
     }
     // the synthetic journal path must stay filesystem-gate-clean for every
     // validated (family, key) — pin the invariant instead of trusting it
@@ -227,7 +238,7 @@ fn apply_state_record(
     )
     .is_ok());
     let record_id = state_records::record_id_for(&sr.family, &sr.key, &sr.payload);
-    state_records::apply_record_locally(
+    let changed = state_records::apply_record_locally(
         store,
         project_id,
         &sr.family,
@@ -237,7 +248,16 @@ fn apply_state_record(
         &entry.device_id,
         &sr.payload,
         sr.tombstone,
-    )
+    )?;
+    Ok(changed.then(|| state_records::AppliedRecord {
+        family: sr.family.clone(),
+        key: sr.key.clone(),
+        record_id: record_id.clone(),
+        ts_ms: sr.ts_ms,
+        device_id: entry.device_id.clone(),
+        payload: sr.payload.clone(),
+        tombstone: sr.tombstone,
+    }))
 }
 
 // ---------- content-lineage fork markers (round 13, the W5 catch) ----------

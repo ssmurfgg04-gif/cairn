@@ -292,6 +292,7 @@ fn engine_with(journal: Arc<SharedJournal>, author: &str) -> (tempfile::TempDir,
         plane: journal,
         dicts: DictRegistry::new(),
         gate: Gate::default(),
+        materializer: None,
     };
     (home, engine)
 }

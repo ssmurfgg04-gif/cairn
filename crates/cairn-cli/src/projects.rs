@@ -1212,6 +1212,14 @@ async fn run_loop(
         plane: Arc::clone(&plane),
         dicts: cairn_core::compress::DictRegistry::new(),
         gate: Gate::default(),
+        // ADR-0031 Phase 3: this root's `.cairn` directory is the materialized
+        // VIEW of the synced record set — every pass that applies records
+        // refreshes members.json / audit / review.json / notes here. The
+        // project→root mapping is resolved HERE (the run loop owns the root),
+        // which is exactly the ProjectManager mapping but per-root and once.
+        materializer: Some(Arc::new(crate::materialize::RootMaterializer::new(
+            rt.workspace.clone(),
+        ))),
     });
     // Publish the engine for service actions (merge-offer accept, CONTRACT-DEBT
     // #1) and guarantee the slot is cleared on EVERY loop exit — retries

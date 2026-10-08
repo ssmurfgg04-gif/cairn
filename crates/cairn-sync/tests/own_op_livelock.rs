@@ -112,6 +112,7 @@ fn engine_with(entries: Vec<Entry>) -> (tempfile::TempDir, Engine) {
         }),
         dicts: DictRegistry::new(),
         gate: Gate::default(),
+        materializer: None,
     };
     (home, engine)
 }

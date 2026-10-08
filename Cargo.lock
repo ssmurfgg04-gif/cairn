@@ -539,6 +539,7 @@ dependencies = [
  "cairn-sync",
  "cairn-tl",
  "rand 0.8.8",
+ "serde_json",
  "sha2",
  "sqlx",
  "tempfile",

@@ -87,6 +87,7 @@ fn open_device(
         }),
         dicts: cairn_core::compress::DictRegistry::new(),
         gate: cairn_sync::Gate::new(),
+        materializer: None,
     }
 }
 
@@ -655,6 +656,7 @@ mod multoroot_tests {
             }),
             dicts: cairn_core::compress::DictRegistry::new(),
             gate: cairn_sync::Gate::new(),
+            materializer: None,
         }
     }
 

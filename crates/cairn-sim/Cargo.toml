@@ -33,6 +33,9 @@ blake3 = { workspace = true }
 cairn-tl = { path = "../cairn-tl" }
 cairn-review = { path = "../cairn-review" }
 cairn-proxy = { path = "../cairn-proxy" }
+# state_and_offer_e2e Phase 3: the E2E materializer parses/serializes the
+# record payload shapes (member/link/version/comment) and Note JSON
+serde_json = { workspace = true }
 
 [lints]
 workspace = true

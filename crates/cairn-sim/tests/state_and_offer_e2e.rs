@@ -11,7 +11,8 @@
 //!   through the real server's seq>base rule → the CONFLICT arm offers a
 //!   semantic merge → acceptance converges BOTH devices on the merged head.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use cairn_sim::world::World;
 use cairn_store::state::LocalState;
@@ -671,4 +672,350 @@ async fn cross_machine_revoke_kills_the_link_on_the_other_portal_e2e() {
         portal_for(&world, 0).resolve(token).await.is_none(),
         "revoked is dead on the revoking machine as well"
     );
+}
+
+// ---------------------------------------------------------------------------
+// 6. ADR-0031 Phase 3: the file-level payoff — `.cairn` materializes records
+// ---------------------------------------------------------------------------
+
+use cairn_sync::state_records::{AppliedRecord, StateMaterializer};
+
+/// The daemon-shaped materializer over ONE device root (what
+/// `RootMaterializer` does in cairn-cli/src/materialize.rs, mirrored here in
+/// miniature: cairn-cli is a bin-only crate cairn-sim cannot depend on, so
+/// the E2E drives the same record→file shapes through the same public APIs —
+/// `cairn_core::rbac::MemberFile` for members.json, `cairn_review::store` for
+/// review.json / notes). The per-family unit tests live on the production
+/// impl; this one exists to prove the SEAM end to end over the real server.
+struct FileMaterializer {
+    root: PathBuf,
+}
+
+impl StateMaterializer for FileMaterializer {
+    fn materialize(&self, _project: &str, applied: &[AppliedRecord]) {
+        for rec in applied {
+            match rec.family.as_str() {
+                "member" => self.member(rec),
+                "review_version" => self.version(rec),
+                "review_link" => self.link(rec),
+                "review_comment" => self.comment(rec),
+                _ => {}
+            }
+        }
+    }
+}
+
+impl FileMaterializer {
+    fn member(&self, rec: &AppliedRecord) {
+        let path = ws_members(&self.root);
+        let mut f = match std::fs::read(&path) {
+            Ok(b) => cairn_core::rbac::MemberFile::from_json(&b).unwrap(),
+            Err(_) => cairn_core::rbac::MemberFile::default(),
+        };
+        if rec.tombstone {
+            f.remove(&rec.key);
+        } else {
+            let m: cairn_core::rbac::Member = serde_json::from_slice(&rec.payload).unwrap();
+            if f.members
+                .get(&rec.key)
+                .is_some_and(|e| rec.ts_ms < e.added_at_ms)
+            {
+                return; // LWW echo guard (see the production impl's module doc)
+            }
+            f.members.insert(rec.key.clone(), m);
+        }
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, f.to_json().unwrap()).unwrap();
+    }
+
+    fn review(&self) -> ReviewFile {
+        cairn_review::store::Store::load(&self.root)
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+    }
+
+    fn version(&self, rec: &AppliedRecord) {
+        let mut f = self.review();
+        let number: u32 = rec.key.parse().unwrap();
+        if f.version(number).is_some() {
+            return;
+        }
+        let v: serde_json::Value = serde_json::from_slice(&rec.payload).unwrap();
+        f.versions.push(cairn_review::model::ReviewVersion {
+            number,
+            label: v["label"].as_str().unwrap_or_default().into(),
+            media_rel: v["media_rel"].as_str().unwrap_or_default().into(),
+            proxy_rel: None,
+            fps_num: v["fps_num"].as_u64().unwrap_or(24) as u32,
+            fps_den: v["fps_den"].as_u64().unwrap_or(1) as u32,
+            frames: v["frames"].as_u64().unwrap_or(0),
+            timeline_fingerprint: None,
+            snapshot: None,
+            published_by: v["published_by"].as_str().unwrap_or_default().into(),
+            published_at: v["published_at"].as_i64().unwrap_or_default(),
+        });
+        f.versions.sort_by_key(|x| x.number);
+        cairn_review::store::Store::save(&self.root, &f).unwrap();
+    }
+
+    fn link(&self, rec: &AppliedRecord) {
+        let mut f = self.review();
+        if rec.tombstone {
+            // always applies (fail-closed — the Phase-3 revoke payoff)
+            f.revoke_link(&rec.key);
+        } else {
+            let v: serde_json::Value = serde_json::from_slice(&rec.payload).unwrap();
+            let link = GuestLink {
+                token: rec.key.clone(),
+                role: GuestRole::parse(v["role"].as_str().unwrap_or("commenter"))
+                    .unwrap_or(GuestRole::Commenter),
+                note: v["note"].as_str().unwrap_or_default().into(),
+                expires_at: v["expires_at"].as_i64().unwrap_or(0),
+                latest_only: v["latest_only"].as_bool().unwrap_or(false),
+                created_at: v["created_at"].as_i64().unwrap_or(rec.ts_ms),
+            };
+            if f.links
+                .iter()
+                .any(|l| l.token == rec.key && rec.ts_ms < l.created_at)
+            {
+                return; // LWW echo guard
+            }
+            f.links.retain(|l| l.token != rec.key);
+            f.links.push(link);
+        }
+        cairn_review::store::Store::save(&self.root, &f).unwrap();
+    }
+
+    fn comment(&self, rec: &AppliedRecord) {
+        let v: serde_json::Value = serde_json::from_slice(&rec.payload).unwrap();
+        let version = v["version"].as_u64().unwrap() as u32;
+        let mut set = cairn_review::store::Store::load_comments(&self.root, version).unwrap();
+        if rec.tombstone {
+            set.notes.remove(&rec.key);
+        } else {
+            let note: cairn_tl::notes::Note = serde_json::from_value(v["note"].clone()).unwrap();
+            if set
+                .notes
+                .get(&note.id)
+                .is_some_and(|e| rec.ts_ms < e.created_ms)
+            {
+                return; // LWW echo guard
+            }
+            set.notes.insert(note.id.clone(), note);
+        }
+        cairn_review::store::Store::save_comments(&self.root, version, &set).unwrap();
+    }
+}
+
+fn ws_members(root: &Path) -> PathBuf {
+    root.join(".cairn").join("members.json")
+}
+
+fn install_materializers(world: &mut World) {
+    for i in 0..2 {
+        let root = ws(world, i);
+        world.devices[i]
+            .engine
+            .as_mut()
+            .expect("device live")
+            .materializer = Some(Arc::new(FileMaterializer { root }));
+    }
+}
+
+fn members_at(world: &World, i: usize) -> cairn_core::rbac::MemberFile {
+    cairn_core::rbac::MemberFile::from_json(&std::fs::read(ws_members(&ws(world, i))).unwrap())
+        .unwrap()
+}
+
+/// THE Phase-3 payoff, end to end over the real server journal: A mints a
+/// member + a review version + a guest link; B never wrote any of it — its
+/// `.cairn` directory MATERIALIZES from the applied records (members.json
+/// gains the member, review.json gains version + link). A revokes → B's
+/// review.json itself no longer lists the link (beside the Phase-2 portal
+/// consult pinned by the test above). B writes a comment offline → A's
+/// review-notes file gains it.
+#[tokio::test]
+async fn phase3_records_materialize_into_local_cairn_files_e2e() {
+    let mut world = World::boot(67).await;
+    install_materializers(&mut world);
+    let token = "tok-phase3-materialize000000000000000"; // 32 chars
+
+    // A publishes v1 (the real file write + the synced review_version record,
+    // the exact payload shape service/actions.rs publishes)
+    let mut f = ReviewFile {
+        title: "Brand Film".into(),
+        ..Default::default()
+    };
+    f.publish(ReviewVersion {
+        number: 0,
+        label: "v1".into(),
+        media_rel: "cuts/v1.mp4".into(),
+        proxy_rel: None,
+        fps_num: 24,
+        fps_den: 1,
+        frames: 100,
+        timeline_fingerprint: None,
+        snapshot: None,
+        published_by: "editor-a".into(),
+        published_at: 50,
+    });
+    cairn_review::store::Store::save(&ws(&world, 0), &f).unwrap();
+    enqueue_state_record(
+        engine_store(&world, 0),
+        PublishParams {
+            tenant_id: "t1",
+            project_id: "p1",
+            local_ns: "p1",
+            device_id: "dev-0",
+            family: "review_version",
+            key: "1",
+            payload: br#"{"number":1,"label":"v1","media_rel":"cuts/v1.mp4","fps_num":24,"fps_den":1,"frames":100,"published_by":"editor-a","published_at":50}"#,
+            ts_ms: 60,
+            tombstone: false,
+        },
+    )
+    .unwrap();
+
+    // A mints the guest link (the real file write + the synced record)
+    let mut f = cairn_review::store::Store::load(&ws(&world, 0))
+        .unwrap()
+        .unwrap();
+    f.links.push(GuestLink {
+        token: token.into(),
+        role: GuestRole::Commenter,
+        note: "acme client".into(),
+        expires_at: 0,
+        latest_only: false,
+        created_at: 100,
+    });
+    cairn_review::store::Store::save(&ws(&world, 0), &f).unwrap();
+    enqueue_state_record(
+        engine_store(&world, 0),
+        PublishParams {
+            tenant_id: "t1",
+            project_id: "p1",
+            local_ns: "p1",
+            device_id: "dev-0",
+            family: "review_link",
+            key: token,
+            payload: br#"{"token":"tok-phase3-materialize000000000000000","role":"commenter","note":"acme client","expires_at":0,"latest_only":false,"created_at":100}"#,
+            ts_ms: 100,
+            tombstone: false,
+        },
+    )
+    .unwrap();
+    enqueue_state_record(
+        engine_store(&world, 0),
+        PublishParams {
+            tenant_id: "t1",
+            project_id: "p1",
+            local_ns: "p1",
+            device_id: "dev-0",
+            family: "member",
+            key: "dev-9",
+            payload: br#"{"device_id":"dev-9","name":"Rook","role":"colorist","added_at_ms":90,"added_by":"dev-0"}"#,
+            ts_ms: 90,
+            tombstone: false,
+        },
+    )
+    .unwrap();
+
+    // one pass each way: B (which never opened the portal, never wrote a
+    // members file) materializes A's state into ITS OWN .cairn directory
+    pass(&mut world, 0).await;
+    pass(&mut world, 1).await;
+
+    let b_members = members_at(&world, 1);
+    assert!(
+        b_members.members.contains_key("dev-9"),
+        "B's members.json gained the member from the record"
+    );
+    assert_eq!(
+        b_members.members["dev-9"].role,
+        cairn_core::rbac::Role::Colorist
+    );
+    let b_file = review_store::Store::load(&ws(&world, 1))
+        .unwrap()
+        .expect("B's review.json was materialized from the records");
+    assert_eq!(b_file.versions.len(), 1, "B gained the version stack");
+    assert_eq!(b_file.versions[0].media_rel, "cuts/v1.mp4");
+    assert!(
+        GuestLink::resolve(&b_file.links, token, 1_000).is_some(),
+        "B's review.json gained the guest link"
+    );
+
+    // A revokes; the tombstone rides one pass — and now the FILE-level
+    // payoff: B's review.json itself no longer lists the link (the Phase-2
+    // test above pins the record-level consult; THIS is what Phase 3 adds)
+    enqueue_state_record(
+        engine_store(&world, 0),
+        PublishParams {
+            tenant_id: "t1",
+            project_id: "p1",
+            local_ns: "p1",
+            device_id: "dev-0",
+            family: "review_link",
+            key: token,
+            payload: br#"{"token":"tok-phase3-materialize000000000000000","revoked":true}"#,
+            ts_ms: 200,
+            tombstone: true,
+        },
+    )
+    .unwrap();
+    pass(&mut world, 0).await;
+    pass(&mut world, 1).await;
+    let b_file = review_store::Store::load(&ws(&world, 1)).unwrap().unwrap();
+    assert!(
+        GuestLink::resolve(&b_file.links, token, 1_000).is_none(),
+        "the cross-machine revoke removed the link from B's local FILE"
+    );
+    assert_eq!(b_file.versions.len(), 1, "the revoke touched only the link");
+
+    // B writes a comment OFFLINE (no version file existed on B before): the
+    // synced review_comment record carries it to A, whose notes file
+    // materializes it — the comment crosses machines as a record, not a file
+    let note = cairn_tl::notes::Note::new(
+        "client-jane",
+        "tighten the cut here",
+        cairn_tl::notes::NoteAnchor {
+            clip: None,
+            frame: 42,
+            rate: 24,
+            range: None,
+        },
+        cairn_tl::notes::NoteStatus::Open,
+        300,
+    );
+    let payload = format!(
+        r#"{{"version":1,"note":{}}}"#,
+        serde_json::to_string(&note).unwrap()
+    );
+    enqueue_state_record(
+        engine_store(&world, 1),
+        PublishParams {
+            tenant_id: "t1",
+            project_id: "p1",
+            local_ns: "p1",
+            device_id: "dev-1",
+            family: "review_comment",
+            key: &note.id,
+            payload: payload.as_bytes(),
+            ts_ms: 300,
+            tombstone: false,
+        },
+    )
+    .unwrap();
+    pass(&mut world, 1).await; // B pushes its outbox entry through the server
+    pass(&mut world, 0).await; // A pulls the record and materializes the note file
+
+    let a_notes =
+        cairn_review::store::Store::load_comments(&ws(&world, 0), 1).expect("A's v1 notes file");
+    assert!(
+        a_notes.notes.contains_key(&note.id),
+        "A's .cairn/review-notes/v1.json gained B's offline comment"
+    );
+    // (B's own file is NOT written for its own record — own-op suppression
+    // means the local machine that authors a comment also writes its own
+    // file at authoring time, exactly like every other publish surface.)
 }

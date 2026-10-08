@@ -260,6 +260,7 @@ pub async fn open_engine(
         plane: Arc::new(plane),
         dicts: cairn_core::compress::DictRegistry::new(),
         gate: cairn_sync::Gate::new(),
+        materializer: None,
     }
 }
 

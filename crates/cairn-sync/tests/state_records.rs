@@ -142,6 +142,7 @@ fn engine_with(journal: Arc<SharedJournal>, author: &str) -> (tempfile::TempDir,
         plane: journal,
         dicts: DictRegistry::new(),
         gate: Gate::default(),
+        materializer: None,
     };
     (home, engine)
 }
@@ -350,4 +351,182 @@ async fn link_tombstone_propagates() {
         assert!(r.tombstone, "{label}: revocation tombstone propagated");
         assert_eq!(r.ts_ms, 200, "{label}: the revoke is the winning LWW write");
     }
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0031 Phase 3: the materializer seam
+// ---------------------------------------------------------------------------
+
+use cairn_sync::state_records::{AppliedRecord, StateMaterializer};
+
+/// Captures every `materialize` call: (project scope, applied delta).
+#[derive(Default)]
+struct Capturing {
+    calls: std::sync::Mutex<Vec<(String, Vec<AppliedRecord>)>>,
+}
+
+impl StateMaterializer for Capturing {
+    fn materialize(&self, project: &str, applied: &[AppliedRecord]) {
+        self.calls
+            .lock()
+            .unwrap()
+            .push((project.to_string(), applied.to_vec()));
+    }
+}
+
+struct Panicker;
+
+impl StateMaterializer for Panicker {
+    fn materialize(&self, _project: &str, _applied: &[AppliedRecord]) {
+        panic!("cache write exploded");
+    }
+}
+
+/// The engine fires the materializer AFTER the records commit, ONCE per
+/// pass, with exactly the records that changed the local table (the
+/// post-merge delta) — and own-op suppression means the PUBLISHING device
+/// never sees its own records through the pull (its publish path wrote the
+/// cache already; that is the daemon's own file write).
+#[tokio::test]
+async fn materializer_fires_once_per_pass_with_the_applied_delta() {
+    let journal = SharedJournal::shared();
+    let (_ha, mut a) = engine_with(Arc::clone(&journal), "dev-A");
+    let (_hb, mut b) = engine_with(journal, "dev-B");
+    let cap_a = Arc::new(Capturing::default());
+    let cap_b = Arc::new(Capturing::default());
+    a.materializer = Some(Arc::clone(&cap_a) as Arc<dyn StateMaterializer>);
+    b.materializer = Some(Arc::clone(&cap_b) as Arc<dyn StateMaterializer>);
+
+    // dev-A publishes TWO records in one round (a member + a link)
+    publish(
+        &a,
+        "member",
+        "dev-9",
+        br#"{"device_id":"dev-9","name":"Rook","role":"editor"}"#,
+        100,
+        false,
+    );
+    publish(
+        &a,
+        "review_link",
+        "tok-1",
+        br#"{"token":"tok-1","role":"viewer","created_at":100}"#,
+        100,
+        false,
+    );
+
+    // A's own pass: own-op suppression means the pull never replays its own
+    // records — the materializer must NOT fire on the publishing device
+    a.sync_pass().await.unwrap();
+    assert!(
+        cap_a.calls.lock().unwrap().is_empty(),
+        "own records never echo through the apply path"
+    );
+
+    // B's first pass picks up BOTH records: exactly ONE call (batch per
+    // pass, not per record) carrying the applied delta
+    b.sync_pass().await.unwrap();
+    {
+        let calls = cap_b.calls.lock().unwrap();
+        assert_eq!(calls.len(), 1, "one materialize call per sync pass");
+        let (project, applied) = &calls[0];
+        assert_eq!(project, "p1", "the call names the local row scope");
+        assert_eq!(applied.len(), 2, "both records rode the same batch");
+        let families: Vec<&str> = applied.iter().map(|r| r.family.as_str()).collect();
+        assert!(families.contains(&"member") && families.contains(&"review_link"));
+        let member = applied.iter().find(|r| r.family == "member").unwrap();
+        assert_eq!(member.key, "dev-9");
+        assert_eq!(member.ts_ms, 100);
+        assert_eq!(member.device_id, "dev-A");
+        assert!(!member.tombstone);
+        assert_eq!(
+            member.payload, br#"{"device_id":"dev-9","name":"Rook","role":"editor"}"#,
+            "the payload bytes are the record's own"
+        );
+    }
+
+    // an idle converge (nothing new) fires NOTHING: only records that
+    // CHANGED the table reach the materializer
+    b.sync_pass().await.unwrap();
+    assert_eq!(
+        cap_b.calls.lock().unwrap().len(),
+        1,
+        "no applied records = no materializer call"
+    );
+
+    // a LWW LOSER does not reach the materializer either: dev-A re-writes
+    // dev-9 with an OLDER ts — the table ignores it, so the cache must too
+    publish(
+        &a,
+        "member",
+        "dev-9",
+        br#"{"device_id":"dev-9","name":"Old","role":"viewer"}"#,
+        50,
+        false,
+    );
+    a.sync_pass().await.unwrap();
+    b.sync_pass().await.unwrap();
+    assert_eq!(
+        cap_b.calls.lock().unwrap().len(),
+        1,
+        "a losing LWW write is not an applied record"
+    );
+
+    // the tombstone IS an applied record (the Phase-2/3 revoke delta)
+    publish(
+        &a,
+        "review_link",
+        "tok-1",
+        br#"{"token":"tok-1","revoked":true}"#,
+        200,
+        true,
+    );
+    a.sync_pass().await.unwrap();
+    b.sync_pass().await.unwrap();
+    let calls = cap_b.calls.lock().unwrap();
+    assert_eq!(calls.len(), 2);
+    let revoked = &calls[1].1[0];
+    assert_eq!(revoked.family, "review_link");
+    assert!(revoked.tombstone, "the delta carries the tombstone flag");
+}
+
+/// A panicking materializer must not fail the sync pass: the cache is
+/// best-effort, the records remain the truth (the row is applied, the
+/// cursor advances, the pass returns Ok).
+#[tokio::test]
+async fn panicking_materializer_does_not_fail_the_pass() {
+    let journal = SharedJournal::shared();
+    let (_ha, a) = engine_with(Arc::clone(&journal), "dev-A");
+    let (_hb, mut b) = engine_with(journal, "dev-B");
+    b.materializer = Some(Arc::new(Panicker));
+
+    publish(
+        &a,
+        "member",
+        "dev-5",
+        br#"{"device_id":"dev-5","name":"Wren","role":"editor"}"#,
+        100,
+        false,
+    );
+    a.sync_pass().await.unwrap();
+
+    // B's pass must survive the materializer panic AND still converge the
+    // record table (the file cache may lag; the truth may not)
+    let stats = b
+        .sync_pass()
+        .await
+        .expect("the pass survives a panicking cache");
+    assert_eq!(stats.applied_entries, 1);
+    let row = b
+        .store
+        .get_state_record("p1", "member", "dev-5")
+        .expect("the record committed despite the cache failure");
+    assert_eq!(row.device_id, "dev-A");
+    // and the cursor moved: the entry is not re-delivered next pass
+    b.sync_pass().await.unwrap();
+    assert_eq!(
+        b.store.list_state_records("p1", "member").len(),
+        1,
+        "replay stays idempotent after the failed refresh"
+    );
 }
