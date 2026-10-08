@@ -1,0 +1,110 @@
+# systemd unit for the Cairn meeting point (the metadata plane).
+#
+# Companion: docs/runbook-meeting-point.md (the full hosting runbook —
+# roles, sizing, TLS, backups, upgrades). Verify against code before editing:
+#   - flags:      crates/cairn-cli/src/main.rs `Server { .. }` variant
+#                 (--data-dir / --grpc-addr / --objects-addr / --tls-cert /
+#                  --tls-key / --dev-insecure)
+#   - state:      crates/cairn-server/src/run.rs (meta.db + keys/ + objects/ +
+#                 cold/ under --data-dir)
+#   - env knobs:  the table in docs/runbook-meeting-point.md
+#
+# Two supported TLS shapes (pick ONE):
+#   A. PROXY TERMINATES TLS (this unit's default below): the server binds
+#      loopback PLAINTEXT; deploy/nginx-cairn.conf (or any h2-capable proxy)
+#      owns the cert + serves 443. Client logins then use
+#      `cairn login --server https://cairn.example.com --code ...` (the
+#      client's TLS comes from the proxy; a public CA validates with no
+#      --ca-pem). Renewals are pure proxy ops — cairn is never touched.
+#   B. SERVER TERMINATES TLS: switch grpc-addr to 0.0.0.0:7443, uncomment the
+#      tls-cert/tls-key flags, open 7443 in the firewall, and skip the proxy
+#      for the gRPC leg (clients pass --ca if the cert is not publicly
+#      trusted). run.rs serves the metadata plane over TLS (see run.rs:158).
+#
+# NEVER run production with --dev-insecure (admission: enroll codes without an
+# admin device — services.rs:499 "bootstrap dev mode"). The documented
+# bootstrap dance is in the runbook, with its honest limit stated: today the
+# only code-minting surface is the hidden `cairn dev-enroll-code` command
+# against a --dev-insecure server (the codes themselves are single-use +
+# expiring, auth.rs:119); admin-scoped minting on a clean server is tracked
+# contract debt — until it lands, keep the dev-insecure window short and
+# loopback-only, or gate 7443 at the firewall (runbook §Admission).
+#
+# Install:
+#   sudo useradd --system --home /var/lib/cairn --shell /usr/sbin/nologin cairn
+#   sudo install -m 0755 cairn /usr/local/bin/cairn
+#   sudo mkdir -p /etc/cairn && sudo cp cairn-server.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now cairn-server
+
+[Unit]
+Description=Cairn meeting point (journal + admission + object plane)
+After=network-online.target
+Wants=network-online.target
+Documentation=https://github.com/ssmurfgg04-gif/cairn/blob/main/docs/runbook-meeting-point.md
+
+[Service]
+Type=simple
+User=cairn
+Group=cairn
+# StateDirectory -> /var/lib/cairn, owned by cairn:cairn, survives upgrades.
+# Everything durable lives here: meta.db (+ WAL), keys/, objects/, cold/.
+StateDirectory=cairn
+
+# ---- knobs the code actually reads (verified; see runbook table) ----------
+# cold-tier directory; unset + S3 backend => tiering skips (never fake-cold,
+# run.rs:123-138). Keep it under StateDirectory.
+Environment=CAIRN_COLD_DIR=/var/lib/cairn/cold
+# Real bucket backend (ADR-0005): a COMPLETE set switches the object store
+# from dev local-fs to SigV4 S3 (storage.rs:758 — no half-wired states).
+# Keep secrets in a root-only EnvironmentFile, not here.
+#EnvironmentFile=/etc/cairn/cairn.env
+#   /etc/cairn/cairn.env:
+#     CAIRN_S3_ENDPOINT=https://<account>.r2.cloudflarestorage.com
+#     CAIRN_S3_BUCKET=studio-media
+#     CAIRN_S3_REGION=auto
+#     CAIRN_S3_ACCESS_KEY_ID=...
+#     CAIRN_S3_SECRET_ACCESS_KEY=...
+#     CAIRN_S3_PATH_STYLE=0
+
+# Shape A (proxy TLS): loopback plaintext; nginx owns 443.
+ExecStart=/usr/local/bin/cairn server --data-dir /var/lib/cairn --grpc-addr 127.0.0.1:7443 --objects-addr 127.0.0.1:7444
+# Shape B (server TLS): uncomment, and remove the proxy for the gRPC leg.
+# ExecStart=/usr/local/bin/cairn server --data-dir /var/lib/cairn --grpc-addr 0.0.0.0:7443 --objects-addr 127.0.0.1:7444 --tls-cert /etc/cairn/tls/fullchain.pem --tls-key /etc/cairn/tls/privkey.pem
+
+Restart=on-failure
+RestartSec=5s
+# journal streams + upload sessions keep fds open; be generous.
+LimitNOFILE=65536
+# workers should see a real time source
+# (SQLite: WAL meta.db is the write lane — do NOT put it on NFS)
+
+# ---- hardening (ProtectSystem=strict + StateDirectory is the pattern; the
+# state dir is the ONLY writable path the service needs) --------------------
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectKernelLogs=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources @obsolete
+CapabilityBoundingSet=
+AmbientCapabilities=
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

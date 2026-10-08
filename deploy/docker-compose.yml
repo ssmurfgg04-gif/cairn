@@ -1,0 +1,71 @@
+# Cairn meeting point — docker compose (runbook: docs/runbook-meeting-point.md).
+#
+# Bring-up from the repo root:
+#   docker compose -f deploy/docker-compose.yml up -d --build
+#
+# Topology (Shape A of the runbook):
+#   [editors] --https 443--> [nginx] --grpc plaintext--> [cairn-server :7443]
+# The SWARM leg (cairn signal, UDP 17780/17781) is NOT in this stack ON
+# PURPOSE: it must be exposed directly on the host (firewall pass-through),
+# because the signal protocol depends on the observed UDP source address —
+# runbook §"The swarm leg". Run it via deploy/cairn-signal.service instead.
+#
+# Env knobs verified against the code (runbook §Knobs): CAIRN_S3_* switches
+# the object store to a real bucket; CAIRN_COLD_DIR is set in the image.
+
+services:
+  cairn-server:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: cairn-server:local
+    restart: unless-stopped
+    # gRPC metadata plane. With the nginx service below terminating TLS, this
+    # only needs to be reachable by nginx (same compose network). If you run
+    # WITHOUT the proxy (server-native TLS), publish "7443:7443" instead and
+    # add --tls-cert/--tls-key via `command:` (runbook §TLS, shape B).
+    expose:
+      - "7443"
+      - "7444"
+    volumes:
+      # meta.db (+WAL), keys/, objects/, cold/ — everything durable.
+      # BACK THIS UP (runbook §Backups): it is the journal of record.
+      - cairn-state:/var/lib/cairn
+    environment:
+      CAIRN_COLD_DIR: /var/lib/cairn/cold
+      # Real bucket backend (complete set only — no half-wired states):
+      # CAIRN_S3_ENDPOINT: https://<account>.r2.cloudflarestorage.com
+      # CAIRN_S3_BUCKET: studio-media
+      # CAIRN_S3_REGION: auto
+      # CAIRN_S3_ACCESS_KEY_ID: ...
+      # CAIRN_S3_SECRET_ACCESS_KEY: ...
+      # CAIRN_S3_PATH_STYLE: "0"
+    healthcheck:
+      # TCP probe on the gRPC listener — the image's HEALTHCHECK, restated so
+      # compose watchers see it too (no /healthz endpoint exists yet; see
+      # deploy/Dockerfile).
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/7443'"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      cairn-server:
+        condition: service_healthy
+    ports:
+      - "80:80"      # ACME http-01 + redirect to https
+      - "443:443"    # TLS termination for the gRPC leg (h2)
+    volumes:
+      - ./nginx-cairn.conf:/etc/nginx/conf.d/cairn.conf:ro
+      # certbot-style certs; self-signed dev pairs are fine for a LAN box
+      # (clients then pass --ca on login — runbook §TLS).
+      - ./certs:/etc/nginx/certs:ro
+      - cairn-acme:/var/www/certbot:ro
+
+volumes:
+  cairn-state:
+  cairn-acme:
