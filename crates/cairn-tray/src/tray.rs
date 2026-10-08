@@ -231,7 +231,17 @@ pub fn run() {
     });
 
     unsafe {
-        let hinstance = GetModuleHandleW(None).expect("GetModuleHandleW");
+        let Ok(hinstance) = GetModuleHandleW(None) else {
+            // module handles basically never fail, but a silent exit("1")
+            // reads as "the tray vanished" — say why, then go.
+            let _ = MessageBoxW(
+                None,
+                PCWSTR(to_wide("Cairn could not start (module handle unavailable).").as_ptr()),
+                PCWSTR(to_wide("Cairn").as_ptr()),
+                MB_ICONERROR | MB_OK,
+            );
+            return;
+        };
         let class_name = w!("CairnTrayWnd");
 
         let wc = WNDCLASSW {
@@ -247,7 +257,9 @@ pub fn run() {
         }
 
         // A message-only-ish tool window: never shown, owns the tray icon.
-        let hwnd = CreateWindowExW(
+        // Failure used to be `expect` — a panic in a windowless process is
+        // INVISIBLE (no console, no dialog): mom-test round says surface it.
+        let hwnd = match CreateWindowExW(
             WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW,
             class_name,
             w!("Cairn Tray"),
@@ -260,8 +272,20 @@ pub fn run() {
             None,
             HINSTANCE(hinstance.0),
             None,
-        )
-        .expect("CreateWindowExW");
+        ) {
+            Ok(h) => h,
+            Err(e) => {
+                let _ = MessageBoxW(
+                    None,
+                    PCWSTR(to_wide(&format!(
+                        "Cairn could not create its tray window ({e}).\nSync is not running — run the installer again or report this."
+                    )).as_ptr()),
+                    PCWSTR(to_wide("Cairn").as_ptr()),
+                    MB_ICONERROR | MB_OK,
+                );
+                return;
+            }
+        };
 
         // the Shared pointer rides the window's user data
         windows::Win32::UI::WindowsAndMessaging::SetWindowLongPtrW(
@@ -537,7 +561,9 @@ unsafe fn load_cairn_icon() -> HICON {
     const ICO: &[u8] = include_bytes!("cairn.ico");
     let image = &ICO[22..]; // skip ICONDIR (6) + ICONDIRENTRY (16)
     CreateIconFromResourceEx(image, true, 0x0003_0000, 0, 0, LR_DEFAULTCOLOR).unwrap_or_else(|_| {
-        // Stock fallback: never run without an icon at all
+        // Stock fallback: never run without an icon at all. If even the
+        // stock icon refuses, a null icon degrades the tray (Shell_NotifyIcon
+        // fails and run() reports + exits) instead of panicking silently.
         LoadImageW(
             None,
             PCWSTR(32512usize as *const u16), // IDI_APPLICATION by ordinal
@@ -547,7 +573,7 @@ unsafe fn load_cairn_icon() -> HICON {
             IMAGE_FLAGS(0),
         )
         .map(|h| HICON(h.0))
-        .expect("stock icon")
+        .unwrap_or_default()
     })
 }
 
@@ -664,7 +690,18 @@ unsafe fn show_menu(hwnd: HWND) {
     };
     let status = shared.status.lock().map(|s| s.clone()).unwrap_or_default();
 
-    let menu = CreatePopupMenu().expect("CreatePopupMenu");
+    // Menu creation used to be `expect` — a failure here killed the tray
+    // with no console, no dialog, nothing. Degrade to a balloon instead:
+    // the tray stays alive, the console URL still reaches the user.
+    let Ok(menu) = CreatePopupMenu() else {
+        show_balloon(
+            hwnd,
+            "Cairn",
+            "The menu could not open this time — the console is still at http://127.0.0.1:17778/",
+            NIIF_ERROR,
+        );
+        return;
+    };
     let summary = status.summary();
     // Status line (disabled) — the tooltip, visible
     let summary_w = to_wide(&summary);
@@ -687,7 +724,7 @@ unsafe fn show_menu(hwnd: HWND) {
         menu::CONNECT as usize,
         PCWSTR(connect_w.as_ptr()),
     );
-    let status_w = to_wide("Status Details");
+    let status_w = to_wide("Status");
     let _ = AppendMenuW(
         menu,
         MF_STRING,
@@ -842,24 +879,75 @@ unsafe fn pick_folder(hwnd: HWND) -> Option<String> {
     Some(String::from_utf16_lossy(&path[..len]))
 }
 
+/// One-sentence status (mom-test round): the raw `cairn doctor` dump used
+/// to land in the box — check names and flags a non-technical user cannot
+/// act on. Now: a plain sentence for the human, and the technical details
+/// ON THE CLIPBOARD so a support paste is one Ctrl-V away. If the
+/// clipboard refuses, the details stay in the box (honest fallback).
 unsafe fn do_status(hwnd: HWND) {
     let (ok, text) = run_cairn(&["doctor"]);
-    let body = if text.is_empty() {
-        "(doctor returned no output)".into()
+    if ok {
+        msg_box(
+            hwnd,
+            "Cairn — Status",
+            "Everything is synced and working normally.",
+            false,
+            false,
+        );
+        return;
+    }
+    let details = if text.is_empty() {
+        "(the doctor returned no output)".to_string()
     } else {
         text
     };
-    msg_box(
-        hwnd,
-        if ok {
-            "Cairn — Everything is OK"
+    let body = if set_clipboard_text(&details) {
+        String::from(
+            "Cairn needs your attention.\n\nThe technical details have been copied to the clipboard — paste them (Ctrl+V) into your bug report or support chat.",
+        )
+    } else {
+        format!("Cairn needs your attention.\n\nDetails:\n{details}")
+    };
+    msg_box(hwnd, "Cairn — Status", &body, true, false);
+}
+
+/// CF_UNICODETEXT clipboard set (best-effort: false = caller keeps the
+/// old show-the-details path). Ownership of the allocation transfers to
+/// the clipboard on success.
+unsafe fn set_clipboard_text(s: &str) -> bool {
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+    };
+    use windows::Win32::System::Memory::{
+        GlobalAlloc, GlobalFree, GlobalLock, GlobalUnlock, GMEM_MOVEABLE,
+    };
+    // CF_UNICODETEXT = 13: the constant moved crates across windows-rs
+    // versions; the Win32 ABI number never moved.
+    const CF_UNICODETEXT: u32 = 13;
+    if OpenClipboard(None).is_err() {
+        return false;
+    }
+    let mut utf16: Vec<u16> = s.encode_utf16().collect();
+    utf16.push(0);
+    let bytes = utf16.len() * 2;
+    let mut ok = false;
+    if let Ok(h) = GlobalAlloc(GMEM_MOVEABLE, bytes) {
+        let dst = GlobalLock(h);
+        if !dst.is_null() {
+            std::ptr::copy_nonoverlapping(utf16.as_ptr(), dst as *mut u16, utf16.len());
+            let _ = GlobalUnlock(h);
+            ok = !SetClipboardData(CF_UNICODETEXT, Some(HANDLE(h.0))).is_invalid();
+            if !ok {
+                // the clipboard did not take ownership — free our copy
+                let _ = GlobalFree(h);
+            }
         } else {
-            "Cairn — Attention needed"
-        },
-        &body,
-        !ok,
-        false,
-    );
+            let _ = GlobalFree(h);
+        }
+    }
+    let _ = CloseClipboard();
+    ok
 }
 
 unsafe fn do_open(status: &LiveStatus) {

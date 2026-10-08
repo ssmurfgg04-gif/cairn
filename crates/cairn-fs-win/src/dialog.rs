@@ -116,6 +116,66 @@ fn try_legacy() -> Picked {
 }
 
 #[cfg(not(windows))]
+fn try_helper(bin: &str, args: &[&str]) -> Option<Picked> {
+    let out = std::process::Command::new(bin).args(args).output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if s.is_empty() {
+        // the helper ran and the user cancelled — a decision, not a failure
+        return Some(Picked::Cancelled);
+    }
+    Some(Picked::Folder(s))
+}
+
+/// P0 (mom-test round): "type the path instead" converted "choose a
+/// folder" into "know your filesystem" on every non-Windows desktop.
+/// Try the native-ish helpers each desktop already ships before giving
+/// up: zenity (GNOME/gtk), kdialog (KDE), osascript (every macOS).
+/// `Unsupported` is now the rare last resort, not the default.
+#[cfg(not(windows))]
 pub fn pick_folder() -> Picked {
-    Picked::Unsupported
+    // zenity: most desktop Linux
+    if let Some(p) = try_helper(
+        "zenity",
+        &["--file-selection", "--directory", "--title=Choose a project folder"],
+    ) {
+        return p;
+    }
+    // kdialog: KDE Plasma
+    if let Some(p) = try_helper(
+        "kdialog",
+        &["--getexistingdirectory", ".", "--title", "Choose a project folder"],
+    ) {
+        return p;
+    }
+    // macOS: osascript ships with the OS. A cancel arrives as exit-1
+    // with "User canceled" on stderr — honor it as a cancel, not a
+    // missing helper.
+    match std::process::Command::new("osascript")
+        .args([
+            "-e",
+            "POSIX path of (choose folder with prompt \"Choose a project folder\")",
+        ])
+        .output()
+    {
+        Ok(out) if out.status.success() => {
+            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if s.is_empty() {
+                Picked::Cancelled
+            } else {
+                Picked::Folder(s)
+            }
+        }
+        Ok(out) => {
+            let err = String::from_utf8_lossy(&out.stderr);
+            if err.contains("User canceled") || err.contains("user canceled") {
+                Picked::Cancelled
+            } else {
+                Picked::Unsupported
+            }
+        }
+        Err(_) => Picked::Unsupported,
+    }
 }
