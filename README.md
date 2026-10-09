@@ -1,4 +1,16 @@
-# Cairn — content-addressed chunked sync & storage engine for professional video teams
+<div align="center">
+
+<img src="assets/banner.svg" width="100%" alt="Cairn — arctic banner: content-addressed chunked sync and storage engine for professional video teams" />
+
+**Version control for the folder your video editor already uses.**
+
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache%202.0-2EA043)](#license)
+[![made with Rust](https://img.shields.io/badge/rust-engine-DEA584?logo=rust)](https://www.rust-lang.org/)
+[![release](https://img.shields.io/github/v/release/ssmurfgg04-gif/cairn?color=7CDBF5&include_prereleases)](https://github.com/ssmurfgg04-gif/cairn/releases/latest)
+[![stars](https://img.shields.io/github/stars/ssmurfgg04-gif/cairn?color=FF9E1B&label=%E2%98%85%20stars)](https://github.com/ssmurfgg04-gif/cairn/stargazers)
+[![last commit](https://img.shields.io/github/last-commit/ssmurfgg04-gif/cairn?color=1E5C8A)](https://github.com/ssmurfgg04-gif/cairn/commits/main)
+
+</div>
 
 **What is Cairn? (plain language.)** It is version control for the folder
 your video editor already uses. You keep working in Premiere, Resolve, or
@@ -18,7 +30,7 @@ in sync with a conflict copy when two people genuinely collide.
 unique and immutable (content-addressed chunks), the stack marks the trail (journal + cursors),
 each summit is a checkpoint (snapshots/refs), and it survives weather (crash safety, I2).
 
-## Repository layout
+## 🗺️ Repository layout
 
 ```
 crates/
@@ -47,7 +59,7 @@ proto/cairn/v4     .proto source of truth
 docs/              SPEC.md, adr/, ctl-api.md, runbooks/, STATUS.md
 ```
 
-## Download & install
+## ⬇️ Download & install
 
 **Windows (recommended):** grab `cairn-setup-<tag>.exe` from the
 [latest release](https://github.com/ssmurfgg04-gif/cairn/releases/latest)
@@ -92,7 +104,7 @@ with a YES/NO gate), and live presence between editors (daemon flag
 we win, where LucidLink and friends win — is
 [docs/COMPETITIVE.md](docs/COMPETITIVE.md).
 
-## Quick start
+## ⚡ Quick start
 
 ```sh
 just build        # cargo build --workspace
@@ -104,7 +116,7 @@ just run-daemon   # local ctl gRPC :17777 + dashboard :17778
 just doctor       # end-to-end health check
 ```
 
-## The two questions every design argument resolves against
+## 🧭 The two questions every design argument resolves against
 
 - **I1:** "I opened a 50GB BRAW in Resolve — how long until I can scrub?" (<50ms cached header serve)
 - **I2:** "A crash happened at any point — did we lose an acknowledged save or corrupt a project
@@ -114,6 +126,14 @@ Read `SPEC.md` first. Every deviation from it is a bug unless an ADR in `docs/ad
 Ported/studied code provenance lives in `THIRD_PARTY.md`. The frozen control contract lives in
 `docs/ctl-api.md`.
 
-## License
+## 📜 License
 
 Apache-2.0 for Cairn itself; see `THIRD_PARTY.md` for referenced implementations.
+
+---
+
+<div align="center">
+
+<sub>🐧 part of <a href="https://github.com/ssmurfgg04-gif">the ice shelf</a> · cold code, warm commits ❄️</sub>
+
+</div>
