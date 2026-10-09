@@ -294,7 +294,13 @@ if ($AppSetupUrl -ne "") {
         Select-Object -First 1
     $appUrl = if ($appAsset) { $appAsset.browser_download_url } else { "" }
 } else {
-    $appUrl = ""
+    # Tag-redirect fallback (API rate-limited, the anonymous 60/hr ceiling):
+    # assets are named deterministically, so derive the window bundle URL
+    # from the engine URL exactly the way the tray URL is derived above.
+    # cairn-windows-<tag>.exe -> cairn-window-<tag>-setup.exe. A missing
+    # asset 404s and the catch below degrades to the browser console.
+    $appUrl = [regex]::Replace("$exeUrl", 'cairn-windows-(.+)\.exe$', 'cairn-window-$1-setup.exe')
+    if ($appUrl -eq "$exeUrl") { $appUrl = "" }
 }
 if ($appUrl -ne "") {
     $setupPath = Join-Path $env:TEMP "cairn-window-setup.exe"
