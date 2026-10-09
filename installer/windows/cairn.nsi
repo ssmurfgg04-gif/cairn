@@ -299,11 +299,14 @@ Section "un.Cairn program files" UNSEC_CORE
   ; by design (M1/M3: kill -9 at any point loses no acknowledged save; the
   ; outbox re-sends unacked work). Close your NLE first to be polite.
   DetailPrint "Stopping the Cairn daemon + tray..."
-  nsExec::Exec `"$SYSDIR\taskkill.exe" /IM cairn.exe /F`
-  Pop $R0
+  ; ORDER MATTERS: the tray supervises the daemon and respawns it if it
+  ; dies first (observed live on the release gate — a daemon was still
+  ; running after both taskkills). Kill the supervisor, then the ward.
   nsExec::Exec `"$SYSDIR\taskkill.exe" /IM cairn-tray.exe /F`
   Pop $R0
-  Sleep 800   ; let file handles drop before deleting the exes
+  nsExec::Exec `"$SYSDIR\taskkill.exe" /IM cairn.exe /F`
+  Pop $R0
+  Sleep 1500  ; let file handles drop before deleting the exes
 
   Delete "$SMPROGRAMS\Cairn\Cairn.lnk"
   Delete "$SMPROGRAMS\Cairn\Uninstall Cairn.lnk"

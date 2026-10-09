@@ -155,7 +155,8 @@ function Install-VerifiedExe {
 # not held open (retro error #2: "being used by another process" ->
 # truncated download -> hash mismatch).
 function Stop-Cairn {
-    foreach ($n in @("cairn", "cairn-tray", "cairn-app")) {
+    # Tray first: it supervises the daemon and respawns it if it dies first.
+    foreach ($n in @("cairn-tray", "cairn", "cairn-app")) {
         Get-Process -Name $n -ErrorAction SilentlyContinue | ForEach-Object {
             Write-Host "stopping $($_.ProcessName) (pid $($_.Id)) so the update can replace it"
             Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue

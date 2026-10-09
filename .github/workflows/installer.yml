@@ -133,8 +133,16 @@ jobs:
           Write-Host "gate: silent install -> daemon up -> status GREEN"
 
           # 4. silent uninstall (the `_?=` form runs the uninstaller in place
-          #    so Start-Process can wait for the REAL exit code)
-          $u = Start-Process -FilePath "$dir\uninstall.exe" -ArgumentList "/S", ('"_?=' + $dir + '"') -Wait -PassThru
+          #    so Start-Process can wait for the REAL exit code). Watchdog:
+          #    an uninstaller that never exits must FAIL fast, not zombie
+          #    the job for 6 hours (observed once on the beta.6 gate).
+          Get-Process -Name cairn-tray, cairn, cairn-app -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep -Seconds 2
+          $u = Start-Process -FilePath "$dir\uninstall.exe" -ArgumentList "/S", ('"_?=' + $dir + '"') -PassThru
+          if (-not $u.WaitForExit(180000)) {
+            try { $u.Kill() } catch { }
+            throw "silent uninstall did not exit within 180s (watchdog killed it) — lock or respawn race"
+          }
           if ($u.ExitCode -ne 0) { throw "silent uninstall exited $($u.ExitCode)" }
           # `_?=` skips the uninstaller's self-delete by design (documented
           # NSIS behavior) — remove what it leaves, then assert emptiness.
