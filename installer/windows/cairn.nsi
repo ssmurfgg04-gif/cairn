@@ -63,7 +63,7 @@ ManifestDPIAware true
 
 !include "MUI2.nsh"
 !include "WinMessages.nsh"       ; ${HWND_BROADCAST} / ${WM_SETTINGCHANGE}
-!include "Sections.nsh"          ; ${SF_OFF}
+!include "Sections.nsh"          ; section flags (SF_SELECTED, SectionSetFlags)
 !include "FileFunc.nsh"          ; ${GetOptions} for /NOFFMPEG
 
 ; ---------------------------------------------------------------------------
@@ -281,7 +281,8 @@ FunctionEnd
 Function .onInit
   ${GetOptions} $CMDLINE "/NOFFMPEG" $R9
   ${IfNot} ${Errors}
-    SectionSetFlags ${SEC_FFMPEG} ${SF_OFF}
+    ; NSIS has no ${SF_OFF} constant — flags 0 clears ${SF_SELECTED}.
+    SectionSetFlags ${SEC_FFMPEG} 0
     DetailPrint "/NOFFMPEG: ffmpeg component deselected"
   ${EndIf}
 FunctionEnd
