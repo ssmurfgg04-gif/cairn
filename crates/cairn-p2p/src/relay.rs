@@ -670,5 +670,3 @@ mod tests {
         relay.task.abort();
         signal.task.abort();
     }
-
-}
