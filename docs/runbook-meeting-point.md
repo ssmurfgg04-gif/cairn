@@ -35,10 +35,11 @@ live in `deploy/`:
   is simply not exposed at all.
 
 **Swarm leg** (`cairn signal`, optional):
-- `17780/udp` — signal directory; `17781/udp` — encrypted relay pass-through.
-  Both are UDP (the library's QUIC relay leg, `cairn-p2p` relay.rs
-  `spawn_with_quic` + cairn-quic, is also UDP when wired; `cairn signal`
-  serves the UDP relay today).
+- `17780/udp` — signal directory; `17781/udp` — UDP relay fallback.
+- `17782/udp` — optional QUIC relay listener, enabled with
+  `--quic-relay-bind`. Clients opt in using
+  `cairn daemon --swarm-quic-relay PUBLIC_IP:17782`; UDP remains the
+  default/fallback. QUIC runs over UDP, not TCP.
 - **Do NOT proxy the UDP legs.** The signal protocol authenticates and
   canonicalizes peers by the OBSERVED source address of each datagram
   (`crates/cairn-p2p/src/signal.rs` — unspecified advertised IPs are
@@ -47,9 +48,10 @@ live in `deploy/`:
   candidate. Expose the UDP ports directly:
 
   ```sh
-  ufw allow 17780/udp && ufw allow 17781/udp      # ubuntu ufw
-  firewall-cmd --add-port=17780/udp --permanent   # firewalld (both ports)
-  firewall-cmd --add-port=17781/udp --permanent && firewall-cmd --reload
+  ufw allow 17780/udp && ufw allow 17781/udp && ufw allow 17782/udp
+  firewall-cmd --add-port=17780/udp --permanent
+  firewall-cmd --add-port=17781/udp --permanent
+  firewall-cmd --add-port=17782/udp --permanent && firewall-cmd --reload
   ```
 
 **Client-facing contract** (shape A, proxy TLS): editors log in with
@@ -202,4 +204,4 @@ Keep secrets in a root-only `EnvironmentFile` (the unit's commented
 - No admin-scoped code minting on a clean server (§4) — tracked debt.
 - The dev local-fs objects endpoint speaks plaintext HTTP by construction —
   production uses a real bucket (§1).
-- The QUIC relay leg is library-side today; `cairn signal` serves UDP only.
+- The optional QUIC relay is enabled with `--quic-relay-bind` (17782/udp by convention). Configure clients with the externally reachable numeric endpoint using `--swarm-quic-relay`; UDP remains the fallback.
