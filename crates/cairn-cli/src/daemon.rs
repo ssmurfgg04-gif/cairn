@@ -619,10 +619,7 @@ impl CtlDiagnostics for CtlDiagSvc {
                 "true" => {
                     let store = cairn_store::Store::open(&self.state.home, Arc::new(WallClock))
                         .map_err(|e| Status::internal(format!("open home store: {e}")))?;
-                    if store
-                        .meta_get("swarm/signal")
-                        .is_none_or(|s| s.is_empty())
-                    {
+                    if store.meta_get("swarm/signal").is_none_or(|s| s.is_empty()) {
                         return Err(Status::failed_precondition(
                             "QUIC relay requires a configured swarm signal server",
                         ));
