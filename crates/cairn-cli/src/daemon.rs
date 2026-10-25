@@ -619,7 +619,11 @@ impl CtlDiagnostics for CtlDiagSvc {
                 "true" => {
                     let store = cairn_store::Store::open(&self.state.home, Arc::new(WallClock))
                         .map_err(|e| Status::internal(format!("open home store: {e}")))?;
-                    if store.meta_get("swarm/signal").filter(|s| !s.is_empty()).is_none() {
+                    if store
+                        .meta_get("swarm/signal")
+                        .filter(|s| !s.is_empty())
+                        .is_none()
+                    {
                         return Err(Status::failed_precondition(
                             "QUIC relay requires a configured swarm signal server",
                         ));
@@ -641,7 +645,11 @@ impl CtlDiagnostics for CtlDiagSvc {
                     }
                 }
                 "false" => {}
-                _ => return Err(Status::invalid_argument("quic_relay must be 'true' or 'false'")),
+                _ => {
+                    return Err(Status::invalid_argument(
+                        "quic_relay must be 'true' or 'false'",
+                    ))
+                }
             }
         }
         // RBAC: kill switches are global on this machine — enforce
@@ -761,7 +769,12 @@ pub async fn run(
         // it on the rejoin path. It is a credential and this home is
         // user-private (device tokens live here too) — never logged.
         match &swarm {
-            Some(SwarmOpts { signal, join_code, quic_relay, disable_quic_relay }) => {
+            Some(SwarmOpts {
+                signal,
+                join_code,
+                quic_relay,
+                disable_quic_relay,
+            }) => {
                 let _ = store.meta_set("swarm/signal", signal);
                 match join_code {
                     Some(code) => {
@@ -795,7 +808,11 @@ pub async fn run(
     }
     if let Some(opts) = &swarm {
         if opts.quic_relay.is_some() || opts.disable_quic_relay {
-            let value = if opts.quic_relay.is_some() { "true" } else { "false" };
+            let value = if opts.quic_relay.is_some() {
+                "true"
+            } else {
+                "false"
+            };
             if let Some((_, slot)) = state
                 .flags
                 .write()
@@ -1762,7 +1779,6 @@ mod tests {
     }
 }
 
-
 #[cfg(test)]
 mod quic_flag_regression_tests {
     use super::*;
@@ -1771,15 +1787,23 @@ mod quic_flag_regression_tests {
     fn quic_relay_flag_defaults_off_and_persists() {
         let initial = default_flags();
         assert_eq!(
-            initial.iter().find(|(name, _)| name == "quic_relay").map(|(_, value)| value.as_str()),
+            initial
+                .iter()
+                .find(|(name, _)| name == "quic_relay")
+                .map(|(_, value)| value.as_str()),
             Some("false"),
         );
         let home = tempfile::tempdir().expect("temporary home");
         let store = cairn_store::Store::open(home.path(), Arc::new(WallClock)).expect("store");
-        store.meta_set("flag:quic_relay", "true").expect("persist flag");
+        store
+            .meta_set("flag:quic_relay", "true")
+            .expect("persist flag");
         drop(store);
         assert_eq!(
-            load_flags(home.path()).iter().find(|(name, _)| name == "quic_relay").map(|(_, value)| value.as_str()),
+            load_flags(home.path())
+                .iter()
+                .find(|(name, _)| name == "quic_relay")
+                .map(|(_, value)| value.as_str()),
             Some("true"),
         );
     }
