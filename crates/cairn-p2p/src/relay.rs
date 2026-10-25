@@ -590,4 +590,56 @@ mod tests {
         relay.task.abort();
         signal.task.abort();
     }
+    #[tokio::test]
+    async fn e2e_shared_relay_bridges_quic_and_udp() {
+        use tokio::sync::mpsc as chan;
+        use std::time::Duration;
+
+        let signal = crate::signal::SignalServer::spawn("127.0.0.1:0".parse().unwrap(), b"k")
+            .await
+            .expect("signal");
+        let relay = RelayServer::spawn_with_quic(
+            "127.0.0.1:0".parse().unwrap(),
+            "127.0.0.1:0".parse().unwrap(),
+            signal.local_addr,
+            b"k",
+        )
+        .await
+        .expect("shared relay");
+        let quic_addr = relay.quic_addr.expect("QUIC listener");
+        let udp = UdpSocket::bind("127.0.0.1:0").await.expect("UDP peer");
+        let client = cairn_quic::relay::QuicRelayClient::dial(quic_addr)
+            .await
+            .expect("QUIC peer");
+        let (seen_tx, mut seen_rx) = chan::unbounded_channel::<Vec<u8>>();
+        let reader = {
+            let client = client.clone();
+            tokio::spawn(async move {
+                let _ = client.recv_loop(move |frame| { let _ = seen_tx.send(frame); }).await;
+            })
+        };
+
+        let udp_frame = build_routing_header(b"udp-peer", b"quic-peer", b"from-udp");
+        let quic_frame = build_routing_header(b"quic-peer", b"udp-peer", b"from-quic");
+
+        // First packet teaches the relay the UDP endpoint; the QUIC packet
+        // completes the mapping and must be delivered to the UDP socket.
+        udp.send_to(&udp_frame, relay.local_addr).await.expect("UDP learn");
+        client.send(&quic_frame).await.expect("QUIC reply");
+        let mut buf = [0u8; 256];
+        let (n, _) = tokio::time::timeout(Duration::from_secs(10), udp.recv_from(&mut buf))
+            .await.expect("QUIC->UDP timeout").expect("UDP receive");
+        assert_eq!(&buf[..n], &quic_frame);
+
+        // The established mapping now forwards UDP frames to the QUIC client.
+        udp.send_to(&udp_frame, relay.local_addr).await.expect("UDP->QUIC send");
+        let delivered = tokio::time::timeout(Duration::from_secs(10), seen_rx.recv())
+            .await.expect("UDP->QUIC timeout").expect("QUIC receive channel");
+        assert_eq!(delivered, udp_frame);
+
+        reader.abort();
+        relay.task.abort();
+        signal.task.abort();
+    }
+
 }
