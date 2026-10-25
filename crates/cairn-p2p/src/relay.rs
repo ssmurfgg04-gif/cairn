@@ -167,12 +167,20 @@ impl RelayServer {
         // These guards are moved into the UDP owner's task so aborting the
         // public relay task also stops registration and QUIC child tasks.
         let reg_sock = Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
-        let sc = Arc::new(SignalClient::new(Arc::clone(&reg_sock), signal, cluster_key));
+        let sc = Arc::new(SignalClient::new(
+            Arc::clone(&reg_sock),
+            signal,
+            cluster_key,
+        ));
         let dispatcher_task = AbortOnDrop(SignalClient::spawn_dispatcher(&sc));
         let registration_task = AbortOnDrop(tokio::spawn(async move {
             let node = NodeKey::generate("relay");
             loop {
-                if sc.register(&node, "cairn-relay", &[local_addr], true).await.is_err() {
+                if sc
+                    .register(&node, "cairn-relay", &[local_addr], true)
+                    .await
+                    .is_err()
+                {
                     tracing::warn!("relay: signal registration failed; retrying");
                 }
                 tokio::time::sleep(RE_REGISTER).await;
@@ -592,8 +600,8 @@ mod tests {
     }
     #[tokio::test]
     async fn e2e_shared_relay_bridges_quic_and_udp() {
-        use tokio::sync::mpsc as chan;
         use std::time::Duration;
+        use tokio::sync::mpsc as chan;
 
         let signal = crate::signal::SignalServer::spawn("127.0.0.1:0".parse().unwrap(), b"k")
             .await
@@ -615,7 +623,11 @@ mod tests {
         let reader = {
             let client = client.clone();
             tokio::spawn(async move {
-                let _ = client.recv_loop(move |frame| { let _ = seen_tx.send(frame); }).await;
+                let _ = client
+                    .recv_loop(move |frame| {
+                        let _ = seen_tx.send(frame);
+                    })
+                    .await;
             })
         };
 
@@ -624,17 +636,25 @@ mod tests {
 
         // First packet teaches the relay the UDP endpoint; the QUIC packet
         // completes the mapping and must be delivered to the UDP socket.
-        udp.send_to(&udp_frame, relay.local_addr).await.expect("UDP learn");
+        udp.send_to(&udp_frame, relay.local_addr)
+            .await
+            .expect("UDP learn");
         client.send(&quic_frame).await.expect("QUIC reply");
         let mut buf = [0u8; 256];
         let (n, _) = tokio::time::timeout(Duration::from_secs(10), udp.recv_from(&mut buf))
-            .await.expect("QUIC->UDP timeout").expect("UDP receive");
+            .await
+            .expect("QUIC->UDP timeout")
+            .expect("UDP receive");
         assert_eq!(&buf[..n], &quic_frame);
 
         // The established mapping now forwards UDP frames to the QUIC client.
-        udp.send_to(&udp_frame, relay.local_addr).await.expect("UDP->QUIC send");
+        udp.send_to(&udp_frame, relay.local_addr)
+            .await
+            .expect("UDP->QUIC send");
         let delivered = tokio::time::timeout(Duration::from_secs(10), seen_rx.recv())
-            .await.expect("UDP->QUIC timeout").expect("QUIC receive channel");
+            .await
+            .expect("UDP->QUIC timeout")
+            .expect("QUIC receive channel");
         assert_eq!(delivered, udp_frame);
 
         reader.abort();
