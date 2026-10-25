@@ -64,6 +64,15 @@ pub struct RelayServer {
     pub stats: Arc<RelayStats>,
 }
 
+/// Abort a child task when the owning relay task is cancelled or exits.
+struct AbortOnDrop(tokio::task::JoinHandle<()>);
+
+impl Drop for AbortOnDrop {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
 /// One side of a relayed pair, on whichever transport it arrived.
 #[derive(Clone, Debug)]
 enum Side {
@@ -154,32 +163,21 @@ impl RelayServer {
         let local_addr = sock.local_addr()?;
         let stats = Arc::new(RelayStats::default());
 
-        // registration control-plane socket (the data socket serves peers)
+        // Registration control-plane socket (the data socket serves peers).
+        // These guards are moved into the UDP owner's task so aborting the
+        // public relay task also stops registration and QUIC child tasks.
         let reg_sock = Arc::new(UdpSocket::bind("0.0.0.0:0").await?);
-        {
-            let sc = Arc::new(SignalClient::new(
-                Arc::clone(&reg_sock),
-                signal,
-                cluster_key,
-            ));
-            // stand-alone client: its own reply reader (the swarm's main loop
-            // is not here to dispatch for us). Runs until the register loop
-            // drops the last socket Arc.
-            let _dispatcher = SignalClient::spawn_dispatcher(&sc);
-            tokio::spawn(async move {
-                let node = NodeKey::generate("relay");
-                loop {
-                    if sc
-                        .register(&node, "cairn-relay", &[local_addr], true)
-                        .await
-                        .is_err()
-                    {
-                        tracing::warn!("relay: signal registration failed; retrying");
-                    }
-                    tokio::time::sleep(RE_REGISTER).await;
+        let sc = Arc::new(SignalClient::new(Arc::clone(&reg_sock), signal, cluster_key));
+        let dispatcher_task = AbortOnDrop(SignalClient::spawn_dispatcher(&sc));
+        let registration_task = AbortOnDrop(tokio::spawn(async move {
+            let node = NodeKey::generate("relay");
+            loop {
+                if sc.register(&node, "cairn-relay", &[local_addr], true).await.is_err() {
+                    tracing::warn!("relay: signal registration failed; retrying");
                 }
-            });
-        }
+                tokio::time::sleep(RE_REGISTER).await;
+            }
+        }));
 
         let mappings: RouteTable = Arc::new(Mutex::new(HashMap::new()));
         let epoch0 = Instant::now();
@@ -187,7 +185,7 @@ impl RelayServer {
         // Optional QUIC data-plane listener. QUIC frames use the same
         // QuicTransport framing as QuicRelayClient; the UDP and QUIC paths
         // share the same route table, including mixed-transport pairs.
-        let quic_addr = if let Some(qb) = quic_bind {
+        let (quic_addr, quic_task) = if let Some(qb) = quic_bind {
             let identity = cairn_quic::ServerIdentity::generate("cairn-relay")
                 .map_err(|e| std::io::Error::other(e.to_string()))?;
             tracing::info!(fingerprint = %identity.fingerprint(), "relay QUIC identity");
@@ -197,7 +195,7 @@ impl RelayServer {
             let maps_q = Arc::clone(&mappings);
             let stats_q = Arc::clone(&stats);
             let sock_q = Arc::clone(&sock);
-            tokio::spawn(async move {
+            let listener_task = tokio::spawn(async move {
                 let ep = ep;
                 let conn_ids = Arc::new(std::sync::atomic::AtomicU64::new(1));
                 let mut connections = tokio::task::JoinSet::new();
@@ -270,15 +268,18 @@ impl RelayServer {
                 connections.abort_all();
                 while connections.join_next().await.is_some() {}
             });
-            Some(qa)
+            (Some(qa), Some(AbortOnDrop(listener_task)))
         } else {
-            None
+            (None, None)
         };
 
         let stats_loop = Arc::clone(&stats);
         let maps_loop = Arc::clone(&mappings);
         let sock_loop = Arc::clone(&sock);
         let task = tokio::spawn(async move {
+            let _registration_task = registration_task;
+            let _dispatcher_task = dispatcher_task;
+            let _quic_task = quic_task;
             let mut buf = vec![0u8; MAX_DATAGRAM];
             let mut sweep = tokio::time::interval(SWEEP);
             loop {
