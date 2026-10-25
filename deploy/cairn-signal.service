@@ -15,11 +15,9 @@
 #     code is locked out.
 #
 # PORTS / TRANSPORT — read before touching the firewall:
-#   17780/udp  signal directory   17781/udp  relay pass-through
-#   Both are UDP. (The relay's QUIC-upgrade leg exists in the library —
-#   cairn-p2p relay.rs `spawn_with_quic` + cairn-quic, round 28 — and it is
-#   ALSO UDP; the `cairn signal` subcommand spawns the UDP-only relay
-#   (RelayServer::spawn) today, so 17781 is a plain UDP pass-through.)
+#   17780/udp  signal directory   17781/udp  UDP relay fallback
+#   17782/udp  optional QUIC relay (QUIC itself uses UDP, not TCP).
+#   Expose these ports directly; do not put them behind a TCP proxy.
 #   DO NOT proxy these through nginx/TLS termination: the protocol depends on
 #   the OBSERVED source address of each datagram (signal.rs canonicalizes
 #   unspecified binds to where the packet actually came from — that is the
@@ -44,7 +42,7 @@ Group=cairn
 # Pin the team's join code here (validate locally first: `cairn signal --join-code CODE`
 # on any box fails fast with the checksum message on a typo). Omitting --join-code
 # generates a fresh code at every start and prints it to the journal.
-ExecStart=/usr/local/bin/cairn signal --bind 0.0.0.0:17780 --relay-bind 0.0.0.0:17781 --no-mdns
+ExecStart=/usr/local/bin/cairn signal --bind 0.0.0.0:17780 --relay-bind 0.0.0.0:17781 --quic-relay-bind 0.0.0.0:17782 --no-mdns
 # --no-mdns: the LAN beacon is useless on a public VPS (there is no LAN to
 # join from) and only announces the code fingerprint to anyone listening.
 Restart=on-failure
