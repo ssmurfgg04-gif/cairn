@@ -430,7 +430,7 @@ impl Swarm {
                 // they had arrived on UDP from the relay address.
                 let inner_d = Arc::clone(&inner_q);
                 let client_i = Arc::clone(&client);
-                let mut inbound = tokio::spawn(async move {
+                let inbound = async move {
                     if let Err(e) = client_i
                         .recv_loop(move |frame| {
                             dispatch(&inner_d, &frame, quic_addr);
@@ -439,31 +439,29 @@ impl Swarm {
                     {
                         tracing::debug!(%quic_addr, "swarm: QUIC relay reader ended ({e})");
                     }
-                });
+                };
 
-                // Outbound pump: link channel -> relay streams.
+                // Outbound pump: link channel -> relay streams. Keep both
+                // pumps as sibling futures in this task so dropping either
+                // one cancels the other immediately.
                 let client_o = Arc::clone(&client);
-                let mut outbound = tokio::spawn(async move {
+                let outbound = async move {
                     while let Some(bytes) = rx.recv().await {
                         if client_o.send(&bytes).await.is_err() {
                             break;
                         }
                     }
-                });
+                };
 
                 // Any terminal event tears down the entire QUIC session:
                 // explicit swarm shutdown, remote disconnect, or a failed
-                // outbound stream. The UDP relay remains the fallback.
+                // outbound stream. select! drops the sibling future(s), so no
+                // orphan pump tasks can outlive this swarm.
                 tokio::select! {
                     _ = stop_rx.changed() => {},
-                    _ = &mut inbound => {},
-                    _ = &mut outbound => {},
+                    _ = inbound => {},
+                    _ = outbound => {},
                 }
-
-                inbound.abort();
-                outbound.abort();
-                let _ = inbound.await;
-                let _ = outbound.await;
 
                 *inner_q.quic_relay.lock().expect("quic link lock") = None;
                 if !*stop_rx.borrow() {
