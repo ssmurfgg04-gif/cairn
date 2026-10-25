@@ -184,96 +184,91 @@ impl RelayServer {
         let mappings: RouteTable = Arc::new(Mutex::new(HashMap::new()));
         let epoch0 = Instant::now();
 
-        // Optional QUIC data-plane listener. Each accepted connection gets a
-        // conn id + an outbound pump; inbound frames ride the SAME route()
-        // as UDP datagrams (length-prefix stripped first).
+        // Optional QUIC data-plane listener. QUIC frames use the same
+        // QuicTransport framing as QuicRelayClient; the UDP and QUIC paths
+        // share the same route table, including mixed-transport pairs.
         let quic_addr = if let Some(qb) = quic_bind {
             let identity = cairn_quic::ServerIdentity::generate("cairn-relay")
                 .map_err(|e| std::io::Error::other(e.to_string()))?;
             tracing::info!(fingerprint = %identity.fingerprint(), "relay QUIC identity");
             let ep = cairn_quic::QuicEndpoint::server(qb, &identity)
                 .map_err(|e| std::io::Error::other(e.to_string()))?;
-            let qa = ep
-                .inner()
-                .local_addr()
-                .map_err(|e| std::io::Error::other(e.to_string()))?;
+            let qa = ep.inner().local_addr()?;
             let maps_q = Arc::clone(&mappings);
             let stats_q = Arc::clone(&stats);
             let sock_q = Arc::clone(&sock);
             tokio::spawn(async move {
-                let ep = ep; // endpoint must outlive accepted conns
+                let ep = ep;
                 let conn_ids = Arc::new(std::sync::atomic::AtomicU64::new(1));
+                let mut connections = tokio::task::JoinSet::new();
                 loop {
-                    let conn = match ep.inner().accept().await {
-                        Some(incoming) => match incoming.await {
-                            Ok(c) => c,
-                            Err(_) => continue,
-                        },
-                        None => break,
-                    };
-                    let conn_id = conn_ids.fetch_add(1, Ordering::Relaxed);
-                    let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
-                    let maps_c = Arc::clone(&maps_q);
-                    let stats_c = Arc::clone(&stats_q);
-                    let sock_c = Arc::clone(&sock_q);
-                    // Outbound pump: routed datagrams → fresh uni streams.
-                    let writer = conn.clone();
-                    tokio::spawn(async move {
-                        while let Some(bytes) = rx.recv().await {
-                            let mut s = match writer.open_uni().await {
-                                Ok(s) => s,
-                                Err(_) => break,
+                    tokio::select! {
+                        incoming = ep.inner().accept() => {
+                            let Some(incoming) = incoming else { break };
+                            let conn = match incoming.await {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    tracing::debug!("relay QUIC handshake rejected: {e}");
+                                    continue;
+                                }
                             };
-                            if s.write_all(&(bytes.len() as u32).to_be_bytes())
-                                .await
-                                .is_err()
-                            {
-                                break;
-                            }
-                            if s.write_all(&bytes).await.is_err() {
-                                break;
-                            }
-                            let _ = s.finish();
+                            let conn_id = conn_ids.fetch_add(1, Ordering::Relaxed);
+                            let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
+                            let maps_c = Arc::clone(&maps_q);
+                            let stats_c = Arc::clone(&stats_q);
+                            let sock_c = Arc::clone(&sock_q);
+                            connections.spawn(async move {
+                                let writer = cairn_quic::QuicTransport::from_accepted(conn.clone());
+                                let reader = cairn_quic::QuicTransport::from_accepted(conn);
+                                let outbound = async move {
+                                    while let Some(bytes) = rx.recv().await {
+                                        if writer.send_frame("r", &bytes).await.is_err() {
+                                            break;
+                                        }
+                                    }
+                                };
+                                let inbound = async move {
+                                    loop {
+                                        let frame = match reader.recv_frame().await {
+                                            Ok(frame) if frame.id == "r" => frame,
+                                            Ok(_) => {
+                                                tracing::debug!("relay QUIC peer sent unexpected frame id");
+                                                break;
+                                            }
+                                            Err(_) => break,
+                                        };
+                                        if frame.data.is_empty() || frame.data.len() > MAX_DATAGRAM {
+                                            tracing::debug!(size = frame.data.len(), "relay QUIC frame exceeds datagram limit");
+                                            break;
+                                        }
+                                        let bytes = frame.data.as_ref();
+                                        let from = RouteFrom::Quic { conn_id, tx: tx.clone() };
+                                        match route(&maps_c, &stats_c, bytes, from, epoch0) {
+                                            Some(Target::Udp(target)) => {
+                                                let _ = sock_c.send_to(bytes, target).await;
+                                            }
+                                            Some(Target::Quic(peer_tx)) => {
+                                                let _ = peer_tx.send(bytes.to_vec());
+                                            }
+                                            None => {}
+                                        }
+                                    }
+                                };
+                                tokio::select! {
+                                    _ = outbound => {},
+                                    _ = inbound => {},
+                                }
+                            });
                         }
-                    });
-                    // Inbound pump: frames → shared route() → peer sender.
-                    tokio::spawn(async move {
-                        loop {
-                            let mut recv = match conn.accept_uni().await {
-                                Ok(r) => r,
-                                Err(_) => break,
-                            };
-                            let mut len = [0u8; 4];
-                            if recv.read_exact(&mut len).await.is_err() {
-                                break;
-                            }
-                            let n = u32::from_be_bytes(len) as usize;
-                            if n == 0 || n > MAX_DATAGRAM {
-                                break;
-                            }
-                            let mut buf = vec![0u8; n];
-                            if recv.read_exact(&mut buf).await.is_err() {
-                                break;
-                            }
-                            let from = RouteFrom::Quic {
-                                conn_id,
-                                tx: tx.clone(),
-                            };
-                            match route(&maps_c, &stats_c, &buf, from, epoch0) {
-                                Some(Target::Udp(target)) => {
-                                    // Cross-transport: QUIC arrival, UDP peer.
-                                    // Sent from the relay's own UDP socket, so
-                                    // the peer still sees the relay's stamp.
-                                    let _ = sock_c.send_to(&buf, target).await;
-                                }
-                                Some(Target::Quic(peer_tx)) => {
-                                    let _ = peer_tx.send(buf);
-                                }
-                                None => {}
+                        joined = connections.join_next(), if !connections.is_empty() => {
+                            if let Some(Err(e)) = joined {
+                                tracing::debug!("relay QUIC connection task ended: {e}");
                             }
                         }
-                    });
+                    }
                 }
+                connections.abort_all();
+                while connections.join_next().await.is_some() {}
             });
             Some(qa)
         } else {
