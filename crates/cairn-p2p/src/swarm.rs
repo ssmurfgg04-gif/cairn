@@ -2200,5 +2200,5 @@ mod quic_relay_lifecycle_tests {
 
         relay.task.abort();
         signal.task.abort();
-     }
+    }
 }
