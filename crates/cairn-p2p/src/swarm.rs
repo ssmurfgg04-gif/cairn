@@ -422,8 +422,7 @@ impl Swarm {
                 }
 
                 let (tx, mut rx) = mpsc::unbounded_channel::<Vec<u8>>();
-                *inner_q.quic_relay.lock().expect("quic link lock") =
-                    Some(QuicRelayLink { tx });
+                *inner_q.quic_relay.lock().expect("quic link lock") = Some(QuicRelayLink { tx });
                 tracing::info!(%quic_addr, "swarm: QUIC relay uplink up");
 
                 // Inbound pump: relayed frames enter dispatch exactly as if
@@ -2037,10 +2036,8 @@ mod quic_relay_lifecycle_tests {
         )
         .await
         .expect("signal server");
-        let relay = cairn_quic::relay::QuicRelayServer::spawn(
-            "127.0.0.1:0".parse().unwrap(),
-        )
-        .expect("QUIC relay");
+        let relay = cairn_quic::relay::QuicRelayServer::spawn("127.0.0.1:0".parse().unwrap())
+            .expect("QUIC relay");
 
         let swarm = Swarm::spawn(
             SwarmConfig {
@@ -2100,10 +2097,8 @@ mod quic_relay_lifecycle_tests {
         )
         .await
         .expect("signal server");
-        let relay = cairn_quic::relay::QuicRelayServer::spawn(
-            "127.0.0.1:0".parse().unwrap(),
-        )
-        .expect("QUIC relay");
+        let relay = cairn_quic::relay::QuicRelayServer::spawn("127.0.0.1:0".parse().unwrap())
+            .expect("QUIC relay");
         let relay_addr = relay.local_addr;
 
         let swarm = Swarm::spawn(
@@ -2166,4 +2161,3 @@ mod quic_relay_lifecycle_tests {
         signal.task.abort();
     }
 }
-
