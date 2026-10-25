@@ -310,13 +310,21 @@ async fn ensure_swarm(
                 .meta_get("flag:fec_parity")
                 .map(|v| v == "true")
                 .unwrap_or(false),
-            // Round 28: QUIC relay uplink, same per-device opt-in pattern
-            // as live_presence (dashboard flag persists flag:quic_relay).
-            // Receiver handles both transports; this gates the ~12.5%
-            // sender overhead. Read per join like presence.
-            quic_relay: store
-                .meta_get("flag:quic_relay")
-                .and_then(|v| v.parse::<std::net::SocketAddr>().ok()),
+            // QUIC relay is a per-device boolean opt-in; its endpoint is a
+            // separate durable setting. Never parse "true" as SocketAddr.
+            quic_relay: if store.meta_get("flag:quic_relay").as_deref() == Some("true") {
+                store.meta_get("swarm/quic-relay").and_then(|raw| {
+                    match raw.parse::<std::net::SocketAddr>() {
+                        Ok(addr) if !addr.ip().is_unspecified() && addr.port() != 0 => Some(addr),
+                        _ => {
+                            tracing::warn!(endpoint = %raw, "QUIC relay endpoint invalid; using UDP fallback");
+                            None
+                        }
+                    }
+                })
+            } else {
+                None
+            },
         },
         serving,
     )
