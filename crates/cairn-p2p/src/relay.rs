@@ -261,8 +261,8 @@ impl RelayServer {
                                     }
                                 };
                                 tokio::select! {
-                                    _ = outbound => {},
-                                    _ = inbound => {},
+                                    () = outbound => {},
+                                    () = inbound => {},
                                 }
                             });
                         }
@@ -639,6 +639,15 @@ mod tests {
         udp.send_to(&udp_frame, relay.local_addr)
             .await
             .expect("UDP learn");
+        // Wait until the UDP loop has definitely learned its side before
+        // racing the independent QUIC accept/receive loop.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while relay.stats.dropped_learning.load(Ordering::Relaxed) == 0 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("relay did not learn UDP endpoint");
         client.send(&quic_frame).await.expect("QUIC reply");
         let mut buf = [0u8; 256];
         let (n, _) = tokio::time::timeout(Duration::from_secs(10), udp.recv_from(&mut buf))
