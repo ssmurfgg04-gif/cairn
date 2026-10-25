@@ -458,8 +458,8 @@ impl Swarm {
                 // orphan pump tasks can outlive this swarm.
                 tokio::select! {
                     _ = stop_rx.changed() => {},
-                    _ = inbound => {},
-                    _ = outbound => {},
+                    () = inbound => {},
+                    () = outbound => {},
                 }
 
                 *inner_q.quic_relay.lock().expect("quic link lock") = None;
@@ -2027,7 +2027,6 @@ mod presence_tests {
 mod quic_relay_lifecycle_tests {
     use super::*;
 
-
     #[tokio::test]
     async fn immediate_shutdown_is_seen_by_late_quic_task() {
         let signal = crate::signal::SignalServer::spawn(
@@ -2060,7 +2059,10 @@ mod quic_relay_lifecycle_tests {
         // This intentionally races task startup: shutdown must remain visible
         // even if the QUIC task has not subscribed to the watch channel yet.
         swarm.shutdown();
-        assert!(*swarm.inner.done.borrow(), "shutdown state must be persisted");
+        assert!(
+            *swarm.inner.done.borrow(),
+            "shutdown state must be persisted"
+        );
 
         tokio::time::sleep(Duration::from_millis(250)).await;
         assert!(
