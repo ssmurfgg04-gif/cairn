@@ -621,8 +621,7 @@ impl CtlDiagnostics for CtlDiagSvc {
                         .map_err(|e| Status::internal(format!("open home store: {e}")))?;
                     if store
                         .meta_get("swarm/signal")
-                        .filter(|s| !s.is_empty())
-                        .is_none()
+                        .is_none_or(|s| s.is_empty())
                     {
                         return Err(Status::failed_precondition(
                             "QUIC relay requires a configured swarm signal server",
