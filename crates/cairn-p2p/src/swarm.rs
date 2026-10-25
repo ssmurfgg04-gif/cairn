@@ -734,7 +734,8 @@ impl Swarm {
 
     /// Stop all loops (idempotent).
     pub fn shutdown(&self) {
-        let _ = self.inner.done.send(true);
+        // Persist the shutdown signal even if spawned tasks have not subscribed yet.
+        let _ = self.inner.done.send_replace(true);
         if let Some(t) = self.task.lock().expect("swarm task slot").take() {
             t.abort();
         }
@@ -2026,6 +2027,58 @@ mod presence_tests {
 #[cfg(test)]
 mod quic_relay_lifecycle_tests {
     use super::*;
+
+
+    #[tokio::test]
+    async fn immediate_shutdown_is_seen_by_late_quic_task() {
+        let signal = crate::signal::SignalServer::spawn(
+            "127.0.0.1:0".parse().unwrap(),
+            b"quic-immediate-shutdown-test-key",
+        )
+        .await
+        .expect("signal server");
+        let relay = cairn_quic::relay::QuicRelayServer::spawn(
+            "127.0.0.1:0".parse().unwrap(),
+        )
+        .expect("QUIC relay");
+
+        let swarm = Swarm::spawn(
+            SwarmConfig {
+                bind: "127.0.0.1:0".parse().unwrap(),
+                signal: signal.local_addr,
+                cluster_key: b"quic-immediate-shutdown-test-key".to_vec(),
+                project: "quic-immediate-shutdown-test".to_string(),
+                node_id: Some("quic-immediate-shutdown-node".to_string()),
+                stun: None,
+                force_relay: false,
+                fec_parity: false,
+                quic_relay: Some(relay.local_addr),
+                presence: false,
+            },
+            Arc::new(EmptyBlocks),
+        )
+        .await
+        .expect("swarm");
+
+        // This intentionally races task startup: shutdown must remain visible
+        // even if the QUIC task has not subscribed to the watch channel yet.
+        swarm.shutdown();
+        assert!(*swarm.inner.done.borrow(), "shutdown state must be persisted");
+
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        assert!(
+            swarm
+                .inner
+                .quic_relay
+                .lock()
+                .expect("quic link lock")
+                .is_none(),
+            "a late QUIC task must not connect after shutdown"
+        );
+
+        relay.task.abort();
+        signal.task.abort();
+    }
 
     struct EmptyBlocks;
 
