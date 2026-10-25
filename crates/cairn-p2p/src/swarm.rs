@@ -2092,7 +2092,7 @@ mod quic_relay_lifecycle_tests {
     }
 
     #[tokio::test]
-    async fn quic_relay_background_tasks_stop_with_swarm() {
+    async fn quic_relay_background_tasks_stop_and_reconnect_after_restart() {
         let signal = crate::signal::SignalServer::spawn(
             "127.0.0.1:0".parse().unwrap(),
             b"quic-lifecycle-test-key",
@@ -2103,63 +2103,101 @@ mod quic_relay_lifecycle_tests {
             .expect("QUIC relay");
         let relay_addr = relay.local_addr;
 
-        let swarm = Swarm::spawn(
-            SwarmConfig {
-                bind: "127.0.0.1:0".parse().unwrap(),
-                signal: signal.local_addr,
-                cluster_key: b"quic-lifecycle-test-key".to_vec(),
-                project: "quic-lifecycle-test".to_string(),
-                node_id: Some("quic-lifecycle-node".to_string()),
-                stun: None,
-                force_relay: false,
-                fec_parity: false,
-                quic_relay: Some(relay_addr),
-                presence: false,
-            },
-            Arc::new(EmptyBlocks),
-        )
-        .await
-        .expect("swarm");
+        let config = || SwarmConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            signal: signal.local_addr,
+            cluster_key: b"quic-lifecycle-test-key".to_vec(),
+            project: "quic-lifecycle-test".to_string(),
+            node_id: Some("quic-lifecycle-node".to_string()),
+            stun: None,
+            force_relay: false,
+            fec_parity: false,
+            quic_relay: Some(relay_addr),
+            presence: false,
+        };
+
+        let swarm = Swarm::spawn(config(), Arc::new(EmptyBlocks))
+            .await
+            .expect("initial swarm");
 
         // Wait until the QUIC connection is actually installed, rather than
         // passing because shutdown happened before the dial task connected.
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
-                let connected = swarm
+                if swarm
                     .inner
                     .quic_relay
                     .lock()
                     .expect("quic link lock")
-                    .is_some();
-                if connected {
+                    .is_some()
+                {
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
         .await
-        .expect("QUIC relay connection did not come up");
+        .expect("initial QUIC relay connection did not come up");
 
         swarm.shutdown();
 
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
-                let connected = swarm
+                if swarm
                     .inner
                     .quic_relay
                     .lock()
                     .expect("quic link lock")
-                    .is_some();
-                if !connected {
+                    .is_none()
+                {
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })
         .await
-        .expect("QUIC relay link survived swarm shutdown");
+        .expect("old QUIC relay link survived swarm shutdown");
+
+        // A replacement swarm for the same device must be able to establish
+        // its own QUIC connection without the old reader/writer staying alive.
+        let replacement = Swarm::spawn(config(), Arc::new(EmptyBlocks))
+            .await
+            .expect("replacement swarm");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if replacement
+                    .inner
+                    .quic_relay
+                    .lock()
+                    .expect("replacement quic link lock")
+                    .is_some()
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("replacement QUIC relay connection did not come up");
+
+        replacement.shutdown();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if replacement
+                    .inner
+                    .quic_relay
+                    .lock()
+                    .expect("replacement quic link lock")
+                    .is_none()
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("replacement QUIC relay link survived shutdown");
 
         relay.task.abort();
         signal.task.abort();
-    }
-}
+    }}
