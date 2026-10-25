@@ -1076,16 +1076,18 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
             join_code,
             dev_key,
             no_mdns,
-        } => run_signal_server(
-            &bind,
-            &relay_bind,
-            quic_relay_bind.as_deref(),
-            quic_relay_advertise.as_deref(),
-            join_code,
-            dev_key,
-            no_mdns,
-        )
-        .await,
+        } => {
+            run_signal_server(
+                &bind,
+                &relay_bind,
+                quic_relay_bind.as_deref(),
+                quic_relay_advertise.as_deref(),
+                join_code,
+                dev_key,
+                no_mdns,
+            )
+            .await
+        }
         Cmd::Handoff { cmd } => run_handoff(cmd),
         Cmd::Member { cmd } => run_member(cmd),
         Cmd::Proxy { cmd } => run_proxy(cmd),
@@ -1585,15 +1587,20 @@ async fn run_signal_server(
         .parse()
         .map_err(|e| anyhow::anyhow!("bad --relay-bind {relay_bind}: {e}"))?;
     let quic_bind_addr = quic_relay_bind
-        .map(|raw| raw.parse::<std::net::SocketAddr>()
-            .map_err(|e| anyhow::anyhow!("bad --quic-relay-bind {raw}: {e}")))
+        .map(|raw| {
+            raw.parse::<std::net::SocketAddr>()
+                .map_err(|e| anyhow::anyhow!("bad --quic-relay-bind {raw}: {e}"))
+        })
         .transpose()?;
     let quic_advertise_addr = quic_relay_advertise
         .map(|raw| {
-            let addr = raw.parse::<std::net::SocketAddr>()
-                .map_err(|e| anyhow::anyhow!("bad --quic-relay-advertise {raw}: {e}; use a numeric IP:port"))?;
+            let addr = raw.parse::<std::net::SocketAddr>().map_err(|e| {
+                anyhow::anyhow!("bad --quic-relay-advertise {raw}: {e}; use a numeric IP:port")
+            })?;
             if addr.ip().is_unspecified() || addr.port() == 0 {
-                anyhow::bail!("--quic-relay-advertise must be a reachable non-wildcard IP and non-zero port");
+                anyhow::bail!(
+                    "--quic-relay-advertise must be a reachable non-wildcard IP and non-zero port"
+                );
             }
             Ok::<_, anyhow::Error>(addr)
         })
@@ -1604,9 +1611,15 @@ async fn run_signal_server(
 
     let signal = cairn_p2p::signal::SignalServer::spawn(bind_addr, &key).await?;
     let relay = match quic_bind_addr {
-        Some(quic_bind) => cairn_p2p::relay::RelayServer::spawn_with_quic(
-            relay_addr, quic_bind, signal.local_addr, &key
-        ).await?,
+        Some(quic_bind) => {
+            cairn_p2p::relay::RelayServer::spawn_with_quic(
+                relay_addr,
+                quic_bind,
+                signal.local_addr,
+                &key,
+            )
+            .await?
+        }
         None => cairn_p2p::relay::RelayServer::spawn(relay_addr, signal.local_addr, &key).await?,
     };
     // LAN beacon (ADR-0019 §4): advertise a join-code FINGERPRINT so LAN
@@ -1650,7 +1663,9 @@ async fn run_signal_server(
         if let Some(public_addr) = quic_advertise_addr {
             println!("QUIC relay client address: {public_addr}");
         } else {
-            println!("QUIC relay client address: not declared; supply its public numeric IP to clients");
+            println!(
+                "QUIC relay client address: not declared; supply its public numeric IP to clients"
+            );
         }
     }
     let host = match signal.local_addr.ip() {
