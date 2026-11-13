@@ -95,6 +95,7 @@ pub async fn serve(addr: String, state: Arc<DaemonState>) -> anyhow::Result<()> 
         .route("/api/v1/team/regenerate", post(team_regenerate))
         .route("/api/v1/team/join", post(team_join))
         .route("/api/v1/team/code/revoke", post(team_code_revoke))
+        .route("/api/v1/team/default-role", post(team_default_role))
         .route("/api/v1/review/publish", post(review_publish))
         .route("/api/v1/review/link", post(review_link))
         .route("/api/v1/review/revoke", post(review_revoke))
@@ -586,8 +587,32 @@ async fn state_records(
     Json(service::views::state_records(&state, &project, &family))
 }
 
-async fn team(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
-    Json(service::views::team(&state).await)
+async fn team(
+    State(state): State<Arc<DaemonState>>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Json<serde_json::Value> {
+    let project = q.get("project").cloned().unwrap_or_default();
+    Json(service::views::team(&state, &project).await)
+}
+
+/// POST /api/v1/team/default-role {project_id, role} — the role devices NOT
+/// on the roster get (review #5). The service action enforces
+/// ManageMembers and refuses Owner/LeadEditor as a default.
+async fn team_default_role(
+    State(state): State<Arc<DaemonState>>,
+    body: Option<Json<serde_json::Value>>,
+) -> Json<serde_json::Value> {
+    let Some(Json(v)) = body else {
+        return Json(json!({"ok": false, "error": "body required: {project_id, role}"}));
+    };
+    Json(
+        service::actions::team_default_role(
+            &state,
+            v["project_id"].as_str().unwrap_or_default(),
+            v["role"].as_str().unwrap_or_default(),
+        )
+        .await,
+    )
 }
 
 async fn search(
@@ -834,7 +859,8 @@ async fn team_regenerate(
     State(state): State<Arc<DaemonState>>,
     body: Option<Json<serde_json::Value>>,
 ) -> Json<serde_json::Value> {
-    // optional {project_id} — empty falls back to the first attached project
+    // {project_id} — the project the People page shows; empty is accepted
+    // only when exactly one project is attached (ProjectManager::pick)
     let project = body
         .and_then(|Json(v)| v["project_id"].as_str().map(str::to_string))
         .unwrap_or_default();
@@ -860,7 +886,14 @@ async fn team_code_revoke(
     let Some(Json(v)) = body else {
         return Json(json!({"ok": false, "error": "body required: {code}"}));
     };
-    Json(service::actions::team_revoke_code(&state, v["code"].as_str().unwrap_or_default()).await)
+    Json(
+        service::actions::team_revoke_code(
+            &state,
+            v["project_id"].as_str().unwrap_or_default(),
+            v["code"].as_str().unwrap_or_default(),
+        )
+        .await,
+    )
 }
 
 async fn review_publish(

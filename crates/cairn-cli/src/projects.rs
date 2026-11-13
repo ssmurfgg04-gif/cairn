@@ -460,6 +460,51 @@ impl ProjectManager {
             .collect()
     }
 
+    /// Resolve which project a dashboard call acts on (review #7-#12).
+    /// One rule for every surface, replacing three different fallbacks
+    /// (`first()` by project id, `list().next()` by namespace, and the
+    /// state-records namespace pick) that could disagree on a
+    /// multi-project machine — the People page could show project A
+    /// while "new invite" checked permissions against project B.
+    ///
+    /// * a named project → that project, or an error if it is not attached;
+    /// * unnamed + exactly one project → it (single-project machines never
+    ///   need to pass ids);
+    /// * unnamed + several → READS get the deterministic default (lowest
+    ///   project id, same as [`ProjectManager::first`]); MUTATIONS are
+    ///   refused — a state change must never land on a guessed project.
+    pub async fn pick(
+        &self,
+        requested: &str,
+        mutation: bool,
+    ) -> Result<(String, PathBuf, u64, u64), String> {
+        let ids: Vec<String> = self
+            .runtimes
+            .read()
+            .await
+            .values()
+            .map(|rt| rt.project_id.clone())
+            .collect();
+        let pid = pick_project_id(&ids, requested, mutation)?;
+        let map = self.runtimes.read().await;
+        // several roots can share a project id: take the lowest namespace,
+        // so the same call always resolves to the same root
+        let mut best: Option<&Arc<ProjectRuntime>> = None;
+        for rt in map.values().filter(|rt| rt.project_id == pid) {
+            if best.is_none_or(|b| rt.local_ns < b.local_ns) {
+                best = Some(rt);
+            }
+        }
+        let rt = best.ok_or_else(|| format!("project '{pid}' is not attached"))?;
+        let v = rt.view.read().await;
+        Ok((
+            rt.project_id.clone(),
+            rt.workspace.clone(),
+            v.files_synced,
+            v.pending_outbox,
+        ))
+    }
+
     /// The lexicographically-first project's (pid, root, files_synced,
     /// pending) — Team/Review cards read one project's roster per call
     /// site; multi-project machines get one card per project.
@@ -1609,6 +1654,25 @@ mod manager_tests {
     /// The manager is the lifecycle owner (ADR-0030); an empty daemon has
     /// no runtimes, no first project, no roots — the reads must be honest
     /// empties, and detach of an unknown project must not panic.
+    #[test]
+    fn pick_project_id_never_guesses_for_mutations() {
+        let ids = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // nothing attached
+        assert!(pick_project_id(&[], "", false).is_err());
+        assert!(pick_project_id(&[], "", true).is_err());
+        // one project (two roots of it): unnamed works for reads AND writes
+        let one = ids(&["brand", "brand"]);
+        assert_eq!(pick_project_id(&one, "", true).unwrap(), "brand");
+        // several: reads get the deterministic lowest id, writes refuse
+        let two = ids(&["zeta", "alpha"]);
+        assert_eq!(pick_project_id(&two, "", false).unwrap(), "alpha");
+        assert!(pick_project_id(&two, "", true).is_err());
+        // a named project always wins; an unknown name is an error
+        assert_eq!(pick_project_id(&two, "zeta", true).unwrap(), "zeta");
+        assert!(pick_project_id(&two, "nope", false).is_err());
+        assert_eq!(pick_project_id(&two, "  zeta ", true).unwrap(), "zeta");
+    }
+
     #[tokio::test]
     async fn empty_manager_reads_are_honest() {
         let mgr = ProjectManager::new();
@@ -1679,5 +1743,30 @@ mod resume_tests {
         // relative single-segment: parent is "" which never exists, and
         // the segment itself does not exist in cwd -> gone
         assert!(!volume_alive(Path::new("definitely-not-here-xyz")));
+    }
+}
+/// The pure decision behind [`ProjectManager::pick`] (unit-tested without
+/// live runtimes). `ids` may repeat (several roots per project).
+pub(crate) fn pick_project_id(
+    ids: &[String],
+    requested: &str,
+    mutation: bool,
+) -> Result<String, String> {
+    let requested = requested.trim();
+    if !requested.is_empty() {
+        return if ids.iter().any(|i| i == requested) {
+            Ok(requested.to_string())
+        } else {
+            Err(format!("project '{requested}' is not attached"))
+        };
+    }
+    let mut distinct: Vec<&String> = ids.iter().collect();
+    distinct.sort();
+    distinct.dedup();
+    match distinct.as_slice() {
+        [] => Err("no attached project".into()),
+        [only] => Ok((*only).clone()),
+        [first, ..] if !mutation => Ok((*first).clone()),
+        _ => Err("several projects are attached — choose which one this applies to".into()),
     }
 }

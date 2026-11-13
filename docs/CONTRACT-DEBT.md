@@ -237,14 +237,52 @@ real escape: a dangling leaf over an outside-pointing intermediate
 symlink used to be accepted; safe_join now canonicalizes the deepest
 existing ancestor before falling back.
 
+Closed in the 2026-11-14 round (branch `fix/review-open-items`):
+
+- **#5 (P0) — unknown-device default is now explicit and owner-controlled.**
+  `MemberFile.default_role` (absent = the historical `Editor`), set with
+  `cairn member default --role reviewer|editor|…` or the People page's
+  "New computers that join" switch (`POST /api/v1/team/default-role`,
+  ManageMembers-guarded). `reviewer` is the fail-closed choice: a new
+  machine can read and comment, not write, until an owner adds it. Owner
+  and Lead can NEVER be the default — refused at the setter, ignored if a
+  hand-edited file names them, and refused by the materializer if a synced
+  record claims them. The policy syncs through the existing `member`
+  family under the reserved key `*` (no new family, no protocol change);
+  older peers that materialize `*` as a device are folded back on read.
+  The shipped default is unchanged (no surprise lockouts on upgrade).
+- **#7/#10/#12 (P0/P1) — one project-resolution rule.** `ProjectManager::
+  pick(project, mutation)` replaces three disagreeing fallbacks
+  (`first()` by project id, `list().next()` by namespace, the records
+  target lookup). Named project → it or an error; one attached → it;
+  several + unnamed → reads get the lowest id, MUTATIONS are refused.
+  Real bugs this closed: the People page could show project A while "new
+  invite" checked permissions against project B; a token-only review
+  revoke could revoke in one project and publish the cross-machine
+  tombstone into another (revoke now resolves the project that owns the
+  token). `/api/v1/team?project=`, invite, code revoke, review link and
+  proxy status all go through `pick`; the dashboard passes the project
+  picked in Files.
+- **Supply chain:** 10 RustSec advisories cleared by semver bumps (zstd /
+  zstd-safe / zstd-sys, rustls-webpki, webpki-roots / -root-certs, orion,
+  rustix, tokio, quinn-udp) — the nightly `security` job had been red
+  since 2026-11-09. RUSTSEC-2026-0459 (bundled SQLite < 3.54) is a dated,
+  reasoned exception in `.cargo/audit.toml`: blocked on sqlx accepting
+  libsqlite3-sys 0.39.
+- **`scripts/dashboard-smoke.sh` presents the dashboard token** — since
+  the P0 token hardening every `/api` call in it was a 403, so the beta
+  smoke had been failing for the fixture's sake, not the product's. It
+  now also covers ?project=, the default-role policy and its escalation
+  refusal (39 checks).
+
 Tracked next (not started, ordered by the review's own P0-first logic):
 
-- **#4/#5 (P0):** join codes → single-use, expiring, revocable (today:
-  TTL only, no single-use burn, no revocation list); unknown-device
-  fail-open `Editor` → make the default explicit and configurable
-  (fail-closed pending state) — more urgent now that rosters sync.
-- **#7–#12 (P0/P1):** eliminate `first()`-style fallbacks for mutations;
-  project context + project-scoped Team/review/markers/link surfaces.
+- **#4 (P0):** server-authoritative join codes (local single-use burn /
+  revocation / lockout landed in round 31; the server-side hash +
+  atomic consume protocol is still open).
+- **#8/#9/#11 (P1):** a visible global project switcher in the header
+  (today the Files picker is the context) and project-explicit marker
+  export.
 - **#41–#44 (P1):** duplicate-collision guard, idempotent mutations,
   disable-during-mutation buttons, restore confirmation hardening.
 - **#45–#51 (P1):** move ffmpeg/ffprobe out of the async runtime;

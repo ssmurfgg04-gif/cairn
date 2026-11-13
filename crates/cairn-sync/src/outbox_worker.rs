@@ -233,6 +233,21 @@ mod tests {
     struct MockUploader {
         upload_count: Arc<tokio::sync::Mutex<usize>>,
         should_fail: bool,
+        /// uploads in flight right now / the most ever seen at once —
+        /// the direct evidence of parallelism (no wall-clock assertion)
+        in_flight: Arc<std::sync::atomic::AtomicUsize>,
+        peak: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl MockUploader {
+        fn new(upload_count: Arc<tokio::sync::Mutex<usize>>, should_fail: bool) -> Self {
+            MockUploader {
+                upload_count,
+                should_fail,
+                in_flight: Arc::default(),
+                peak: Arc::default(),
+            }
+        }
     }
 
     #[async_trait::async_trait]
@@ -244,12 +259,18 @@ mod tests {
             _device: &str,
             _lease_token: u64,
         ) -> Result<(), CairnError> {
-            let mut count = self.upload_count.lock().await;
-            *count += 1;
+            use std::sync::atomic::Ordering::SeqCst;
+            // count, then RELEASE the lock before the simulated network
+            // wait: holding it across the sleep serialized every upload, so
+            // the parallel test could never observe parallelism
+            *self.upload_count.lock().await += 1;
             if self.should_fail {
                 return Err(CairnError::new(ErrorKind::Unavailable, "mock failure"));
             }
+            let now = self.in_flight.fetch_add(1, SeqCst) + 1;
+            self.peak.fetch_max(now, SeqCst);
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            self.in_flight.fetch_sub(1, SeqCst);
             Ok(())
         }
     }
@@ -282,19 +303,25 @@ mod tests {
                 })
                 .unwrap();
         }
-        let uploader = Arc::new(MockUploader {
-            upload_count: upload_count.clone(),
-            should_fail: false,
-        });
+        let uploader = Arc::new(MockUploader::new(upload_count.clone(), false));
+        let peak = uploader.peak.clone();
         let worker = OutboxWorker::new(outbox.clone(), uploader, 4);
-        let start = std::time::Instant::now();
         let n = worker.run("test-project", "t1", "dev-1").await.unwrap();
-        let elapsed = start.elapsed();
         assert_eq!(n, 10);
         assert_eq!(*upload_count.lock().await, 10);
-        // 10 x 10ms serialized = 100ms floor; 4 workers should beat it well.
-        // 500ms gives headroom for debug builds on loaded boxes.
-        assert!(elapsed < std::time::Duration::from_millis(500));
+        // Parallelism is asserted DIRECTLY: uploads overlapped, and never
+        // beyond the configured width. The old `elapsed < 500ms` check was
+        // a proxy that failed on loaded CI runners (1.4s linux, 2.3s
+        // windows, beta 2026-11-09) while the worker was correct.
+        let peak = peak.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(
+            peak > 1,
+            "uploads never overlapped (peak in-flight = {peak})"
+        );
+        assert!(
+            peak <= 4,
+            "more uploads in flight than workers (peak = {peak})"
+        );
         assert_eq!(outbox.pending_count("test-project"), 0);
         drop(dir);
     }
@@ -315,10 +342,7 @@ mod tests {
                 })
                 .unwrap();
         }
-        let uploader = Arc::new(MockUploader {
-            upload_count: upload_count.clone(),
-            should_fail: true,
-        });
+        let uploader = Arc::new(MockUploader::new(upload_count.clone(), true));
         let worker = OutboxWorker::new(outbox.clone(), uploader, 2);
         worker.run("test-project", "t1", "dev-1").await.unwrap();
         assert_eq!(*upload_count.lock().await, 5);
@@ -341,10 +365,10 @@ mod tests {
                 })
                 .unwrap();
         }
-        let uploader = Arc::new(MockUploader {
-            upload_count: Arc::new(tokio::sync::Mutex::new(0)),
-            should_fail: false,
-        });
+        let uploader = Arc::new(MockUploader::new(
+            Arc::new(tokio::sync::Mutex::new(0)),
+            false,
+        ));
         let worker = OutboxWorker::new(outbox, uploader, 2);
         assert_eq!(worker.available_permits(), 2);
         assert_eq!(worker.max_concurrent(), 2);

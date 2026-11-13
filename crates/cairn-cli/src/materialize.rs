@@ -143,6 +143,9 @@ fn save_members(root: &Path, f: &MemberFile) -> Result<(), String> {
 impl RootMaterializer {
     fn apply_member(&self, rec: &AppliedRecord) -> Result<(), String> {
         let mut file = read_members(&self.root)?;
+        if rec.key == cairn_core::rbac::DEFAULT_ROLE_KEY {
+            return self.apply_default_role(rec, file);
+        }
         if rec.tombstone {
             file.remove(&rec.key);
         } else {
@@ -161,6 +164,27 @@ impl RootMaterializer {
             }
             file.members.insert(rec.key.clone(), m);
         }
+        save_members(&self.root, &file)
+    }
+
+    /// The reserved `*` member record carries the default for unlisted
+    /// devices (review #5). Same LWW echo guard as members; a record naming
+    /// a role that may not be a default (Owner/LeadEditor) is REFUSED —
+    /// a synced record must never be able to promote every unknown device.
+    fn apply_default_role(&self, rec: &AppliedRecord, mut file: MemberFile) -> Result<(), String> {
+        if rec.tombstone {
+            file.default_role = None;
+            return save_members(&self.root, &file);
+        }
+        let m: cairn_core::rbac::Member = serde_json::from_slice(&rec.payload)
+            .map_err(|e| format!("default-role payload: {e}"))?;
+        if let Some(existing) = &file.default_role {
+            if rec.ts_ms < existing.set_at_ms {
+                tracing::debug!("default-role record older than the local file — echo skipped");
+                return Ok(());
+            }
+        }
+        file.set_default_role(m.role, &m.added_by, m.added_at_ms.max(rec.ts_ms))?;
         save_members(&self.root, &file)
     }
 
@@ -379,6 +403,48 @@ mod tests {
     }
 
     // ---------- member ----------
+
+    #[test]
+    fn default_role_record_sets_the_field_not_a_member() {
+        let (_d, root) = tmp();
+        let star = br#"{"device_id":"*","name":"default for unlisted devices","role":"reviewer","added_at_ms":100,"added_by":"dev-A"}"#;
+        m(&root).materialize("p1", &[rec("member", "*", star, 100, false)]);
+        let f = members_of(&root);
+        assert!(f.members.is_empty(), "the reserved key is not a device");
+        assert_eq!(f.role_of("dev-new"), cairn_core::rbac::Role::Reviewer);
+
+        // an older record never regresses a fresher local default
+        let older =
+            br#"{"device_id":"*","name":"","role":"editor","added_at_ms":50,"added_by":"dev-B"}"#;
+        m(&root).materialize("p1", &[rec("member", "*", older, 50, false)]);
+        assert_eq!(
+            members_of(&root).role_of("dev-new"),
+            cairn_core::rbac::Role::Reviewer
+        );
+
+        // tombstone restores the barnstorm default
+        m(&root).materialize("p1", &[rec("member", "*", b"", 200, true)]);
+        assert_eq!(
+            members_of(&root).role_of("dev-new"),
+            cairn_core::rbac::Role::Editor
+        );
+    }
+
+    #[test]
+    fn default_role_record_cannot_promote_unknown_devices() {
+        let (_d, root) = tmp();
+        let owner =
+            br#"{"device_id":"*","name":"","role":"owner","added_at_ms":100,"added_by":"evil"}"#;
+        m(&root).materialize("p1", &[rec("member", "*", owner, 100, false)]);
+        // refused: per-record failure is logged; the file never gains it
+        let path = members::members_path(&root);
+        if path.exists() {
+            assert_eq!(
+                members_of(&root).role_of("dev-new"),
+                cairn_core::rbac::Role::Editor
+            );
+        }
+    }
 
     #[test]
     fn member_record_upserts_and_tombstone_removes_in_members_json() {

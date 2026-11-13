@@ -488,6 +488,18 @@ pub mod member_cmd {
             #[arg(long)]
             as_device: Option<String>,
         },
+        /// Set the role for devices NOT on the roster (owner action).
+        /// `reviewer` = fail-closed: new machines can read + comment only
+        /// until added by name. `editor` = the open barnstorm default.
+        Default {
+            #[arg(long, default_value = ".")]
+            root: String,
+            /// editor | assistant | colorist | sound-designer | reviewer
+            #[arg(long)]
+            role: String,
+            #[arg(long)]
+            as_device: Option<String>,
+        },
         /// List members + the implicit default role
         List {
             #[arg(long, default_value = ".")]
@@ -2274,6 +2286,15 @@ fn run_member(cmd: member_cmd::MemberCmd) -> anyhow::Result<()> {
             as_device,
         } => {
             members::cmd_remove(Path::new(&root), &device, as_device.as_deref())?;
+        }
+        MemberCmd::Default {
+            root,
+            role,
+            as_device,
+        } => {
+            let role = cairn_core::rbac::Role::parse(&role)
+                .ok_or_else(|| anyhow::anyhow!("--role: unknown role '{role}'"))?;
+            members::cmd_default(Path::new(&root), role, as_device.as_deref())?;
         }
         MemberCmd::List { root } => members::cmd_list(Path::new(&root))?,
         MemberCmd::Check { root, device, perm } => {

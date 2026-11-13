@@ -553,16 +553,11 @@ pub async fn file_duplicate(state: &Arc<DaemonState>, project: &str, path: &str)
 /// burn/revocation/lockout state of the PREVIOUS code — a fresh invite
 /// starts clean, and whatever was wrong with the old one is moot.
 pub async fn team_regenerate(state: &Arc<DaemonState>, project: &str) -> Json {
-    let project = project.trim().to_string();
-    let project = if project.is_empty() {
-        // the dashboard's acting context: the first attached project (the
-        // same fallback the review/team views use)
-        match state.projects.list().await.into_iter().next() {
-            Some(rt) => rt.project_id.clone(),
-            None => return json!({"ok": false, "error": "no attached project"}),
-        }
-    } else {
-        project
+    // review #7: the guard runs against the project the People page shows
+    // (passed by the dashboard), or the only one — never a guess
+    let project = match state.projects.pick(project, true).await {
+        Ok((pid, _, _, _)) => pid,
+        Err(e) => return json!({"ok": false, "error": e}),
     };
     if let Err(s) = crate::daemon::rbac_guard(
         state,
@@ -742,19 +737,80 @@ fn revoke_join_code(store: &cairn_store::Store, code: &str) -> bool {
 /// The OWNER surface answers honestly ("unknown code") — that is a
 /// privileged, authenticated caller; the no-leak generic refusal stays on
 /// the GUEST join surface only.
-pub async fn team_revoke_code(state: &Arc<DaemonState>, code: &str) -> Json {
+/// POST /api/v1/team/default-role {project_id, role} — set the role every
+/// device NOT on the roster gets (review #5: the fail-open `Editor` default
+/// becomes an explicit, owner-controlled choice). `reviewer` is fail-closed
+/// (read + comment); `editor` restores the barnstorm default. Owner/Lead
+/// are refused by `MemberFile::set_default_role`. Syncs to every attached
+/// machine through the reserved `*` member record.
+/// POLICY BOUNDARY (ADR-0030): ManageMembers, like every roster change.
+pub async fn team_default_role(state: &Arc<DaemonState>, project: &str, role: &str) -> Json {
+    let Some(role) = cairn_core::rbac::Role::parse(role) else {
+        return json!({"ok": false, "error": "unknown role"});
+    };
+    let (pid, root) = match resolve_root(state, project).await {
+        Ok(v) => v,
+        Err(e) => return json!({"ok": false, "error": e}),
+    };
+    let actor = match crate::daemon::rbac_guard(
+        state,
+        &pid,
+        Some(root.as_path()),
+        cairn_core::rbac::Permission::ManageMembers,
+        "dash/team-default-role",
+    )
+    .await
+    {
+        Ok(_) => open_store(state.home.as_path())
+            .and_then(|s| crate::projects::load_identity(&s))
+            .map(|i| i.device_id)
+            .filter(|d| !d.is_empty())
+            .unwrap_or_else(|| "local".into()),
+        Err(s) => return json!({"ok": false, "error": s.message()}),
+    };
+    let mut file = match crate::members::load(&root) {
+        Ok(f) => f,
+        Err(e) => return json!({"ok": false, "error": e.to_string()}),
+    };
+    let now = WallClock.now_millis();
+    if let Err(e) = file.set_default_role(role, &actor, now) {
+        return json!({"ok": false, "error": e});
+    }
+    if let Err(e) = crate::members::save(&root, &file) {
+        return json!({"ok": false, "error": e.to_string()});
+    }
+    // ADR-0031: mirror into the synced member family (fire-and-forget; the
+    // file write above is the primary action and already enforces locally)
+    if let Some(target) = crate::state_records::resolve_target(state, &pid).await {
+        if let Some(store) = open_store(&state.home) {
+            let carrier = cairn_core::rbac::Member {
+                device_id: cairn_core::rbac::DEFAULT_ROLE_KEY.to_string(),
+                name: "default for unlisted devices".to_string(),
+                role,
+                added_at_ms: now,
+                added_by: actor,
+            };
+            crate::state_records::publish_member(&store, &target, &carrier);
+        }
+    }
+    json!({"ok": true, "unlisted_role": role.as_str()})
+}
+
+pub async fn team_revoke_code(state: &Arc<DaemonState>, project: &str, code: &str) -> Json {
     let code = code.trim().to_string();
     if code.is_empty() {
         return json!({"ok": false, "error": "code required"});
     }
-    // project context for the guard: the first attached project (the same
-    // acting-context fallback team_regenerate uses)
-    let Some(rt) = state.projects.list().await.into_iter().next() else {
-        return json!({"ok": false, "error": "no attached project"});
+    // project context for the guard: the project the People page shows (the
+    // invite code itself is machine-wide). Unnamed resolves the SAME way the
+    // team view does, so the guard and the page always agree.
+    let pid = match state.projects.pick(project, false).await {
+        Ok((pid, _, _, _)) => pid,
+        Err(e) => return json!({"ok": false, "error": e}),
     };
     if let Err(s) = crate::daemon::rbac_guard(
         state,
-        &rt.project_id,
+        &pid,
         None,
         cairn_core::rbac::Permission::ManageMembers,
         "dash/team-code-revoke",
@@ -923,10 +979,13 @@ pub async fn review_link(
 ) -> Json {
     // the route's contract bounds: 1h..=1y, default 30 days
     let ttl_h = clamp_ttl_hours(ttl_h);
-    let root = resolve_root(state, project).await;
-    let Some(root) = root else {
-        return json!({"ok": false, "error": if project.is_empty() { "no attached project" } else { "project not attached" }});
+    // review #7/#12: a guest link is minted for an EXPLICIT project (or the
+    // only one) — never a guessed one on a multi-project machine
+    let (pid, root) = match resolve_root(state, project).await {
+        Ok(v) => v,
+        Err(e) => return json!({"ok": false, "error": e}),
     };
+    let project = pid.as_str();
     // POLICY BOUNDARY (ADR-0030): minting a guest link is ManageReview.
     if let Err(s) = crate::daemon::rbac_guard(
         state,
@@ -998,10 +1057,24 @@ pub async fn review_revoke(state: &Arc<DaemonState>, project: &str, token: &str)
     if token.is_empty() {
         return json!({"ok": false, "error": "token required"});
     }
-    let root = resolve_root(state, project).await;
-    let Some(root) = root else {
-        return json!({"ok": false, "error": if project.is_empty() { "no attached project" } else { "project not attached" }});
+    // The dashboard revokes by token alone. The link belongs to exactly one
+    // project's review stack, so resolve THAT project — not a default. The
+    // old fallback revoked in the first-by-id project but published the
+    // cross-machine tombstone through a first-by-namespace lookup: on a
+    // two-project machine the two could differ, and other computers never
+    // learned the link was dead.
+    let (pid, root) = if project.trim().is_empty() {
+        match owner_of_link(state, &token).await {
+            Some(v) => v,
+            None => return json!({"ok": false, "error": "unknown link"}),
+        }
+    } else {
+        match resolve_root(state, project).await {
+            Ok(v) => v,
+            Err(e) => return json!({"ok": false, "error": e}),
+        }
     };
+    let project = pid.as_str();
     // POLICY BOUNDARY (ADR-0030): revoking a guest link is ManageReview —
     // and once ADR-0031 Phase 2 lands, a revoke propagates cross-machine,
     // which makes it exactly the kind of act that must never be unguarded.
@@ -1047,14 +1120,31 @@ fn clamp_ttl_hours(ttl_h: i64) -> i64 {
     ttl_h.clamp(1, 8_760)
 }
 
-/// The root for a review action: the named project, else the first
-/// attached one (single-project machines should not have to pass ids).
-async fn resolve_root(state: &Arc<DaemonState>, project: &str) -> Option<PathBuf> {
-    if project.is_empty() {
-        state.projects.first().await.map(|(_, r, _, _)| r)
-    } else {
-        state.projects.project_root(project).await
-    }
+/// The (project, root) a review MUTATION acts on: the named project, else
+/// the only attached one. Several attached + none named is an error — see
+/// [`crate::projects::ProjectManager::pick`].
+async fn resolve_root(
+    state: &Arc<DaemonState>,
+    project: &str,
+) -> Result<(String, PathBuf), String> {
+    state
+        .projects
+        .pick(project, true)
+        .await
+        .map(|(pid, root, _, _)| (pid, root))
+}
+
+/// The attached project whose review stack holds `token` (tokens are
+/// random per link, so at most one project owns it).
+async fn owner_of_link(state: &Arc<DaemonState>, token: &str) -> Option<(String, PathBuf)> {
+    let mut roots = state.projects.roots().await;
+    roots.sort();
+    roots.into_iter().find(|(_, root)| {
+        matches!(
+            cairn_review::store::Store::load(root),
+            Ok(Some(f)) if f.links.iter().any(|l| l.token == token)
+        )
+    })
 }
 
 /// POST /api/v1/tl-merge {base_otio, ours_otio, theirs_otio, semantic?} —
