@@ -148,12 +148,7 @@ async fn run_generation(
 /// rehash of camera masters just to draw a table). An empty/missing index
 /// is an honest empty list, not an error.
 pub async fn proxy_status(state: &Arc<DaemonState>, project: &str) -> Json {
-    let root = if project.is_empty() {
-        state.projects.first().await.map(|(_, r, _, _)| r)
-    } else {
-        state.projects.project_root(project).await
-    };
-    let Some(root) = root else {
+    let Ok((_, root, _, _)) = state.projects.pick(project, false).await else {
         return json!({"proxies": []});
     };
     let idx = std::fs::read(cairn_proxy::pipeline::index_path(&root))

@@ -71,6 +71,13 @@ CAIRN_HOME="$A_HOME" "$BIN" login --server "$SRV" --code "$CODE" --name smoke-A 
 B="http://127.0.0.1:$UI_PORT"
 # ---------- UI served ----------
 HTML=$(curl -sf "$B/" | head -c 4000)
+# The dashboard API requires the per-launch token the daemon injects into
+# the served page (window.CAIRN_TOKEN; P0 hardening round). Without it every
+# /api call is a 403 and the whole smoke reads as a product failure — scrape
+# it once and present it on every request below, as the real page does.
+DASH_TOKEN=$(curl -sf "$B/" | grep -o 'CAIRN_TOKEN *= *"[0-9a-f]*"' | grep -o '[0-9a-f]\{32\}' | head -1)
+[ -n "$DASH_TOKEN" ] && chk ok "dashboard token injected" || chk fail "dashboard token injected" "no CAIRN_TOKEN in index"
+curl() { command curl -H "x-cairn-token: $DASH_TOKEN" "$@"; }
 echo "$HTML" | grep -q "cairn" && chk ok "UI index served" || chk fail "UI index served" "no cairn in html"
 curl -sf -o /dev/null "$B/assets/app.css" && chk ok "css served" || chk fail "css served" "—"
 curl -sf -o /dev/null "$B/assets/app.js" && chk ok "js served" || chk fail "js served" "—"
@@ -146,6 +153,27 @@ else
 fi
 R=$(curl -sf -X POST "$B/api/v1/flags" -H 'Content-Type: application/json' -d '{"name":"normalize_containers","value":"false"}')
 echo "$R" | grep -q '"ok":true' && chk ok "flag flip endpoint" || chk fail "flag flip endpoint" "$R"
+
+# ---------- review #5/#7/#10: project-scoped People + "new computers" policy ----------
+T=$(curl -sf "$B/api/v1/team?project=$PROJECT")
+[ "$(echo "$T" | jget "projects[0].project_id")" = "$PROJECT" ] && chk ok "team view honours ?project=" || chk fail "team view honours ?project=" "$T"
+[ "$(echo "$T" | jget "projects[0].unlisted_role")" = "editor" ] && chk ok "unlisted devices default to editor" || chk fail "unlisted default" "$T"
+[ "$(echo "$T" | jget "projects[0].can_manage_members")" = "True" ] && chk ok "owner may manage members" || chk fail "owner may manage members" "$T"
+R=$(curl -sf "$B/api/v1/team?project=no-such-project")
+echo "$R" | grep -q '"ok":false' && chk ok "unknown project is an error, not a silent fallback" || chk fail "unknown project rejected" "$R"
+R=$(curl -sf -X POST "$B/api/v1/team/default-role" -H 'Content-Type: application/json' \
+     -d "{\"project_id\": \"$PROJECT\", \"role\": \"owner\"}")
+echo "$R" | grep -q '"ok":false' && chk ok "default role cannot escalate to owner" || chk fail "default role escalation refused" "$R"
+R=$(curl -sf -X POST "$B/api/v1/team/default-role" -H 'Content-Type: application/json' \
+     -d "{\"project_id\": \"$PROJECT\", \"role\": \"reviewer\"}")
+echo "$R" | grep -q '"ok":true' && chk ok "default role set to reviewer" || chk fail "default role set" "$R"
+[ "$(curl -sf "$B/api/v1/team?project=$PROJECT" | jget "projects[0].unlisted_role")" = "reviewer" ] \
+  && chk ok "unlisted devices now view + comment only" || chk fail "unlisted role applied" "—"
+grep -q '"default_role"' "$ROOT/.cairn/members.json" && ! grep -q '"\*"' "$ROOT/.cairn/members.json" \
+  && chk ok "members.json carries the policy, not a fake member" || chk fail "members.json default_role shape" "$(cat "$ROOT/.cairn/members.json")"
+R=$(curl -sf -X POST "$B/api/v1/team/default-role" -H 'Content-Type: application/json' \
+     -d "{\"project_id\": \"$PROJECT\", \"role\": \"editor\"}")
+echo "$R" | grep -q '"ok":true' && chk ok "default role restored to editor" || chk fail "default role restore" "$R"
 
 # ---------- snapshots: THE seq assertion ----------
 R=$(curl -sf -X POST "$B/api/v1/snapshots" -H 'Content-Type: application/json' \

@@ -294,6 +294,11 @@ const STR = {
   "team.allowed": { en: "allowed", "de-DE": "erlaubt", "ja-JP": "許可", "zh-CN": "允许" },
   "team.denied": { en: "denied", "de-DE": "verweigert", "ja-JP": "拒否", "zh-CN": "拒绝" },
   "team.you": { en: "you", "de-DE": "du", "ja-JP": "あなた", "zh-CN": "你" },
+  "team.newComputers": { en: "New computers that join", "de-DE": "Neue Computer, die beitreten", "ja-JP": "新しく参加するコンピューター", "zh-CN": "新加入的电脑" },
+  "team.newEdit": { en: "Can edit right away", "de-DE": "Können sofort bearbeiten", "ja-JP": "すぐに編集できる", "zh-CN": "可以立即编辑" },
+  "team.newView": { en: "Can only view and comment until you add them", "de-DE": "Können nur ansehen und kommentieren, bis du sie hinzufügst", "ja-JP": "追加するまで閲覧とコメントのみ", "zh-CN": "在你添加之前只能查看和评论" },
+  "team.newSaved": { en: "Saved for new computers", "de-DE": "Für neue Computer gespeichert", "ja-JP": "新しいコンピューター用に保存しました", "zh-CN": "已为新电脑保存" },
+  "team.forProject": { en: "Project", "de-DE": "Projekt", "ja-JP": "プロジェクト", "zh-CN": "项目" },
 
   "chip.ok": { en: "Up to date", "de-DE": "Aktuell", "ja-JP": "最新", "zh-CN": "已是最新" },
   "chip.warn": { en: "Working…", "de-DE": "Beschäftigt…", "ja-JP": "処理中…", "zh-CN": "处理中…" },
@@ -2567,10 +2572,46 @@ function renderTeam(r) {
 
     const me = document.createElement("div");
     me.className = "team-me";
+    // review #10: say WHICH project this roster belongs to when there is
+    // more than one (People follows the project picked in Files)
+    const projLabel = PROJECTS.length > 1
+      ? `<span class="role-chip">${esc(t("team.forProject"))}: <b>${esc(p.display_name || p.project_id)}</b></span>`
+      : "";
     me.innerHTML =
+      projLabel +
       `<span class="role-chip">${esc(t("team.myRole"))}: <b>${esc(p.my_role)}</b></span>` +
       `<span class="mono dim">${esc(p.my_device)}</span>`;
     card.appendChild(me);
+
+    // review #5: what a computer that is NOT on the list may do. Owners
+    // get the switch; everyone else sees the policy as plain words.
+    const strict = p.unlisted_role === "reviewer";
+    const policy = document.createElement("div");
+    policy.className = "team-invite";
+    if (p.can_manage_members) {
+      policy.innerHTML =
+        `<label class="invite-label" for="team-new-${esc(p.project_id)}">${esc(t("team.newComputers"))}</label>` +
+        `<select id="team-new-${esc(p.project_id)}" class="input">` +
+        `<option value="editor"${strict ? "" : " selected"}>${esc(t("team.newEdit"))}</option>` +
+        `<option value="reviewer"${strict ? " selected" : ""}>${esc(t("team.newView"))}</option>` +
+        `</select>`;
+      const sel = policy.querySelector("select");
+      sel.addEventListener("change", async () => {
+        sel.disabled = true;
+        try {
+          const r = await postJSON("/api/v1/team/default-role", { project_id: p.project_id, role: sel.value });
+          toast(r.ok ? t("team.newSaved") : t("toast.failed", { e: r.error || "unknown" }), !r.ok);
+          refreshTeam();
+        } catch (e) {
+          toast(e && e.message === "timeout" ? t("toast.timeout") : t("toast.failed", { e }), true);
+        } finally { sel.disabled = false; }
+      });
+    } else {
+      policy.innerHTML =
+        `<span class="invite-label">${esc(t("team.newComputers"))}</span>` +
+        `<span class="sans">${esc(strict ? t("team.newView") : t("team.newEdit"))}</span>`;
+    }
+    card.appendChild(policy);
 
     const table = document.createElement("table");
     table.className = "table";
@@ -2622,9 +2663,16 @@ function renderTeam(r) {
   }
 }
 
+/* review #8/#10: People, invites and the roster news all act on ONE
+   project - the one picked in Files (the dashboard's project context). */
+function teamURL(base) {
+  const pid = selectedProject();
+  return pid ? `${base}${base.includes("?") ? "&" : "?"}project=${encodeURIComponent(pid)}` : base;
+}
+
 async function refreshTeam() {
   try {
-    const r = await getJSON("/api/v1/team");
+    const r = await getJSON(teamURL("/api/v1/team"));
     renderTeam(r);
   } catch { /* team stays at its last honest value */ }
   refreshStateRecords();
@@ -2640,7 +2688,8 @@ let LAST_RECORDS = [];
 function renderStateRecords(r) {
   const box = $("records-list");
   if (!box) return;
-  LAST_RECORDS = (r && r.records) || [];
+  // "*" is the synced "new computers" policy, not a person (review #5)
+  LAST_RECORDS = ((r && r.records) || []).filter((x) => x.key !== "*");
   renderIfChanged(
     "records-list",
     sigOf(LAST_RECORDS, (x) => `${x.record_id ?? x.key ?? ""}:${x.ts_ms ?? 0}:${x.tombstone ? 1 : 0}`),
@@ -2671,7 +2720,7 @@ function renderStateRecordsInner() {
 }
 async function refreshStateRecords() {
   try {
-    const r = await getJSON("/api/v1/state-records?family=member");
+    const r = await getJSON(teamURL("/api/v1/state-records?family=member"));
     renderStateRecords(r);
   } catch { /* the roster news stays at its last honest value */ }
 }
@@ -3379,7 +3428,7 @@ async function refreshConnect() {
   try {
     // NOTE: not `t` - that name is the i18n function and shadowing it here
     // made every t() call below throw (the old code used literal strings).
-    const team = await getJSON("/api/v1/team");
+    const team = await getJSON(teamURL("/api/v1/team"));
     const code = team.join_code || (team.projects && team.projects[0] && team.projects[0].join_code) || "";
     const sig = team.signal || (team.projects && team.projects[0] && team.projects[0].signal) || "";
     const swarm = team.swarm || "";
@@ -3494,7 +3543,7 @@ document.getElementById("connect-regenerate")?.addEventListener("click", async (
   const btn = ev.currentTarget;
   const b = busy(btn, t("busy.generatingCode"));
   try {
-    const r = await postJSON("/api/v1/team/regenerate", {});
+    const r = await postJSON("/api/v1/team/regenerate", { project_id: selectedProject() });
     toast(r.ok ? t("connect.generated", { c: r.join_code || r.code }) : t("toast.failed", { e: r.error || "unknown" }), !r.ok);
     refreshConnect();
   } catch (e) { toast(e && e.message === "timeout" ? t("toast.timeout") : t("toast.failed", { e }), true); }

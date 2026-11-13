@@ -249,10 +249,40 @@ pub struct Member {
     pub added_by: String,
 }
 
+/// The reserved member key that carries the project's default role for
+/// UNLISTED devices. It rides the existing synced `member` record family
+/// (no new family, no protocol change); readers map it onto
+/// [`MemberFile::default_role`] instead of treating it as a device. `*` can
+/// never be a real device id (ids are UUID/hex shaped).
+pub const DEFAULT_ROLE_KEY: &str = "*";
+
+/// The project's explicit default for devices that are not on the roster
+/// (review #5). Absent = the historical fail-open `Editor` barnstorm
+/// default; an owner can tighten it, e.g. to `Reviewer` (read + comment
+/// only) so a newly joined machine cannot write until someone grants it a
+/// role.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DefaultRole {
+    pub role: Role,
+    pub set_at_ms: i64,
+    pub set_by: String,
+}
+
+/// May `role` be the default for unlisted devices? Never `Owner` or
+/// `LeadEditor`: a default that grants membership or creative authority to
+/// every unknown machine is not a policy, it is an open door — and the
+/// synced record that carries it must not be able to install one.
+pub fn can_be_default(role: Role) -> bool {
+    !matches!(role, Role::Owner | Role::LeadEditor)
+}
+
 /// `<root>/.cairn/members.json` — BTreeMap for deterministic sync.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemberFile {
     pub members: BTreeMap<String, Member>,
+    /// Explicit default for unlisted devices; `None` = `Editor`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_role: Option<DefaultRole>,
 }
 
 pub const SCHEMA: &str = "cairn-members/v1";
@@ -263,20 +293,60 @@ impl MemberFile {
     }
 
     pub fn from_json(bytes: &[u8]) -> Result<MemberFile, String> {
-        serde_json::from_slice(bytes).map_err(|e| format!("parse members: {e}"))
+        let mut f: MemberFile =
+            serde_json::from_slice(bytes).map_err(|e| format!("parse members: {e}"))?;
+        // A peer on an older build materializes the reserved default record
+        // as if it were a device. Fold it back into the field (only an
+        // allowed role; anything else is dropped, fail-closed to the plain
+        // default rather than escalating).
+        if let Some(m) = f.members.remove(DEFAULT_ROLE_KEY) {
+            if f.default_role.is_none() && can_be_default(m.role) {
+                f.default_role = Some(DefaultRole {
+                    role: m.role,
+                    set_at_ms: m.added_at_ms,
+                    set_by: m.added_by,
+                });
+            }
+        }
+        Ok(f)
     }
 
-    /// The role a device plays in this project. Unlisted devices are
-    /// `Editor` (the fail-open barnstorm default; see module doc).
+    /// The role an UNLISTED device plays: the project's explicit default,
+    /// else `Editor` (the historical barnstorm default; see module doc).
+    pub fn unlisted_role(&self) -> Role {
+        match &self.default_role {
+            Some(d) if can_be_default(d.role) => d.role,
+            _ => Role::Editor,
+        }
+    }
+
+    /// Set the default for unlisted devices (Owner action at the callers).
+    pub fn set_default_role(&mut self, role: Role, by: &str, now_ms: i64) -> Result<(), String> {
+        if !can_be_default(role) {
+            return Err(format!(
+                "'{}' cannot be the default for unlisted devices — add those devices by name instead",
+                role.as_str()
+            ));
+        }
+        self.default_role = Some(DefaultRole {
+            role,
+            set_at_ms: now_ms,
+            set_by: by.to_string(),
+        });
+        Ok(())
+    }
+
+    /// The role a device plays in this project. Unlisted devices get
+    /// [`MemberFile::unlisted_role`].
     pub fn role_of(&self, device_id: &str) -> Role {
         self.members
             .get(device_id)
             .map(|m| m.role)
-            .unwrap_or(Role::Editor)
+            .unwrap_or_else(|| self.unlisted_role())
     }
 
     /// Enforcement helper: is `device_id` allowed to `perm`? (Unlisted
-    /// devices get the default Editor role.)
+    /// devices get [`MemberFile::unlisted_role`].)
     pub fn permits(&self, device_id: &str, perm: Permission) -> bool {
         allows(self.role_of(device_id), perm)
     }
@@ -411,6 +481,55 @@ mod tests {
         assert!(f.remove("dev-b"));
         assert!(!f.remove("dev-b"));
         assert_eq!(f.role_of("dev-b"), Role::Editor);
+    }
+
+    #[test]
+    fn explicit_default_role_tightens_unlisted_devices() {
+        let mut f = MemberFile::default();
+        f.upsert("dev-o", "Olive", Role::Owner, "dev-o", 1);
+        assert_eq!(
+            f.role_of("dev-new"),
+            Role::Editor,
+            "no default = barnstorm editor"
+        );
+        f.set_default_role(Role::Reviewer, "dev-o", 2).unwrap();
+        assert_eq!(f.role_of("dev-new"), Role::Reviewer);
+        assert!(!f.permits("dev-new", Permission::WriteFiles));
+        assert!(f.permits("dev-new", Permission::Comment));
+        // listed members are unaffected
+        assert_eq!(f.role_of("dev-o"), Role::Owner);
+        // the default survives a JSON roundtrip; absent field still parses
+        let back = MemberFile::from_json(&f.to_json().unwrap()).unwrap();
+        assert_eq!(back, f);
+        let legacy = MemberFile::from_json(br#"{"members":{}}"#).unwrap();
+        assert_eq!(legacy.default_role, None);
+        assert_eq!(legacy.role_of("x"), Role::Editor);
+    }
+
+    #[test]
+    fn default_role_can_never_escalate() {
+        let mut f = MemberFile::default();
+        assert!(f.set_default_role(Role::Owner, "x", 1).is_err());
+        assert!(f.set_default_role(Role::LeadEditor, "x", 1).is_err());
+        assert_eq!(f.role_of("anyone"), Role::Editor);
+        // a hand-edited / hostile file naming Owner as default is ignored
+        let hostile =
+            br#"{"members":{},"default_role":{"role":"owner","set_at_ms":1,"set_by":"x"}}"#;
+        let h = MemberFile::from_json(hostile).unwrap();
+        assert_eq!(h.role_of("anyone"), Role::Editor);
+    }
+
+    #[test]
+    fn legacy_star_member_folds_into_the_default() {
+        // what an older peer's materializer writes for the reserved record
+        let old = br#"{"members":{"*":{"device_id":"*","name":"","role":"reviewer","added_at_ms":5,"added_by":"dev-o"}}}"#;
+        let f = MemberFile::from_json(old).unwrap();
+        assert!(f.members.is_empty());
+        assert_eq!(f.role_of("dev-new"), Role::Reviewer);
+        let bad = br#"{"members":{"*":{"device_id":"*","name":"","role":"owner","added_at_ms":5,"added_by":"x"}}}"#;
+        let g = MemberFile::from_json(bad).unwrap();
+        assert!(g.members.is_empty());
+        assert_eq!(g.role_of("dev-new"), Role::Editor);
     }
 
     #[test]

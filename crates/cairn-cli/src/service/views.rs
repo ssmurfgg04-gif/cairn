@@ -531,9 +531,13 @@ pub async fn files(state: &DaemonState, project: &str, needle: &str) -> serde_js
 /// GET /api/v1/team — members, the acting device's role, the swarm join
 /// code (invite), and the newest audit decisions (audit #5: RBAC was in
 /// the CLI only; now the studio roster is a first-class surface).
-pub async fn team(state: &DaemonState) -> serde_json::Value {
-    let Some((pid, root, files_synced, pending)) = state.projects.first().await else {
-        return json!({"ok": true, "projects": []});
+pub async fn team(state: &DaemonState, project: &str) -> serde_json::Value {
+    // review #10: People is project-scoped — `?project=` picks the project,
+    // unnamed reads the deterministic default (ProjectManager::pick)
+    let (pid, root, files_synced, pending) = match state.projects.pick(project, false).await {
+        Ok(v) => v,
+        Err(_) if project.trim().is_empty() => return json!({"ok": true, "projects": []}),
+        Err(e) => return json!({"ok": false, "error": e}),
     };
     let store = match open_store(state.home.as_path()) {
         Some(s) => s,
@@ -559,9 +563,21 @@ pub async fn team(state: &DaemonState) -> serde_json::Value {
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    let my_role = crate::members::load(&root)
+    let roster = crate::members::load(&root).ok();
+    let my_role = roster
+        .as_ref()
         .map(|f| cairn_core::rbac::Role::as_str(f.role_of(&device)).to_string())
-        .unwrap_or_else(|_| "editor".into());
+        .unwrap_or_else(|| "editor".into());
+    // review #5: what an UNLISTED device gets, and whether this device may
+    // change it (the People page only offers the control to owners)
+    let unlisted_role = roster
+        .as_ref()
+        .map(|f| f.unlisted_role().as_str().to_string())
+        .unwrap_or_else(|| "editor".into());
+    let unlisted_explicit = roster.as_ref().is_some_and(|f| f.default_role.is_some());
+    let can_manage = roster
+        .as_ref()
+        .is_some_and(|f| f.permits(&device, cairn_core::rbac::Permission::ManageMembers));
     let join_code = store.meta_get("swarm/join-code").unwrap_or_default();
     let signal = store.meta_get("swarm/signal").unwrap_or_default();
     let audit = crate::audit::AuditFile::load(&root)
@@ -620,6 +636,9 @@ pub async fn team(state: &DaemonState) -> serde_json::Value {
             "pending_outbox": pending,
             "my_device": device,
             "my_role": my_role,
+            "can_manage_members": can_manage,
+            "unlisted_role": unlisted_role,
+            "unlisted_role_explicit": unlisted_explicit,
             "members": members,
             "join_code": if join_code.is_empty() { serde_json::Value::Null } else { json!(join_code) },
             "signal": if signal.is_empty() { serde_json::Value::Null } else { json!(signal) },

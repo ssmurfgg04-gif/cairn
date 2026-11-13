@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 
 use cairn_core::clock::SystemClock as _;
-use cairn_core::rbac::{MemberFile, Permission, Role};
+use cairn_core::rbac::{Member, MemberFile, Permission, Role, DEFAULT_ROLE_KEY};
 
 use crate::state_records as sr;
 
@@ -99,7 +99,7 @@ pub fn load(root: &Path) -> anyhow::Result<MemberFile> {
     }
 }
 
-fn save(root: &Path, f: &MemberFile) -> anyhow::Result<()> {
+pub(crate) fn save(root: &Path, f: &MemberFile) -> anyhow::Result<()> {
     let json = f.to_json().map_err(anyhow::Error::msg)?;
     cairn_proxy::pipeline::atomic_write(&members_path(root), &json).map_err(anyhow::Error::msg)
 }
@@ -138,6 +138,11 @@ pub fn cmd_add(
     role: Role,
     as_device: Option<&str>,
 ) -> anyhow::Result<()> {
+    if device == DEFAULT_ROLE_KEY {
+        anyhow::bail!(
+            "'{DEFAULT_ROLE_KEY}' is reserved — use `cairn member default --role <role>` to set the role for unlisted devices"
+        );
+    }
     let actor = acting_device(as_device);
     let mut f = guard(root, &actor, Permission::ManageMembers)?;
     let now_ms = cairn_core::clock::WallClock.now_millis();
@@ -172,6 +177,32 @@ pub fn cmd_remove(root: &Path, device: &str, as_device: Option<&str>) -> anyhow:
     Ok(())
 }
 
+/// `cairn member default --role <role>` (Owner action, review #5): the role
+/// every device NOT on the roster gets. `reviewer` is the fail-closed
+/// choice — a newly joined machine can read and comment but not write until
+/// an owner adds it by name. `editor` restores the barnstorm default.
+/// Syncs to every attached machine through the reserved `*` member record.
+pub fn cmd_default(root: &Path, role: Role, as_device: Option<&str>) -> anyhow::Result<()> {
+    let actor = acting_device(as_device);
+    let mut f = guard(root, &actor, Permission::ManageMembers)?;
+    let now_ms = cairn_core::clock::WallClock.now_millis();
+    f.set_default_role(role, &actor, now_ms)
+        .map_err(anyhow::Error::msg)?;
+    save(root, &f)?;
+    if let Some((target, store)) = member_publish_target(root) {
+        let carrier = Member {
+            device_id: DEFAULT_ROLE_KEY.to_string(),
+            name: "default for unlisted devices".to_string(),
+            role,
+            added_at_ms: now_ms,
+            added_by: actor.clone(),
+        };
+        sr::publish_member(&store, &target, &carrier);
+    }
+    println!("unlisted devices -> {}", role.as_str());
+    Ok(())
+}
+
 /// The publish context for a member change: the home store + the resolved
 /// record target for this root. `None` (no login, no binding, no home store)
 /// means there is nothing to sync into — the CLI change still happened.
@@ -192,8 +223,13 @@ fn member_publish_target(root: &Path) -> Option<(sr::RecordTarget, cairn_store::
 /// `cairn member list` — includes the implicit default row.
 pub fn cmd_list(root: &Path) -> anyhow::Result<()> {
     let f = load(root)?;
+    let unlisted = f.unlisted_role().as_str();
     if f.members.is_empty() {
-        println!("no members file — every device is 'editor' by default (fail-open barnstorm)");
+        if f.default_role.is_some() {
+            println!("no named members — every device is '{unlisted}'");
+        } else {
+            println!("no members file — every device is 'editor' by default (fail-open barnstorm)");
+        }
         return Ok(());
     }
     for m in f.members.values() {
@@ -204,7 +240,11 @@ pub fn cmd_list(root: &Path) -> anyhow::Result<()> {
             m.name
         );
     }
-    println!("(unlisted devices default to 'editor')");
+    if f.default_role.is_some() {
+        println!("(unlisted devices are '{unlisted}' — set with `cairn member default`)");
+    } else {
+        println!("(unlisted devices default to 'editor' — tighten with `cairn member default --role reviewer`)");
+    }
     Ok(())
 }
 
@@ -283,6 +323,25 @@ mod tests {
         // removal
         cmd_remove(&root, "dev-b", Some("dev-a")).unwrap();
         assert!(cmd_remove(&root, "dev-b", Some("dev-a")).is_err());
+    }
+
+    #[test]
+    fn default_role_is_owner_only_and_tightens_unlisted() {
+        let root = tmp();
+        let mut f = MemberFile::default();
+        f.upsert("dev-a", "Alice", Role::Owner, "bootstrap", 1);
+        save(&root, &f).unwrap();
+        // a non-owner (unlisted = editor) cannot change the policy
+        assert!(cmd_default(&root, Role::Reviewer, Some("dev-x")).is_err());
+        cmd_default(&root, Role::Reviewer, Some("dev-a")).unwrap();
+        assert!(!cmd_check(&root, "dev-new", "write-files").unwrap());
+        assert!(cmd_check(&root, "dev-new", "comment").unwrap());
+        // now an unlisted device is a reviewer: still cannot manage members
+        assert!(cmd_default(&root, Role::Editor, Some("dev-new")).is_err());
+        // escalation is refused even for the owner
+        assert!(cmd_default(&root, Role::Owner, Some("dev-a")).is_err());
+        // the reserved key cannot be added as a device
+        assert!(cmd_add(&root, "*", "x", Role::Editor, Some("dev-a")).is_err());
     }
 
     #[test]
