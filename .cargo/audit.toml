@@ -15,4 +15,17 @@ ignore = [
     # kernel's own fuse fd. Re-review 2026-10-01: fuser 0.15/upstream fix, or the
     # in-house mount loop (post-beta ADR candidate).
     "RUSTSEC-2021-0154",
+    # libsqlite3-sys 0.30.1 bundles SQLite < 3.54.0 (CVE-2026-119375): opening a
+    # database TOGETHER WITH an attacker-crafted `-wal` file of a different page
+    # size can return uninitialized page-cache bytes. Local vector, needs the
+    # victim to open the hostile pair. Cairn opens SQLite only for its OWN
+    # files — the client store under CAIRN_HOME and the server's data dir —
+    # never a database that arrived through a synced project (project files
+    # are chunked as bytes, not opened by SQLite). The fix needs
+    # libsqlite3-sys >= 0.39 (rusqlite 0.41 + r2d2_sqlite 0.36 are ready), but
+    # sqlx links the same native `sqlite3` and no sqlx release accepts it yet
+    # (sqlx-sqlite 0.9.0 caps at < 0.38), and Cargo allows one link target.
+    # Re-review 2026-12-15: bump rusqlite/r2d2_sqlite together the moment an
+    # sqlx release allows libsqlite3-sys 0.39.
+    "RUSTSEC-2026-0459",
 ]
