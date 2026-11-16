@@ -37,8 +37,8 @@ rust-version = "1.85"
 # `io-uring` (ADR-0025): tokio's io_uring driver — Linux-only, UNSTABLE, gated
 # behind `--cfg tokio_unstable` which .cargo/config.toml sets for every build.
 # Runtime-probed with automatic fallback (epoll/ threadpool) on kernels/runtimes
-# without ring support. Requires tokio >= 1.53 for the feature; Cargo.lock pins 1.53.1.
-tokio = { version = "1.40", features = ["full", "io-uring"] }
+# without ring support. Requires tokio >= 1.53 for the feature; Cargo.lock pins 1.54.1.
+tokio = { version = "1.53.3", features = ["full", "io-uring"] }
 # CPU offload lane (ADR-0025, PostHog pattern): hashing/chunking runs on rayon
 # via spawn+oneshot so tokio I/O workers never park on CPU work.
 rayon = "1.10"

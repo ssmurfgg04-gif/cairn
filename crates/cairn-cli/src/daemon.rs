@@ -34,6 +34,10 @@ use cairn_core::rbac::{self, MemberFile, Permission, Role};
 pub struct SwarmOpts {
     /// Signal server `host:port`.
     pub signal: String,
+    /// Optional client-facing QUIC relay endpoint for this device.
+    pub quic_relay: Option<std::net::SocketAddr>,
+    /// Explicitly disable the configured QUIC relay without clearing its address.
+    pub disable_quic_relay: bool,
     /// The host-shared join code. `None` = the well-known dev-key path
     /// (smoke tests only; pairs with `cairn signal --dev-key`).
     ///
@@ -73,9 +77,9 @@ impl DaemonState {
     /// daemon path is `run()` below.
     pub(crate) fn new(home: PathBuf) -> Self {
         DaemonState {
-            home,
+            home: home.clone(),
             started: Instant::now(),
-            flags: RwLock::new(default_flags()),
+            flags: RwLock::new(load_flags(&home)),
             recall_jobs: Arc::new(RwLock::new(HashMap::new())),
             projects: Arc::new(crate::projects::ProjectManager::new()),
             doctor_cache: RwLock::new(None),
@@ -123,7 +127,23 @@ fn default_flags() -> Vec<(String, String)> {
         // unconditional; this gates the ~12.5% sender overhead). Applies
         // at swarm join (attach/daemon start).
         ("fec_parity".into(), "false".into()),
+        // QUIC relay is an opt-in transport. Its endpoint is stored separately.
+        ("quic_relay".into(), "false".into()),
     ]
+}
+
+/// Overlay persisted flag values on the known flags so dashboard state agrees
+/// with the home store after daemon restart.
+fn load_flags(home: &std::path::Path) -> Vec<(String, String)> {
+    let mut flags = default_flags();
+    if let Ok(store) = cairn_store::Store::open(home, Arc::new(WallClock)) {
+        for (name, value) in &mut flags {
+            if let Some(saved) = store.meta_get(&format!("flag:{name}")) {
+                *value = saved;
+            }
+        }
+    }
+    flags
 }
 
 // ---------- ctl gRPC services ----------
@@ -594,6 +614,40 @@ impl CtlDiagnostics for CtlDiagSvc {
         request: Request<SetFlagRequest>,
     ) -> Result<Response<cairn_proto::pb::Ack>, Status> {
         let req = request.into_inner();
+        if req.name == "quic_relay" {
+            match req.value.as_str() {
+                "true" => {
+                    let store = cairn_store::Store::open(&self.state.home, Arc::new(WallClock))
+                        .map_err(|e| Status::internal(format!("open home store: {e}")))?;
+                    if store.meta_get("swarm/signal").is_none_or(|s| s.is_empty()) {
+                        return Err(Status::failed_precondition(
+                            "QUIC relay requires a configured swarm signal server",
+                        ));
+                    }
+                    let raw = store.meta_get("swarm/quic-relay").ok_or_else(|| {
+                        Status::failed_precondition(
+                            "configure this device with --swarm-quic-relay IP:PORT before enabling QUIC relay",
+                        )
+                    })?;
+                    let addr: std::net::SocketAddr = raw.parse().map_err(|_| {
+                        Status::failed_precondition(
+                            "stored QUIC relay endpoint is invalid; reconfigure --swarm-quic-relay IP:PORT",
+                        )
+                    })?;
+                    if addr.ip().is_unspecified() || addr.port() == 0 {
+                        return Err(Status::failed_precondition(
+                            "stored QUIC relay endpoint must use a reachable IP and non-zero port",
+                        ));
+                    }
+                }
+                "false" => {}
+                _ => {
+                    return Err(Status::invalid_argument(
+                        "quic_relay must be 'true' or 'false'",
+                    ))
+                }
+            }
+        }
         // RBAC: kill switches are global on this machine — enforce
         // ManageFlags against every attached project (any denial blocks;
         // no projects attached = nothing to enforce against)
@@ -711,7 +765,12 @@ pub async fn run(
         // it on the rejoin path. It is a credential and this home is
         // user-private (device tokens live here too) — never logged.
         match &swarm {
-            Some(SwarmOpts { signal, join_code }) => {
+            Some(SwarmOpts {
+                signal,
+                join_code,
+                quic_relay,
+                disable_quic_relay,
+            }) => {
                 let _ = store.meta_set("swarm/signal", signal);
                 match join_code {
                     Some(code) => {
@@ -725,6 +784,12 @@ pub async fn run(
                         let _ = store.meta_set("swarm/key", "cairn-dev-swarm-key");
                     }
                 }
+                if let Some(addr) = quic_relay {
+                    let _ = store.meta_set("swarm/quic-relay", &addr.to_string());
+                    let _ = store.meta_set("flag:quic_relay", "true");
+                } else if *disable_quic_relay {
+                    let _ = store.meta_set("flag:quic_relay", "false");
+                }
                 tracing::info!(
                     signal = %signal,
                     "swarm transport enabled (join-code gated, peer-first hydration)"
@@ -734,6 +799,24 @@ pub async fn run(
                 let _ = store.meta_set("swarm/signal", "");
                 let _ = store.meta_set("swarm/join-code", "");
                 let _ = store.meta_set("swarm/key", "");
+            }
+        }
+    }
+    if let Some(opts) = &swarm {
+        if opts.quic_relay.is_some() || opts.disable_quic_relay {
+            let value = if opts.quic_relay.is_some() {
+                "true"
+            } else {
+                "false"
+            };
+            if let Some((_, slot)) = state
+                .flags
+                .write()
+                .await
+                .iter_mut()
+                .find(|(name, _)| name == "quic_relay")
+            {
+                *slot = value.to_string();
             }
         }
     }
@@ -1689,5 +1772,35 @@ mod tests {
         )
         .await;
         assert!(r.is_ok());
+    }
+}
+
+#[cfg(test)]
+mod quic_flag_regression_tests {
+    use super::*;
+
+    #[test]
+    fn quic_relay_flag_defaults_off_and_persists() {
+        let initial = default_flags();
+        assert_eq!(
+            initial
+                .iter()
+                .find(|(name, _)| name == "quic_relay")
+                .map(|(_, value)| value.as_str()),
+            Some("false"),
+        );
+        let home = tempfile::tempdir().expect("temporary home");
+        let store = cairn_store::Store::open(home.path(), Arc::new(WallClock)).expect("store");
+        store
+            .meta_set("flag:quic_relay", "true")
+            .expect("persist flag");
+        drop(store);
+        assert_eq!(
+            load_flags(home.path())
+                .iter()
+                .find(|(name, _)| name == "quic_relay")
+                .map(|(_, value)| value.as_str()),
+            Some("true"),
+        );
     }
 }

@@ -350,6 +350,13 @@ pub enum Cmd {
         /// candidates only; relay still works). Persists.
         #[arg(long)]
         swarm_no_stun: bool,
+        /// Enable QUIC relay on this device using a reachable numeric IP:port.
+        /// The signal host must be started with --quic-relay-bind.
+        #[arg(long, value_name = "IP:PORT", conflicts_with = "swarm_no_quic_relay")]
+        swarm_quic_relay: Option<String>,
+        /// Disable QUIC relay on this device; UDP relay remains available.
+        #[arg(long, conflicts_with = "swarm_quic_relay")]
+        swarm_no_quic_relay: bool,
         /// Disable Windows Remote Differential Compression (RDC). RDC hooks
         /// file writes to compute its own rolling deltas and fights FastCDC
         /// for the same CPU; on media trees it slows ingest and never helps.
@@ -396,6 +403,12 @@ pub enum Cmd {
         /// UDP bind for the relay
         #[arg(long, default_value = "0.0.0.0:17781")]
         relay_bind: String,
+        /// Optional QUIC-over-UDP relay listener (disabled by default).
+        #[arg(long, value_name = "IP:PORT")]
+        quic_relay_bind: Option<String>,
+        /// Public numeric IP:port to print for QUIC clients. Requires --quic-relay-bind.
+        #[arg(long, value_name = "IP:PORT", requires = "quic_relay_bind")]
+        quic_relay_advertise: Option<String>,
         /// Host with THIS join code (validated; peers must present the same
         /// code). Default: generate a fresh code and print it.
         #[arg(long)]
@@ -893,6 +906,8 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
             swarm_mdns,
             swarm_stun,
             swarm_no_stun,
+            swarm_quic_relay,
+            swarm_no_quic_relay,
             disable_rdc,
         } => {
             if disable_rdc {
@@ -994,6 +1009,25 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
             } else {
                 swarm_signal
             };
+            if (swarm_quic_relay.is_some() || swarm_no_quic_relay) && swarm_signal.is_none() {
+                return Err(anyhow::anyhow!(
+                    "--swarm-quic-relay/--swarm-no-quic-relay require --swarm-signal or --swarm-mdns"
+                ));
+            }
+            let quic_relay_addr = match swarm_quic_relay.as_deref() {
+                Some(raw) => {
+                    let addr: std::net::SocketAddr = raw.parse().map_err(|e| {
+                        anyhow::anyhow!("bad --swarm-quic-relay {raw}: {e}; use a numeric IP:port")
+                    })?;
+                    if addr.ip().is_unspecified() || addr.port() == 0 {
+                        return Err(anyhow::anyhow!(
+                            "--swarm-quic-relay must be a reachable non-wildcard IP and non-zero port"
+                        ));
+                    }
+                    Some(addr)
+                }
+                None => None,
+            };
             let swarm = match swarm_signal {
                 None => None,
                 Some(signal) => {
@@ -1009,6 +1043,8 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
                         Some(daemon::SwarmOpts {
                             signal,
                             join_code: None,
+                            quic_relay: quic_relay_addr,
+                            disable_quic_relay: swarm_no_quic_relay,
                         })
                     } else {
                         let code = match swarm_join_code.as_deref() {
@@ -1024,6 +1060,8 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
                         Some(daemon::SwarmOpts {
                             signal,
                             join_code: Some(code),
+                            quic_relay: quic_relay_addr,
+                            disable_quic_relay: swarm_no_quic_relay,
                         })
                     }
                 }
@@ -1033,10 +1071,23 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
         Cmd::Signal {
             bind,
             relay_bind,
+            quic_relay_bind,
+            quic_relay_advertise,
             join_code,
             dev_key,
             no_mdns,
-        } => run_signal_server(&bind, &relay_bind, join_code, dev_key, no_mdns).await,
+        } => {
+            run_signal_server(
+                &bind,
+                &relay_bind,
+                quic_relay_bind.as_deref(),
+                quic_relay_advertise.as_deref(),
+                join_code,
+                dev_key,
+                no_mdns,
+            )
+            .await
+        }
         Cmd::Handoff { cmd } => run_handoff(cmd),
         Cmd::Member { cmd } => run_member(cmd),
         Cmd::Proxy { cmd } => run_proxy(cmd),
@@ -1502,6 +1553,8 @@ impl Admission {
 async fn run_signal_server(
     bind: &str,
     relay_bind: &str,
+    quic_relay_bind: Option<&str>,
+    quic_relay_advertise: Option<&str>,
     join_code: Option<String>,
     dev_key: bool,
     no_mdns: bool,
@@ -1533,9 +1586,42 @@ async fn run_signal_server(
     let relay_addr: std::net::SocketAddr = relay_bind
         .parse()
         .map_err(|e| anyhow::anyhow!("bad --relay-bind {relay_bind}: {e}"))?;
+    let quic_bind_addr = quic_relay_bind
+        .map(|raw| {
+            raw.parse::<std::net::SocketAddr>()
+                .map_err(|e| anyhow::anyhow!("bad --quic-relay-bind {raw}: {e}"))
+        })
+        .transpose()?;
+    let quic_advertise_addr = quic_relay_advertise
+        .map(|raw| {
+            let addr = raw.parse::<std::net::SocketAddr>().map_err(|e| {
+                anyhow::anyhow!("bad --quic-relay-advertise {raw}: {e}; use a numeric IP:port")
+            })?;
+            if addr.ip().is_unspecified() || addr.port() == 0 {
+                anyhow::bail!(
+                    "--quic-relay-advertise must be a reachable non-wildcard IP and non-zero port"
+                );
+            }
+            Ok::<_, anyhow::Error>(addr)
+        })
+        .transpose()?;
+    if quic_advertise_addr.is_some() && quic_bind_addr.is_none() {
+        anyhow::bail!("--quic-relay-advertise requires --quic-relay-bind");
+    }
 
     let signal = cairn_p2p::signal::SignalServer::spawn(bind_addr, &key).await?;
-    let relay = cairn_p2p::relay::RelayServer::spawn(relay_addr, signal.local_addr, &key).await?;
+    let relay = match quic_bind_addr {
+        Some(quic_bind) => {
+            cairn_p2p::relay::RelayServer::spawn_with_quic(
+                relay_addr,
+                quic_bind,
+                signal.local_addr,
+                &key,
+            )
+            .await?
+        }
+        None => cairn_p2p::relay::RelayServer::spawn(relay_addr, signal.local_addr, &key).await?,
+    };
     // LAN beacon (ADR-0019 §4): advertise a join-code FINGERPRINT so LAN
     // joiners can find this signal server with just the code (--swarm-mdns
     // on their daemon). Non-fatal: multicast-less environments simply skip
@@ -1572,12 +1658,22 @@ async fn run_signal_server(
         "relay:  {} (encrypted pass-through fallback)",
         relay.local_addr
     );
-    let host = signal
-        .local_addr
-        .ip()
-        .to_string()
-        .trim_start_matches("0.0.0.0")
-        .to_string();
+    if let Some(addr) = relay.quic_addr {
+        println!("QUIC relay bind: {addr} (QUIC uses UDP; open this port directly)");
+        if let Some(public_addr) = quic_advertise_addr {
+            println!("QUIC relay client address: {public_addr}");
+        } else {
+            println!(
+                "QUIC relay client address: not declared; supply its public numeric IP to clients"
+            );
+        }
+    }
+    let host = match signal.local_addr.ip() {
+        std::net::IpAddr::V4(ip) if ip.is_unspecified() => "<server-public-ip>".to_string(),
+        std::net::IpAddr::V6(ip) if ip.is_unspecified() => "[<server-public-ipv6>]".to_string(),
+        std::net::IpAddr::V4(ip) => ip.to_string(),
+        std::net::IpAddr::V6(ip) => format!("[{ip}]"),
+    };
     match &admission {
         Admission::JoinCode(code) => {
             println!();
@@ -1589,6 +1685,17 @@ async fn run_signal_server(
                 "  point editors at:  cairn daemon --swarm-signal {host}:{} --swarm-join-code <code>",
                 signal.local_addr.port()
             );
+            if relay.quic_addr.is_some() {
+                match quic_advertise_addr {
+                    Some(addr) => println!(
+                        "  QUIC-enabled clients: append --swarm-quic-relay {addr} to the command above"
+                    ),
+                    None => println!(
+                        "  QUIC-enabled clients: append --swarm-quic-relay <server-public-ip>:{}",
+                        relay.quic_addr.map(|a| a.port()).unwrap_or_default()
+                    ),
+                }
+            }
             println!();
             println!("  nodes without the code are dropped silently; rotating the code");
             println!("  (restart with --join-code <new>) locks out everyone who held the old one.");
