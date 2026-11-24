@@ -30,6 +30,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri_plugin_deep_link::DeepLinkExt;
 
 const CONSOLE_ADDR: &str = "127.0.0.1:17778";
 
@@ -100,6 +101,34 @@ fn spawn_daemon() -> bool {
     cmd.spawn().is_ok()
 }
 
+/// #104: hand a `cairn://<project>/<path>` link to whatever page the window
+/// shows. The start screen carries the hash over to the console when it
+/// hands off; the console opens the file. No IPC: a hash change is plain
+/// page navigation, and only well-formed cairn:// links get through.
+fn open_link(app: &tauri::AppHandle, link: &str) {
+    let Ok(url) = tauri::Url::parse(link) else { return };
+    if url.scheme() != "cairn" {
+        return;
+    }
+    if let Some(w) = app.get_webview_window("console") {
+        let encoded: String = url
+            .as_str()
+            .bytes()
+            .map(|b| {
+                if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+                    (b as char).to_string()
+                } else {
+                    format!("%{b:02X}")
+                }
+            })
+            .collect();
+        let _ = w.eval(format!("location.hash = 'link={encoded}'"));
+        let _ = w.unminimize();
+        let _ = w.show();
+        let _ = w.set_focus();
+    }
+}
+
 /// The webview may show only the bundled start screen or the loopback
 /// console. Everything else is a real web link: hand it to the OS browser.
 fn allowed_in_window(url: &tauri::Url) -> bool {
@@ -120,13 +149,18 @@ fn allowed_in_window(url: &tauri::Url) -> bool {
 fn main() {
     tauri::Builder::default()
         // must be registered first: a second launch focuses this window
-        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
             if let Some(w) = app.get_webview_window("console") {
                 let _ = w.unminimize();
                 let _ = w.show();
                 let _ = w.set_focus();
             }
+            // a second launch BY a cairn:// link: open it in this window
+            if let Some(link) = argv.iter().find(|a| a.starts_with("cairn://")) {
+                open_link(app, link);
+            }
         }))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -154,6 +188,26 @@ fn main() {
                     false
                 })
                 .build()?;
+            // register cairn:// for this user (the installer also does) and
+            // route links that arrive now or launched the app
+            #[cfg(any(windows, target_os = "linux"))]
+            let _ = app.deep_link().register_all();
+            let h = app.handle().clone();
+            app.deep_link().on_open_url(move |ev| {
+                for u in ev.urls() {
+                    open_link(&h, u.as_str());
+                }
+            });
+            if let Ok(Some(urls)) = app.deep_link().get_current() {
+                let h = app.handle().clone();
+                std::thread::spawn(move || {
+                    // let the first page load before handing it the link
+                    std::thread::sleep(Duration::from_millis(1500));
+                    for u in urls {
+                        open_link(&h, u.as_str());
+                    }
+                });
+            }
             Ok(())
         })
         .run(tauri::generate_context!())

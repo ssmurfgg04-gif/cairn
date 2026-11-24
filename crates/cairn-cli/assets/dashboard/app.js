@@ -393,6 +393,7 @@ const STR = {
   "usage.include": { en: "Include usage counts in the diagnostics file", "de-DE": "Nutzungszähler in die Diagnosedatei aufnehmen", "ja-JP": "診断ファイルに利用回数を含める", "zh-CN": "在诊断文件中包含使用次数" },
   "usage.none": { en: "Nothing counted yet.", "de-DE": "Noch nichts gezählt.", "ja-JP": "まだ記録はありません。", "zh-CN": "尚未统计任何内容。" },
   "mergeDlg.more": { en: "What Cairn compared", "de-DE": "Was Cairn verglichen hat", "ja-JP": "Cairn が比較した内容", "zh-CN": "Cairn 比较了什么" },
+  "link.unknown": { en: "That link is for a project that isn't on this computer yet. Ask its owner for an invite.", "de-DE": "Dieser Link gehört zu einem Projekt, das noch nicht auf diesem Rechner ist. Bitte den Eigentümer um eine Einladung.", "ja-JP": "このリンクは、まだこのパソコンにないプロジェクトのものです。オーナーに招待を依頼してください。", "zh-CN": "该链接所属的项目尚未在这台电脑上。请向项目所有者索取邀请。" },
   "ctx.project": { en: "Project", "de-DE": "Projekt", "ja-JP": "プロジェクト", "zh-CN": "项目" },
   "files.showing": { en: "Showing {n} of {total} files", "de-DE": "{n} von {total} Dateien angezeigt", "ja-JP": "{total} 件中 {n} 件のファイルを表示中", "zh-CN": "显示 {total} 个文件中的 {n} 个" },
   "btn.showMore": { en: "Show more", "de-DE": "Mehr anzeigen", "ja-JP": "さらに表示", "zh-CN": "显示更多" },
@@ -3591,6 +3592,37 @@ async function refreshUsage() {
 if ($("usage-fold")) $("usage-fold").addEventListener("toggle", (ev) => { if (ev.currentTarget.open) refreshUsage(); });
 if ($("btn-quit")) $("btn-quit").addEventListener("click", (ev) => doQuit(ev.currentTarget));
 if ($("btn-diagnostics")) $("btn-diagnostics").addEventListener("click", (ev) => doDiagnostics(ev.currentTarget));
+
+/* #104: cairn://<project>/<path> links (what Share copies) arrive as
+   #link=<encoded>, from the native window or a pasted URL. Open the
+   project, show the file; refuse quietly-but-clearly if it isn't here. */
+function openCairnLink(raw) {
+  let project = "", path = "";
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== "cairn:") return false;
+    project = decodeURIComponent(u.hostname || u.host || "");
+    path = decodeURIComponent((u.pathname || "").replace(/^\/+/, ""));
+  } catch (_) { return false; }
+  if (!PROJECTS.some((p) => p.project_id === project)) { toast(t("link.unknown"), true); return true; }
+  showView("files");
+  if ($("files-filter")) $("files-filter").value = path.split("/").pop() || "";
+  setProjectContext(project);
+  return true;
+}
+function handleLinkHash() {
+  const m = /^#link=(.+)$/.exec(location.hash || "");
+  if (!m) return;
+  let raw = "";
+  try { raw = decodeURIComponent(m[1]); } catch (_) { return; }
+  history.replaceState(null, "", location.pathname + location.search);
+  // projects may still be loading on a cold start: retry briefly
+  let tries = 0;
+  const go = () => { if (PROJECTS.length || tries > 20) openCairnLink(raw); else { tries += 1; setTimeout(go, 250); } };
+  go();
+}
+window.addEventListener("hashchange", handleLinkHash);
+handleLinkHash();
 
 /* #83: one delegated listener for file-row keyboard navigation */
 if ($("files-body")) $("files-body").addEventListener("keydown", filesKeyNav);

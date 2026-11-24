@@ -20,7 +20,11 @@ tauri = { version = "2", features = [] }
 # geometry remembered, external links handed to the system browser. Still
 # no updater, no IPC commands, no shell access from the page: the window is
 # a viewport onto the daemon's loopback console.
-tauri-plugin-single-instance = "2"
+tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+# #104: cairn://<project>/<path> links (what the console's Share copies)
+tauri-plugin-deep-link = "2"
+# tauri::generate_context! needs it once tauri.conf.json carries plugin config
+serde_json = "1"
 tauri-plugin-window-state = "2"
 tauri-plugin-opener = "2"
 [profile.release]

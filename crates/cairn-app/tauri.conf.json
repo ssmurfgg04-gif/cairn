@@ -36,5 +36,14 @@
     },
     "shortDescription": "Version control for the folder your video editor already uses",
     "category": "Video"
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": [
+          "cairn"
+        ]
+      }
+    }
   }
 }

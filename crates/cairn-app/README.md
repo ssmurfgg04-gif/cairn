@@ -18,6 +18,9 @@ is a viewport onto a surface the daemon already serves (ADR-0022).
 - **Stays on the console.** Only the start screen and
   `http://127.0.0.1:17778` load in the window; any other link opens in the
   system browser.
+- **Opens cairn:// links.** The scheme the console's Share copies
+  (`cairn://<project>/<path>`) is registered for the user; a link opens
+  that project and file, in the already-open window if there is one.
 - **Closing is not quitting.** Closing the window never stops syncing.
   "Quit Cairn" lives in the tray menu and in the console's Settings, and
   both say that syncing stops (`cairn stop` / `POST /api/v1/quit`).

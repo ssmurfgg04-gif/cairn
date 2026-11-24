@@ -207,6 +207,16 @@ def main():
             issues = pg.locator("#hs-issues").inner_text()
             check("almost out of space" in issues, "Home warns when the disk is nearly full", issues)
 
+            # #104 cairn:// links (what Share copies) open the file
+            from urllib.parse import quote
+            pg.evaluate(f"location.hash = 'link=' + encodeURIComponent('cairn://{project2}/note1.txt')")
+            pg.wait_for_function(f"document.getElementById('files-project').value === '{project2}' && document.getElementById('files-filter').value === 'note1.txt'", timeout=10000)
+            check(True, "a cairn:// link opens its project and file")
+            pg.evaluate("location.hash = 'link=' + encodeURIComponent('cairn://not-here/x.mov')")
+            pg.wait_for_function("[...document.querySelectorAll('.toast')].some(t => /isn't on this computer/.test(t.textContent))", timeout=10000)
+            check(True, "a link to an unknown project says so plainly")
+            pg.evaluate(f"document.getElementById('files-filter').value=''; setProjectContext('{project}')")
+
             # #86 Free up space: confirm explains, then the sweep answers honestly
             pg.evaluate("showView('settings')")
             pg.click("#btn-free-space")

@@ -59,7 +59,8 @@
     try { await fetch(CONSOLE, { mode: "no-cors", cache: "no-store" }); return true; } catch (_) { return false; }
   }
   async function wait() {
-    if (await up()) { location.replace(CONSOLE); return; }
+    // #104: a cairn:// link that arrived while starting rides along
+    if (await up()) { location.replace(CONSOLE + (location.hash || "")); return; }
     tries += 1;
     if (tries === 40) { // ~20s: say so plainly, keep trying quietly
       document.getElementById("title").textContent = l ? l.st : "Cairn isn't starting";
