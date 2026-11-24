@@ -1920,3 +1920,18 @@ details.fold.adv[open] summary::after { transform: rotate(225deg); }
 
 /* #95 usage counts */
 .usage-list { font-size: 12px; max-height: 180px; overflow: auto; margin: 6px 0 0; white-space: pre-wrap; }
+
+/* #80 phones: the Files table keeps name + status + the ••• menu (every
+   action lives there too); size and the inline quick icons step aside so
+   nothing is clipped off-screen */
+@media (max-width: 600px) {
+  #files-table th:nth-child(2), #files-body tr.file-row > td:nth-child(2) { display: none; }
+  #files-body .row-actions > :not(:last-child) { display: none; }
+  #files-body tr.file-row > td:nth-child(3) { white-space: normal; }
+  .files-table { overflow-x: auto; }
+  #files-table table { width: 100%; table-layout: fixed; }
+  #files-table .th-file { min-width: 0; width: 50%; }
+  #files-table thead th:nth-child(3) { min-width: 0; }
+  #files-body tr.file-row > td:first-child { overflow: hidden; text-overflow: ellipsis; }
+  #files-body .row-actions { position: static; justify-content: flex-end; }
+}

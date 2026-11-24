@@ -392,6 +392,7 @@ const STR = {
   "usage.note": { en: "Cairn counts which actions you use (like \"file/open: 14\") on this computer only. No file names, projects, people or content, and nothing is ever sent. You decide whether to include them in a diagnostics file.", "de-DE": "Cairn zählt nur auf diesem Rechner, welche Aktionen du nutzt (z. B. \"file/open: 14\"). Keine Dateinamen, Projekte, Personen oder Inhalte, und es wird nie etwas gesendet. Du entscheidest, ob sie in eine Diagnosedatei kommen.", "ja-JP": "Cairn はこのパソコン上だけで、使った操作の回数（例：\"file/open: 14\"）を数えます。ファイル名、プロジェクト、人、内容は含まれず、送信されることもありません。診断ファイルに含めるかどうかはあなたが決めます。", "zh-CN": "Cairn 只在这台电脑上统计你使用了哪些操作（例如 \"file/open: 14\"）。不包含文件名、项目、人员或内容，也绝不会发送。是否把它们放进诊断文件由你决定。" },
   "usage.include": { en: "Include usage counts in the diagnostics file", "de-DE": "Nutzungszähler in die Diagnosedatei aufnehmen", "ja-JP": "診断ファイルに利用回数を含める", "zh-CN": "在诊断文件中包含使用次数" },
   "usage.none": { en: "Nothing counted yet.", "de-DE": "Noch nichts gezählt.", "ja-JP": "まだ記録はありません。", "zh-CN": "尚未统计任何内容。" },
+  "mergeDlg.more": { en: "What Cairn compared", "de-DE": "Was Cairn verglichen hat", "ja-JP": "Cairn が比較した内容", "zh-CN": "Cairn 比较了什么" },
   "ctx.project": { en: "Project", "de-DE": "Projekt", "ja-JP": "プロジェクト", "zh-CN": "项目" },
   "files.showing": { en: "Showing {n} of {total} files", "de-DE": "{n} von {total} Dateien angezeigt", "ja-JP": "{total} 件中 {n} 件のファイルを表示中", "zh-CN": "显示 {total} 个文件中的 {n} 个" },
   "btn.showMore": { en: "Show more", "de-DE": "Mehr anzeigen", "ja-JP": "さらに表示", "zh-CN": "显示更多" },

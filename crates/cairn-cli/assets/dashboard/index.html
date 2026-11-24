@@ -814,11 +814,16 @@
     <h3 class="modal-title" id="merge-dlg-title" data-i18n="mergeDlg.title">Two versions changed</h3>
     <p class="modal-body" id="merge-dlg-body" data-i18n="mergeDlg.body">Cairn found two versions that changed in different places. Merge puts both sets of changes together - nothing is lost.</p>
     <p class="merge-dlg-path mono" id="merge-dlg-path"></p>
+    <!-- review #89: the plain choice is the dialog; the 3-version model is
+         one click away for people who want it -->
+    <details class="fold adv merge-dlg-more">
+    <summary data-i18n="mergeDlg.more">What Cairn compared</summary>
     <dl class="merge-dlg-sides">
       <div><dt data-i18n="merge.humanOriginal">Original</dt><dd data-i18n="mergeDlg.sideOriginal">The version everyone started from</dd></div>
       <div><dt data-i18n="merge.humanYours">Your changes</dt><dd data-i18n="mergeDlg.sideYours">Edits made on this computer</dd></div>
       <div><dt data-i18n="merge.humanTheirs">Their changes</dt><dd data-i18n="mergeDlg.sideTheirs">Edits that arrived from other computers</dd></div>
     </dl>
+    </details>
     <p class="note" data-i18n="mergeDlg.keepNote">Choosing Keep both keeps a separate copy of your version - nothing is deleted.</p>
     <div class="modal-actions">
       <button type="button" class="btn btn-ghost" id="merge-dlg-keep" data-i18n="mergeDlg.keepBoth">Keep both</button>
