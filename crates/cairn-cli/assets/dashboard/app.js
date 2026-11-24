@@ -388,6 +388,10 @@ const STR = {
   "team.newEditor": { en: "Editor (can change files)", "de-DE": "Editor (kann Dateien ändern)", "ja-JP": "編集者（ファイルを変更可）", "zh-CN": "编辑者（可修改文件）" },
   "team.newReviewer": { en: "Reviewer (comment only until you add them)", "de-DE": "Reviewer (nur kommentieren, bis du sie hinzufügst)", "ja-JP": "レビュアー（追加するまでコメントのみ）", "zh-CN": "审阅者（在你添加前只能评论）" },
   "team.newSaved": { en: "Saved. New computers now get: {r}.", "de-DE": "Gespeichert. Neue Rechner erhalten jetzt: {r}.", "ja-JP": "保存しました。新しいパソコンの役割：{r}", "zh-CN": "已保存。新电脑现在获得：{r}。" },
+  "usage.title": { en: "Usage counts", "de-DE": "Nutzungszähler", "ja-JP": "利用回数", "zh-CN": "使用次数" },
+  "usage.note": { en: "Cairn counts which actions you use (like \"file/open: 14\") on this computer only. No file names, projects, people or content, and nothing is ever sent. You decide whether to include them in a diagnostics file.", "de-DE": "Cairn zählt nur auf diesem Rechner, welche Aktionen du nutzt (z. B. \"file/open: 14\"). Keine Dateinamen, Projekte, Personen oder Inhalte, und es wird nie etwas gesendet. Du entscheidest, ob sie in eine Diagnosedatei kommen.", "ja-JP": "Cairn はこのパソコン上だけで、使った操作の回数（例：\"file/open: 14\"）を数えます。ファイル名、プロジェクト、人、内容は含まれず、送信されることもありません。診断ファイルに含めるかどうかはあなたが決めます。", "zh-CN": "Cairn 只在这台电脑上统计你使用了哪些操作（例如 \"file/open: 14\"）。不包含文件名、项目、人员或内容，也绝不会发送。是否把它们放进诊断文件由你决定。" },
+  "usage.include": { en: "Include usage counts in the diagnostics file", "de-DE": "Nutzungszähler in die Diagnosedatei aufnehmen", "ja-JP": "診断ファイルに利用回数を含める", "zh-CN": "在诊断文件中包含使用次数" },
+  "usage.none": { en: "Nothing counted yet.", "de-DE": "Noch nichts gezählt.", "ja-JP": "まだ記録はありません。", "zh-CN": "尚未统计任何内容。" },
   "ctx.project": { en: "Project", "de-DE": "Projekt", "ja-JP": "プロジェクト", "zh-CN": "项目" },
   "files.showing": { en: "Showing {n} of {total} files", "de-DE": "{n} von {total} Dateien angezeigt", "ja-JP": "{total} 件中 {n} 件のファイルを表示中", "zh-CN": "显示 {total} 个文件中的 {n} 个" },
   "btn.showMore": { en: "Show more", "de-DE": "Mehr anzeigen", "ja-JP": "さらに表示", "zh-CN": "显示更多" },
@@ -3519,8 +3523,12 @@ async function doDiagnostics(btn) {
   const b = busy(btn, t("diag.busy"));
   try {
     const server = await getJSON("/api/v1/diagnostics");
+    // #95: usage counts join the file ONLY when the user ticked the box
+    const withUsage = $("usage-include") && $("usage-include").checked;
+    const usage = withUsage ? (await getJSON("/api/v1/usage")).usage : undefined;
     const bundle = {
       ...server,
+      usage_counts: usage,
       console: {
         user_agent: navigator.userAgent,
         language: LANG,
@@ -3569,6 +3577,17 @@ async function doQuit(btn) {
   }
   done(b);
 }
+/* #95: the user can see exactly what is counted */
+async function refreshUsage() {
+  const box = $("usage-list");
+  if (!box) return;
+  try {
+    const r = await getJSON("/api/v1/usage");
+    const rows = Object.entries((r.usage && r.usage.counts) || {}).sort((a, b) => b[1] - a[1]);
+    box.textContent = rows.length ? rows.map(([k, n]) => `${k}: ${n}`).join("\n") : t("usage.none");
+  } catch (_) { box.textContent = t("usage.none"); }
+}
+if ($("usage-fold")) $("usage-fold").addEventListener("toggle", (ev) => { if (ev.currentTarget.open) refreshUsage(); });
 if ($("btn-quit")) $("btn-quit").addEventListener("click", (ev) => doQuit(ev.currentTarget));
 if ($("btn-diagnostics")) $("btn-diagnostics").addEventListener("click", (ev) => doDiagnostics(ev.currentTarget));
 

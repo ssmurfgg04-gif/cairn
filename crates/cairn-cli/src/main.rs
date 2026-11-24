@@ -21,6 +21,7 @@ mod service;
 mod state_records;
 mod stop;
 mod tlbranch;
+mod usage;
 mod win_attach;
 
 use clap::{Parser, Subcommand};

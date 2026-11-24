@@ -56,6 +56,7 @@ pub async fn serve(addr: String, state: Arc<DaemonState>) -> anyhow::Result<()> 
         .route("/api/v1/quit", post(quit))
         .route("/api/v1/storage/free", post(storage_free))
         .route("/api/v1/team/default-role", post(team_default_role))
+        .route("/api/v1/usage", get(usage))
         // WO6-UI: full ctl parity over HTTP (same svc impls as the gRPC ctl server)
         .route("/api/v1/projects", get(projects))
         .route("/api/v1/attach", post(attach))
@@ -123,6 +124,11 @@ pub async fn serve(addr: String, state: Arc<DaemonState>) -> anyhow::Result<()> 
         .layer(axum::middleware::from_fn_with_state(
             token.clone(),
             security_gate,
+        ))
+        // #95: local-only feature counts (never sent anywhere)
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            usage_count,
         ))
         // #42: replayed POSTs (double clicks, retries) apply once
         .layer(axum::middleware::from_fn(idempotency))
@@ -368,6 +374,35 @@ async fn idempotency(
         }
     }
     axum::response::Response::from_parts(parts, axum::body::Body::from(bytes))
+}
+
+/// #95 usage counts. Policy (decided, see docs/REVIEW-BACKLOG.md #95):
+/// LOCAL ONLY. Count which console actions are used (`POST` route, ids
+/// stripped) and how often, plus first/last day. Never file names, paths,
+/// project/device ids, review content or timings. Nothing is sent
+/// anywhere; the counts live in `<home>/usage.json`, are visible in
+/// Settings, and join a diagnostics file only when the user ticks
+/// "Include usage counts".
+async fn usage_count(
+    State(state): State<Arc<DaemonState>>,
+    req: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let feature = (req.method() == axum::http::Method::POST)
+        .then(|| crate::usage::feature_of(req.uri().path()))
+        .flatten();
+    let res = next.run(req).await;
+    if let Some(f) = feature {
+        if res.status().is_success() {
+            let home = state.home.clone();
+            tokio::task::spawn_blocking(move || crate::usage::bump(&home, &f));
+        }
+    }
+    res
+}
+
+async fn usage(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
+    Json(json!({"ok": true, "usage": crate::usage::load(&state.home), "sent_anywhere": false}))
 }
 
 /// #94 correlation IDs: every dashboard response carries a short

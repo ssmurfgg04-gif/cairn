@@ -1917,3 +1917,6 @@ details.fold.adv[open] summary::after { transform: rotate(225deg); }
 /* #5 newcomer role */
 .team-newcomers { display: flex; align-items: center; gap: 8px; margin: 10px 0 4px; font-size: 13px; flex-wrap: wrap; }
 .team-newcomers .input { min-width: 260px; }
+
+/* #95 usage counts */
+.usage-list { font-size: 12px; max-height: 180px; overflow: auto; margin: 6px 0 0; white-space: pre-wrap; }

@@ -390,6 +390,12 @@
                 <input type="checkbox" id="notify-toggle">
                 <span><b data-i18n="notify.toggle">Desktop notifications</b><br><span class="note" data-i18n="notify.note">Only when Cairn is in the background, and only for things you'd act on: files ready, files needing attention, storage running low.</span></span>
               </label>
+              <details class="fold adv" id="usage-fold">
+                <summary data-i18n="usage.title">Usage counts</summary>
+                <p class="note" data-i18n="usage.note">Cairn counts which actions you use on this computer only. Nothing is ever sent.</p>
+                <pre class="mono usage-list" id="usage-list"></pre>
+              </details>
+              <label class="notify-row"><input type="checkbox" id="usage-include"> <span data-i18n="usage.include">Include usage counts in the diagnostics file</span></label>
               <div class="diag-row">
                 <button type="button" class="btn btn-ghost" id="btn-diagnostics" data-i18n="diag.btn">Send diagnostics</button>
                 <button type="button" class="btn btn-ghost btn-quit" id="btn-quit" data-i18n="quit.btn">Quit Cairn</button>

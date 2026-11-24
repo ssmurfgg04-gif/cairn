@@ -192,6 +192,15 @@ def main():
             check(bundle.get("kind") == "cairn-diagnostics" and bundle.get("doctor"), "diagnostics file downloads with the doctor report")
             check(msg["ref"] in json.dumps(bundle["console"]["recent_errors"]), "diagnostics carry the failed action's ref")
             check(token not in json.dumps(bundle), "diagnostics never contain the dashboard token")
+            check("usage_counts" not in bundle, "usage counts are NOT in diagnostics by default (#95)")
+            pg.check("#usage-include")
+            with pg.expect_download(timeout=20000) as dl2:
+                pg.evaluate("document.getElementById('btn-diagnostics').click()")
+            b2 = json.loads(Path(dl2.value.path()).read_text())
+            counts = (b2.get("usage_counts") or {}).get("counts", {})
+            check(bool(counts) and all(":" not in k or ":id" in k for k in counts) and project not in json.dumps(counts),
+                  "ticked: usage counts included, with no ids or project names", counts)
+            pg.uncheck("#usage-include")
 
             # #85 low-disk warning surfaces on Home
             pg.evaluate("showView('dashboard'); LOW_DISK = {free_bytes: 3 * 1024 ** 3, total_bytes: 1024 ** 4}; renderHomeStatus();")
