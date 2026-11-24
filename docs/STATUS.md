@@ -21,6 +21,22 @@ Legend: ✅ implemented + tests green · 🟨 implemented, platform-gated / hard
 
 
 
+## Round 32 (2026-11-24): CI green, supply chain, console + window product pass
+
+Per-item truth for the whole review lives in [`REVIEW-BACKLOG.md`](REVIEW-BACKLOG.md) (80 done · 4 partial · 22 open · 2 blocked, CI-checked).
+
+| Item | Status | Detail |
+|---|---|---|
+| CI | ✅ | `security` (11 RustSec advisories: zstd, tokio, rustix, url, orion, quinn-udp, rustls-webpki, webpki-roots, SQLite CVE via rusqlite 0.42 / sqlx 0.9 / r2d2_sqlite 0.37) and `beta` (dash-smoke token, windows-nle bpy, outbox flake that hid a serializing mock) green |
+| Supply chain (#68-#72) | ✅ / 🟨 signing | cargo-deny job; 170 action refs SHA-pinned; CycloneDX SBOM + Sigstore provenance per release; Windows signing wired, waiting on a certificate secret |
+| Console robustness (#34/#35/#57/#73/#74/#94) | ✅ | server-side file paging (the UI silently stopped at 300 rows); plain-language errors; request ids in headers, bodies and daemon.log; daemon/server log at `warn` by default (empty RUST_LOG meant ERROR-only); stale-token reload |
+| Multi-project (#7-#10/#28) | ✅ | one shared project context; People no longer hard-wired to the first project |
+| A11y (#75/#83) | ✅ | dialog focus trap + return; keyboard file rows that keep focus across refresh |
+| Support (#85/#93/#105) | ✅ | low-disk warning on Home; Send diagnostics (redacted, local file); opt-in background-only notifications |
+| Quit + window (#58/#60) | ✅ | Quit Cairn (Settings, tray, `cairn stop`); cairn-app starts its own daemon behind a start screen, single instance, remembers geometry, keeps foreign links in the browser, real multi-size icons |
+| Honesty fixes | ✅ | every synced file was reported "not on this computer" (placeholder = manifest_hash); `via=cloudinary` returned success for work never done; flag copy said "at the next swarm join" after flags went live |
+| Verification | ✅ | `scripts/ui_browser_check.py` (new CI job `dashboard-browser`): headless Chrome vs a real server + daemon, 1,200 files, two projects, 24 checks |
+
 ## Round 31 (2026-10-08) — the deployment round: NSIS installer + CI gate, meeting-point deployment (systemd/Docker/TLS runbook), Phase 2 cross-machine revoke + Phase 3 materialized view (ADR-0031 CLOSED), portal hardening + proxy copies, plain-language pass, docs truth
 
 Cross-agent note: rounds 30/31 run as parallel tasks (2-a revoke/rate-limit/hardening, 2-b plain-language UI, 2-c installer/deploy/docs, 2-d engine E2Es) and merge via the main thread. Rows below marked "(Task 2-x)" landed on those branches per the worklog task board — the wording states exactly what landed and what remains, and 🟨 rows name their gate.

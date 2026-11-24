@@ -1121,7 +1121,7 @@ fn tl_merge_blocking(base: &str, ours: &str, theirs: &str, semantic: bool) -> Js
 
 /// POST /api/v1/compress {project_id, media, preset} — production compression ladder.
 /// Local-first FFmpeg (H264 CRF23 → H265 CRF28 ~40% smaller → SVT-AV1 ~50%+),
-/// optional Cloudinary-via-Composio when CLOUDINARY_* env present (q_auto/f_auto).
+/// A `via: "cloudinary"` request is refused honestly (review #49: no cloud processing).
 /// Presets: proxy360 | proxy540 | web720 | archive. Returns bytes + recipe used.
 pub async fn compress(
     state: &Arc<DaemonState>,
@@ -1142,18 +1142,16 @@ pub async fn compress(
     if !full.is_file() {
         return json!({"ok": false, "error": "media not materialized — recall first"});
     }
-    // Cloud path: Composio Cloudinary (109 tools) when creds present — q_auto/f_auto.
-    let cloud = std::env::var("CLOUDINARY_CLOUD_NAME").is_ok()
-        && std::env::var("CLOUDINARY_API_KEY").is_ok();
+    // review #49/#50: cloud processing is NOT implemented. This branch used
+    // to answer {"ok": true, "via": "cloudinary", ...} with a recipe and a
+    // "next" hint while uploading and processing nothing, i.e. success for
+    // work never done. It now refuses plainly; nothing leaves the machine.
     if via == Some("cloudinary") {
-        if !cloud {
-            return json!(
-                {"ok": false, "error": "CLOUDINARY_CLOUD_NAME/API_KEY/SECRET required (Composio handles refresh)"}
-            );
-        }
-        return json!(
-            {"ok": true, "via": "cloudinary", "recipe": "q_auto,f_auto,sp_auto (20-40% smaller, 26.6MB→3.9MB class)", "next": "POST eager w720/q_auto via Composio CLOUDINARY toolkit"}
-        );
+        return json!({
+            "ok": false,
+            "code": "NOT_AVAILABLE",
+            "error": "cloud processing is not available: Cairn compresses on this computer only (omit `via`)",
+        });
     }
     // Local FFmpeg ladder (proxy-maker pattern: intra-frame for scrub, H264 short-GOP for size).
     let (height, crf, codec_args): (u32, u32, Vec<&str>) = match preset {

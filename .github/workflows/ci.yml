@@ -242,6 +242,8 @@ jobs:
       - run: pip install --quiet playwright==1.63.0
       - run: BIN="$PWD/target/release/cairn" python3 scripts/ui_browser_check.py
       - run: node scripts/check-i18n.mjs
+      # review #103: open backlog / contract-debt items keep an acceptance line
+      - run: python3 scripts/check-backlog.py
 
   # WO6-4: S3 wire conformance — our SigV4 presigner against a REAL S3-compatible
   # implementation (MinIO service container, strict site region). Proves presign

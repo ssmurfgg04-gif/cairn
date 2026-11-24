@@ -237,23 +237,7 @@ real escape: a dangling leaf over an outside-pointing intermediate
 symlink used to be accepted; safe_join now canonicalizes the deepest
 existing ancestor before falling back.
 
-Tracked next (not started, ordered by the review's own P0-first logic):
-
-- **#4/#5 (P0):** join codes → single-use, expiring, revocable (today:
-  TTL only, no single-use burn, no revocation list); unknown-device
-  fail-open `Editor` → make the default explicit and configurable
-  (fail-closed pending state) — more urgent now that rosters sync.
-- **#7–#12 (P0/P1):** eliminate `first()`-style fallbacks for mutations;
-  project context + project-scoped Team/review/markers/link surfaces.
-- **#41–#44 (P1):** duplicate-collision guard, idempotent mutations,
-  disable-during-mutation buttons, restore confirmation hardening.
-- **#45–#51 (P1):** move ffmpeg/ffprobe out of the async runtime;
-  bundle-or-drop media tooling.
-- **#52–#56 (P1):** polling cost (visibility-aware expensive views),
-  telemetry caching, fetch timeouts.
-- **#57–#60, #61, #65–#72 (P1):** desktop lifecycle, token-in-URL
-  reduction, secret-log audit, review-endpoint rate limiting,
-  cargo-deny/SBOM/provenance/signing.
-- **#73–#78 (P1):** user-facing error language, a11y finishes, i18n
-  audit; **#79+ (P2)** polish, storage language, versions/restore
-  wording, diagnostics/correlation IDs.
+**Superseded (2026-11-24):** the per-item status of all 108 review items
+now lives in [`docs/REVIEW-BACKLOG.md`](REVIEW-BACKLOG.md), checked in CI
+by `scripts/check-backlog.py` (review #103). Every open item there carries
+an acceptance line; this register keeps the contract-level debts above.
