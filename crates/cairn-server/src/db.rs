@@ -40,7 +40,8 @@ pub async fn open(path: &Path) -> Result<sqlx::SqlitePool, CairnError> {
 pub async fn migrate(pool: &sqlx::SqlitePool) -> Result<(), CairnError> {
     // sqlite driver executes one statement per execute; split on ';' boundaries safely
     for stmt in split_sql(DDL) {
-        sqlx::query(&stmt)
+        // DDL is a compile-time constant split locally — never user input.
+        sqlx::query(sqlx::AssertSqlSafe(stmt))
             .execute(pool)
             .await
             .map_err(|e| CairnError::new(cairn_core::ErrorKind::Io, format!("ddl: {e}")))?;

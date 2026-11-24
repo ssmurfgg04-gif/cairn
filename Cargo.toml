@@ -27,10 +27,10 @@ exclude = ["crates/cairn-x/fuzz", "crates/cairn-app"]
 version = "4.0.0"
 edition = "2021"
 license = "Apache-2.0"
-# 1.85 floor (from 1.80): modern toolchains carry the compiler-side wins the
+# 1.94 floor (from 1.85; sqlx 0.9 requires it). Earlier 1.85 rationale: modern toolchains carry the compiler-side wins the
 # devx round documents (cheaper wakers, faster incr-comp); the toolchain pin
 # lives in rust-toolchain.toml (1.98.0) and CI pins per-job.
-rust-version = "1.85"
+rust-version = "1.94"
 
 [workspace.dependencies]
 # async runtime / gRPC / HTTP
@@ -58,13 +58,16 @@ async-trait = "0.1"
 bytes = "1"
 
 # storage
-rusqlite = { version = "0.32", features = ["bundled"] }
-# r2d2 reader pool (ADR-0025): 0.25.x is the release line built against OUR
-# rusqlite 0.32 — a version mismatch would duplicate the rusqlite crate and
+rusqlite = { version = "0.42", features = ["bundled", "fallible_uint"] }
+# rusqlite 0.42 / sqlx 0.9 share libsqlite3-sys 0.40 (RUSTSEC-2026-0459 fix:
+# >=0.39). `fallible_uint` keeps u64 ToSql (errors past i64::MAX), which 0.41+
+# dropped from the default set.
+# r2d2 reader pool (ADR-0025): 0.37.x is the release line built against OUR
+# rusqlite 0.42 — a version mismatch would duplicate the rusqlite crate and
 # break the PooledConnection<->Connection type identity.
 r2d2 = "0.8"
-r2d2_sqlite = "0.25"
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
+r2d2_sqlite = "0.37"
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite"] }
 memmap2 = "0.9"
 
 # hashing / chunking / compression

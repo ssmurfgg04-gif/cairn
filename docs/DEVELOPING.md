@@ -10,7 +10,7 @@ new machine, read this top to bottom; everything it references is committed.
 automatically on first build: `clippy`, `rustfmt`, `rust-analyzer`,
 `rust-src`. `rustup update` moves the default toolchain; the repo pin moves
 deliberately per round (CI pins per-job — see `tl-merge-gate`'s 1.98.0).
-`rust-version = "1.85"` in the workspace manifest is the MSRV floor.
+`rust-version = "1.94"` in the workspace manifest is the MSRV floor (raised from 1.85: sqlx 0.9, needed for the RUSTSEC-2026-0459 SQLite fix, requires 1.94).
 
 ## 2. `cargo check` for fast feedback
 

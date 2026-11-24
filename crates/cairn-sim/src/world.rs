@@ -414,19 +414,23 @@ pub async fn run_schedule(seed: u64, ticks: u64) -> crate::Verdict {
     v
 }
 
+// Sim-harness helpers: SQL comes from this crate's own literals, never input.
 async fn sqlx_insert(state: &cairn_server::ServerState, sql: &str) {
-    sqlx::query(sql).execute(&state.db).await.unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(sql.to_owned()))
+        .execute(&state.db)
+        .await
+        .unwrap();
 }
 
 async fn sqlx_count(state: &cairn_server::ServerState, sql: &str) -> i64 {
-    sqlx::query_scalar(sql)
+    sqlx::query_scalar(sqlx::AssertSqlSafe(sql.to_owned()))
         .fetch_one(&state.db)
         .await
         .unwrap_or(0)
 }
 
 async fn sqlx_all(state: &cairn_server::ServerState, sql: &str) -> Vec<(String, usize)> {
-    sqlx::query(sql)
+    sqlx::query(sqlx::AssertSqlSafe(sql.to_owned()))
         .fetch_all(&state.db)
         .await
         .unwrap_or_default()
