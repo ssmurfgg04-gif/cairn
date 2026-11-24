@@ -483,6 +483,26 @@ impl ProjectManager {
         best
     }
 
+    /// The same `(project_id, root, files_synced, pending)` shape as
+    /// [`first`](Self::first), for a NAMED project (review #7/#10: views
+    /// must follow the console's selected project, not "whichever sorts
+    /// first"). `None` when that project is not attached.
+    pub async fn view_of(&self, project_id: &str) -> Option<(String, PathBuf, u64, u64)> {
+        let map = self.runtimes.read().await;
+        for rt in map.values() {
+            if rt.project_id == project_id {
+                let v = rt.view.read().await;
+                return Some((
+                    rt.project_id.clone(),
+                    rt.workspace.clone(),
+                    v.files_synced,
+                    v.pending_outbox,
+                ));
+            }
+        }
+        None
+    }
+
     /// Emit a presence event onto the daemon-wide hub.
     pub fn send_presence(&self, ev: LocalPresence) -> usize {
         self.presence.send(ev).unwrap_or(0)

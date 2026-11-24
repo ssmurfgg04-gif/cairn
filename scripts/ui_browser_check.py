@@ -73,8 +73,11 @@ def main():
             print(f"[ui-check] port {port} already in use - stop the old process first")
             return 2
     srv_home, home, root = WORK / "server", WORK / "dev", WORK / "root"
-    for d in (srv_home, home, root / "clips"):
+    root2 = WORK / "second"
+    for d in (srv_home, home, root / "clips", root2):
         d.mkdir(parents=True)
+    for i in range(3):
+        (root2 / f"note{i}.txt").write_text("second project\n")
     for i in range(N_FILES):
         (root / "clips" / f"shot{i:04d}.txt").write_text(f"take {i}\n")
 
@@ -104,6 +107,9 @@ def main():
         r = api("/api/v1/attach", token, {"root_path": str(root)})
         assert r.get("ok"), r
         project = r["project_id"]
+        r2 = api("/api/v1/attach", token, {"root_path": str(root2)})
+        assert r2.get("ok"), r2
+        project2 = r2["project_id"]
         end = time.time() + 180
         while time.time() < end:
             page = api(f"/api/v1/files?project={project}&limit=1", token)
@@ -122,6 +128,8 @@ def main():
             pg.on("pageerror", lambda e: errors.append(str(e)))
             pg.goto(f"http://{UI}/")
             pg.click("#nav-files")
+            pg.wait_for_function(f"[...document.querySelectorAll('#files-project option')].some(o => o.value === '{project}')", timeout=20000)
+            pg.select_option("#files-project", project)
             pg.wait_for_selector("#files-body tr.file-row", timeout=20000)
             pg.wait_for_function("document.querySelectorAll('#files-body tr.file-row').length >= 500", timeout=20000)
             n = pg.locator("#files-body tr.file-row").count()
@@ -165,6 +173,16 @@ def main():
                   "user sees a plain sentence + ref, not the raw error", msg)
             logged = msg["ref"] in (WORK / "daemon.log").read_text(errors="replace")
             check(logged, "the same ref is in daemon.log")
+
+            # #8/#10: one project context drives People too
+            pg.click("#nav-people")
+            pg.wait_for_selector("#people-project", state="visible", timeout=10000)
+            pg.select_option("#people-project", project2)
+            same = pg.evaluate("document.getElementById('files-project').value")
+            check(same == project2, "People picker moves the shared project context", same)
+            team = pg.evaluate("getJSON('/api/v1/team?project=' + encodeURIComponent(selectedProject()))")
+            got = (team.get("projects") or [{}])[0].get("project_id")
+            check(got == project2, "People shows the selected project, not the first one", got)
 
             check(not errors, "no uncaught page errors", errors[:3])
 

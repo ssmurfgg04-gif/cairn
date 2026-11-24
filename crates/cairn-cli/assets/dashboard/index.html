@@ -293,7 +293,7 @@
         <div class="files-bar">
           <h2 class="view-title" id="files-title" data-i18n="nav.files">Files</h2>
           <div class="files-tools">
-            <select id="files-project" class="input select" aria-label="project"></select>
+            <select id="files-project" class="input select project-ctx" aria-label="project"></select>
             <input id="files-filter" class="input search-files" type="text" spellcheck="false" autocomplete="off"
                    data-i18n-attr="placeholder:files.filter" placeholder="search this project" aria-label="filter files">
             <button type="button" class="btn btn-ghost" id="btn-history">
@@ -328,6 +328,7 @@
            primary destination, joined by "Who's editing" (review #17). -->
       <section class="view" id="view-people" aria-labelledby="people-title">
         <h2 class="view-title" id="people-title" data-i18n="nav.people">People</h2>
+        <label class="project-ctx-wrap" hidden><span data-i18n="ctx.project">Project</span> <select class="input select project-ctx" id="people-project" aria-label="project"></select></label>
         <p class="howto-lede" data-i18n="people.lede">Who shares this project, and what each computer is doing right now.</p>
         <div class="settings-col">
           <article class="card" id="set-team">
@@ -596,6 +597,7 @@
       <!-- ============ REVIEW: publish + guest links ============ -->
       <section class="view" id="view-review" aria-labelledby="review-title">
         <h2 class="view-title" id="review-title" data-i18n="view.review">Review</h2>
+        <label class="project-ctx-wrap" hidden><span data-i18n="ctx.project">Project</span> <select class="input select project-ctx" id="review-project" aria-label="project"></select></label>
         <p class="howto-lede" data-i18n="review.lede">Publish a cut, generate a link, share it. Your client opens it in a browser and leaves frame notes.</p>
         <div class="settings-col">
           <article class="card">

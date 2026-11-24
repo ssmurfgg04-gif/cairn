@@ -665,8 +665,12 @@ async fn state_records(
     Json(service::views::state_records(&state, &project, &family))
 }
 
-async fn team(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
-    Json(service::views::team(&state).await)
+async fn team(
+    State(state): State<Arc<DaemonState>>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Json<serde_json::Value> {
+    let project = q.get("project").cloned().unwrap_or_default();
+    Json(service::views::team(&state, &project).await)
 }
 
 async fn search(

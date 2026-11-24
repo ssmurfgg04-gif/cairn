@@ -569,8 +569,15 @@ pub async fn files_page(
 /// GET /api/v1/team — members, the acting device's role, the swarm join
 /// code (invite), and the newest audit decisions (audit #5: RBAC was in
 /// the CLI only; now the studio roster is a first-class surface).
-pub async fn team(state: &DaemonState) -> serde_json::Value {
-    let Some((pid, root, files_synced, pending)) = state.projects.first().await else {
+/// #10: People is project-scoped. `project` names the console's current
+/// project; empty keeps the single-project convenience (first attached).
+pub async fn team(state: &DaemonState, project: &str) -> serde_json::Value {
+    let picked = if project.is_empty() {
+        state.projects.first().await
+    } else {
+        state.projects.view_of(project).await
+    };
+    let Some((pid, root, files_synced, pending)) = picked else {
         return json!({"ok": true, "projects": []});
     };
     let store = match open_store(state.home.as_path()) {

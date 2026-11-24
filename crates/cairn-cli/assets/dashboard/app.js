@@ -339,6 +339,7 @@ const STR = {
   "toast.copied": { en: "copied", "de-DE": "kopiert", "ja-JP": "コピーしました", "zh-CN": "已复制" },
   "toast.denied": { en: "Cairn couldn't do that: {e}", "de-DE": "Cairn konnte das nicht ausführen: {e}", "ja-JP": "実行できませんでした: {e}", "zh-CN": "无法完成该操作：{e}" },
   "toast.failed": { en: "That didn't work: {e}", "de-DE": "Das hat nicht geklappt: {e}", "ja-JP": "うまくいきませんでした: {e}", "zh-CN": "操作失败：{e}" },
+  "ctx.project": { en: "Project", "de-DE": "Projekt", "ja-JP": "プロジェクト", "zh-CN": "项目" },
   "files.showing": { en: "Showing {n} of {total} files", "de-DE": "{n} von {total} Dateien angezeigt", "ja-JP": "{total} 件中 {n} 件のファイルを表示中", "zh-CN": "显示 {total} 个文件中的 {n} 个" },
   "btn.showMore": { en: "Show more", "de-DE": "Mehr anzeigen", "ja-JP": "さらに表示", "zh-CN": "显示更多" },
   "a11y.filesKeys": { en: "File list. Use the up and down arrow keys to move between files, Enter to open, and the menu key for more actions.", "de-DE": "Dateiliste. Mit den Pfeiltasten nach oben und unten zwischen Dateien wechseln, mit Eingabe öffnen und mit der Menütaste weitere Aktionen aufrufen.", "ja-JP": "ファイル一覧。上下の矢印キーで移動し、Enter で開き、メニューキーでその他の操作を表示します。", "zh-CN": "文件列表。使用上下方向键在文件之间移动，按回车键打开，按菜单键查看更多操作。" },
@@ -1470,18 +1471,32 @@ async function refreshUpdate() {
 
 /* ============================== projects + sessions + paths ============================== */
 
+/* #8: ONE current project for the whole console. Every picker
+   (select.project-ctx: Files, People, Review) shows the same value; the
+   Files picker is the source of truth (selectedProject reads it). The
+   People/Review pickers appear only when there is a real choice. */
 function fillProjectSelects() {
-  const el = $("files-project");
-  if (!el) return;
-  const prev = el.value;
-  el.innerHTML = "";
-  for (const p of PROJECTS) {
-    const opt = document.createElement("option");
-    opt.value = p.project_id;
-    opt.textContent = p.display_name ? `${p.display_name}` : p.project_id;
-    el.appendChild(opt);
+  const src = $("files-project");
+  if (!src) return;
+  const prev = src.value;
+  for (const el of document.querySelectorAll("select.project-ctx")) {
+    el.innerHTML = "";
+    for (const p of PROJECTS) {
+      const opt = document.createElement("option");
+      opt.value = p.project_id;
+      opt.textContent = p.display_name ? `${p.display_name}` : p.project_id;
+      el.appendChild(opt);
+    }
+    if (prev && PROJECTS.some((p) => p.project_id === prev)) el.value = prev;
+    const wrap = el.closest(".project-ctx-wrap");
+    if (wrap) wrap.hidden = PROJECTS.length < 2;
   }
-  if (prev && PROJECTS.some((p) => p.project_id === prev)) el.value = prev;
+}
+function setProjectContext(pid) {
+  for (const el of document.querySelectorAll("select.project-ctx")) el.value = pid;
+  refreshFiles();
+  refreshTeam();
+  if (ACTIVE_VIEW === "review") refreshReviewPage();
 }
 
 /* ============================== recent sessions panel ==============================
@@ -2770,7 +2785,7 @@ function renderTeam(r) {
 
 async function refreshTeam() {
   try {
-    const r = await getJSON("/api/v1/team");
+    const r = await getJSON(`/api/v1/team?project=${encodeURIComponent(selectedProject())}`);
     renderTeam(r);
   } catch { /* team stays at its last honest value */ }
   refreshStateRecords();
@@ -2817,7 +2832,7 @@ function renderStateRecordsInner() {
 }
 async function refreshStateRecords() {
   try {
-    const r = await getJSON("/api/v1/state-records?family=member");
+    const r = await getJSON(`/api/v1/state-records?family=member&project=${encodeURIComponent(selectedProject())}`);
     renderStateRecords(r);
   } catch { /* the roster news stays at its last honest value */ }
 }
@@ -3429,7 +3444,9 @@ $("files-filter").addEventListener("input", () => {
   window.clearTimeout(searchTimer);
   searchTimer = window.setTimeout(refreshFiles, 220);
 });
-$("files-project").addEventListener("change", refreshFiles);
+for (const el of document.querySelectorAll("select.project-ctx")) {
+  el.addEventListener("change", () => setProjectContext(el.value));
+}
 
 /* ============================== orchestration ============================== */
 
@@ -3792,5 +3809,5 @@ document.getElementById("merge-search-btn")?.addEventListener("click", async () 
   try {
     const r = await getJSON(`/api/v1/search?q=${encodeURIComponent(q)}`);
     if (out) out.innerHTML = `<pre class="mono" style="background:var(--subtle);padding:8px;border-radius:8px;white-space:pre-wrap">${JSON.stringify(r, null, 2)}</pre>`;
-  } catch { const r2 = await getJSON(`/api/v1/files?project=${PROJECTS[0]?.project_id||""}`).then(j=>j.files||[]).catch(()=>[]); const hits = r2.filter(f=>f.path.includes(q)).map(f=>f.path).join("\n"); if (out) out.textContent = hits || t("merge.noMatches"); }
+  } catch { const r2 = await getJSON(`/api/v1/files?project=${encodeURIComponent(selectedProject())}`).then(j=>j.files||[]).catch(()=>[]); const hits = r2.filter(f=>f.path.includes(q)).map(f=>f.path).join("\n"); if (out) out.textContent = hits || t("merge.noMatches"); }
 });
