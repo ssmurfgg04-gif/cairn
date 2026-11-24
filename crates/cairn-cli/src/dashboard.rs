@@ -57,6 +57,7 @@ pub async fn serve(addr: String, state: Arc<DaemonState>) -> anyhow::Result<()> 
         .route("/api/v1/storage/free", post(storage_free))
         .route("/api/v1/team/default-role", post(team_default_role))
         .route("/api/v1/usage", get(usage))
+        .route("/api/v1/file/ticket", post(file_ticket))
         // WO6-UI: full ctl parity over HTTP (same svc impls as the gRPC ctl server)
         .route("/api/v1/projects", get(projects))
         .route("/api/v1/attach", post(attach))
@@ -259,19 +260,18 @@ async fn security_gate(
     }
 
     if req.uri().path().starts_with("/api/") {
+        // #61: the token travels ONLY in the x-cairn-token header (the live
+        // stream reads with fetch + headers now). The one URL-borne
+        // credential left is a download ticket: single use, 60s, bound to
+        // one project+path, minted by a token-authenticated POST.
+        if req.uri().path() == "/api/v1/file/download" && download_ticket_ok(req.uri()) {
+            return next.run(req).await;
+        }
         let provided = req
             .headers()
             .get("x-cairn-token")
             .and_then(|v| v.to_str().ok())
             .map(str::to_owned)
-            .or_else(|| {
-                req.uri().query().and_then(|q| {
-                    q.split('&').find_map(|kv| {
-                        let (k, v) = kv.split_once('=')?;
-                        (k == "t").then(|| v.to_owned())
-                    })
-                })
-            })
             .unwrap_or_default();
         if !token_eq(&provided, &expected) {
             // #57: a distinct machine code so an open page whose daemon
@@ -291,6 +291,63 @@ async fn security_gate(
 
     req.extensions_mut().insert(DashToken(expected));
     next.run(req).await
+}
+
+/// #61 one-time download tickets: ticket -> (project, path, expiry).
+type TicketMap = std::collections::HashMap<String, (String, String, std::time::Instant)>;
+static DOWNLOAD_TICKETS: std::sync::Mutex<Option<TicketMap>> = std::sync::Mutex::new(None);
+const TICKET_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+
+fn mint_download_ticket(project: &str, path: &str) -> String {
+    let ticket = uuid::Uuid::new_v4().simple().to_string();
+    let mut g = DOWNLOAD_TICKETS.lock().unwrap_or_else(|p| p.into_inner());
+    let m = g.get_or_insert_with(Default::default);
+    m.retain(|_, (_, _, at)| at.elapsed() < TICKET_TTL);
+    m.insert(
+        ticket.clone(),
+        (
+            project.to_owned(),
+            path.to_owned(),
+            std::time::Instant::now(),
+        ),
+    );
+    ticket
+}
+
+/// Consume a ticket: valid only once, only within TTL, only for the exact
+/// project+path it was minted for.
+fn download_ticket_ok(uri: &axum::http::Uri) -> bool {
+    let Ok(axum::extract::Query(q)) =
+        axum::extract::Query::<std::collections::HashMap<String, String>>::try_from_uri(uri)
+    else {
+        return false;
+    };
+    let (Some(t), Some(project), Some(path)) = (q.get("ticket"), q.get("project"), q.get("path"))
+    else {
+        return false;
+    };
+    let mut g = DOWNLOAD_TICKETS.lock().unwrap_or_else(|p| p.into_inner());
+    let Some(m) = g.as_mut() else { return false };
+    match m.remove(t) {
+        Some((p, f, at)) => at.elapsed() < TICKET_TTL && &p == project && &f == path,
+        None => false,
+    }
+}
+
+async fn file_ticket(body: Option<Json<serde_json::Value>>) -> Json<serde_json::Value> {
+    let Some(Json(v)) = body else {
+        return Json(json!({"ok": false, "error": "body required: {project, path}"}));
+    };
+    let (project, path) = (
+        v["project"].as_str().unwrap_or_default(),
+        v["path"].as_str().unwrap_or_default(),
+    );
+    if project.is_empty() || path.is_empty() {
+        return Json(json!({"ok": false, "error": "project and path are required"}));
+    }
+    Json(
+        json!({"ok": true, "ticket": mint_download_ticket(project, path), "expires_in_s": TICKET_TTL.as_secs()}),
+    )
 }
 
 /// #42 idempotent mutations. A POST carrying `idempotency-key` (the
@@ -1442,5 +1499,34 @@ mod request_id_tests {
         let c = app().oneshot(post("k-2")).await.unwrap();
         assert!(c.headers().get("x-idempotent-replay").is_none());
         assert_eq!(HITS.load(Ordering::SeqCst), 2, "a new key is a new action");
+    }
+
+    #[test]
+    fn download_tickets_are_single_use_and_bound_to_one_file() {
+        let t = super::mint_download_ticket("p1", "cuts/a b.mov");
+        let uri = |tk: &str, path: &str| -> axum::http::Uri {
+            format!(
+                "/api/v1/file/download?project=p1&path={}&ticket={tk}",
+                path.replace(' ', "%20")
+            )
+            .parse()
+            .unwrap()
+        };
+        assert!(
+            !super::download_ticket_ok(&uri(&t, "cuts/other.mov")),
+            "wrong file is refused"
+        );
+        // a refused attempt consumed it: tickets never get a second try
+        assert!(!super::download_ticket_ok(&uri(&t, "cuts/a b.mov")));
+        let t2 = super::mint_download_ticket("p1", "cuts/a b.mov");
+        assert!(
+            super::download_ticket_ok(&uri(&t2, "cuts/a b.mov")),
+            "exact file, first use"
+        );
+        assert!(
+            !super::download_ticket_ok(&uri(&t2, "cuts/a b.mov")),
+            "second use is refused"
+        );
+        assert!(!super::download_ticket_ok(&uri("made-up", "cuts/a b.mov")));
     }
 }

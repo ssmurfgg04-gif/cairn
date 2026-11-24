@@ -724,10 +724,6 @@ function cairnToken() {
 function authHeaders() {
   return { "X-Cairn-Token": cairnToken() };
 }
-function withToken(url) {
-  return url + (url.includes("?") ? "&" : "?") + "t=" + encodeURIComponent(cairnToken());
-}
-
 /* #43 hygiene: every JSON fetch carries an AbortController timeout.
    15s default - long enough for a slow loopback store, short enough
    that a hung request surfaces as an actionable toast instead of a
@@ -2314,7 +2310,11 @@ async function doFileOpen(project, path, btn) {
 
 async function doFileDownload(project, path) {
   if (!project || !path) return;
-  const url = withToken(`/api/v1/file/download?project=${encodeURIComponent(project)}&path=${encodeURIComponent(path)}`);
+  // #61: a one-time, 60s ticket for exactly this file - the dashboard
+  // token never appears in a URL (history, logs, Referer)
+  const tk = await postJSON("/api/v1/file/ticket", { project, path });
+  if (!tk || !tk.ok) { toast(t("toast.denied", { e: humanError(tk) }), true); return; }
+  const url = `/api/v1/file/download?project=${encodeURIComponent(project)}&path=${encodeURIComponent(path)}&ticket=${encodeURIComponent(tk.ticket)}`;
   // honest UX: a placeholder answers 409 AFTER the browser already said
   // "downloading..." - preflight one cheap HEAD and route the failure to
   // the action that actually fixes it (recall), not to a dead download.
@@ -3299,17 +3299,40 @@ function renderLive() {
 function liveSseOpen() {
   if (LIVE_SSE) return;
   try {
-    LIVE_SSE = new EventSource(withToken("/api/v1/live"));
-    LIVE_SSE.onmessage = (msg) => {
+    // #61: a streaming fetch instead of EventSource, so the token rides in
+    // a header, never in the URL. Same text/event-stream wire format.
+    const ctl = new AbortController();
+    LIVE_SSE = { close: () => ctl.abort() };
+    (async () => {
       try {
-        const ev = JSON.parse(msg.data);
-        LIVE_ROWS.set(ev.from, liveRow(ev));
-        for (const [k, r] of LIVE_ROWS) if (Date.now() - r.at > 15000) LIVE_ROWS.delete(k);
-        renderLive();
-      } catch { /* skip malformed event */ }
-    };
-    LIVE_SSE.onerror = () => { /* stream closed: next refresh re-opens */ };
-  } catch { /* EventSource unavailable - snapshot polling still covers */ }
+        const res = await fetch("/api/v1/live", { headers: { Accept: "text/event-stream", ...authHeaders() }, signal: ctl.signal });
+        if (!res.ok || !res.body) return;
+        const reader = res.body.getReader();
+        const dec = new TextDecoder();
+        let buf = "";
+        for (;;) {
+          const { value, done: end } = await reader.read();
+          if (end) break;
+          buf += dec.decode(value, { stream: true });
+          let cut;
+          while ((cut = buf.indexOf("\n\n")) >= 0) {
+            const frame = buf.slice(0, cut);
+            buf = buf.slice(cut + 2);
+            const data = frame.split("\n").filter((l) => l.startsWith("data:")).map((l) => l.slice(5).trimStart()).join("\n");
+            if (!data) continue;
+            try {
+              const ev = JSON.parse(data);
+              LIVE_ROWS.set(ev.from, liveRow(ev));
+              for (const [k, r] of LIVE_ROWS) if (Date.now() - r.at > 15000) LIVE_ROWS.delete(k);
+              renderLive();
+            } catch { /* skip malformed event */ }
+          }
+        }
+      } catch { /* aborted or closed: next refresh re-opens */ } finally {
+        LIVE_SSE = null;
+      }
+    })();
+  } catch { /* streams unavailable - snapshot polling still covers */ }
 }
 
 async function refreshLive() {

@@ -126,6 +126,8 @@ def main():
             pg = browser.new_page(viewport={"width": 1400, "height": 900}, bypass_csp=True)
             errors = []
             pg.on("pageerror", lambda e: errors.append(str(e)))
+            urls = []
+            pg.on("request", lambda r: urls.append(r.url))
             pg.goto(f"http://{UI}/")
             pg.click("#nav-files")
             pg.wait_for_function(f"[...document.querySelectorAll('#files-project option')].some(o => o.value === '{project}')", timeout=20000)
@@ -216,6 +218,19 @@ def main():
             pg.wait_for_function("[...document.querySelectorAll('.toast')].some(t => /isn't on this computer/.test(t.textContent))", timeout=10000)
             check(True, "a link to an unknown project says so plainly")
             pg.evaluate(f"document.getElementById('files-filter').value=''; setProjectContext('{project}')")
+
+            # #61 downloads use a one-time ticket; the token is never in a URL
+            got = pg.evaluate(f"""async () => {{
+                const tk = await postJSON('/api/v1/file/ticket', {{ project: '{project}', path: 'clips/shot0001.txt' }});
+                const u = `/api/v1/file/download?project={project}&path=clips%2Fshot0001.txt&ticket=${{tk.ticket}}`;
+                const a = await fetch(u); const body = await a.text();
+                const b = await fetch(u);
+                return {{ first: a.status, body, again: b.status }};
+            }}""")
+            check(got["first"] == 200 and got["body"] == "take 1\n", "download via one-time ticket delivers the file", got)
+            check(got["again"] == 403, "a used ticket is refused", got)
+            leaked = [u for u in urls if token in u]
+            check(not leaked, "the dashboard token never appears in a request URL", leaked[:2])
 
             # #86 Free up space: confirm explains, then the sweep answers honestly
             pg.evaluate("showView('settings')")
