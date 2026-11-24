@@ -21,9 +21,23 @@ Legend: ✅ implemented + tests green · 🟨 implemented, platform-gated / hard
 
 
 
+## Round 33 (2026-11-24): every review item built or decided
+
+[`REVIEW-BACKLOG.md`](REVIEW-BACKLOG.md): **102 done · 4 decided · 2 blocked · 0 open** (blocked = a code-signing certificate, a Premiere runner).
+
+| Area | Items | What changed |
+|---|---|---|
+| Wording + flows | #29 #30 #32 #37 #59 #87 #89 | versions read "Saved 5 min ago · who"; two review roles; links auto-copied; specific empty states; quiet recovery line; plain conflict dialog |
+| Scale + speed | #48 #53 #54 #55 #82 | bounded media-job queue; 10s view cache; server-side media filter; fair cross-project search |
+| Safety | #5 #42 #61 | owner-configurable newcomer role; idempotent POSTs; token never in a URL (one-time download tickets, header-auth live stream) |
+| Storage + reach | #80 #86 #104 | phone-width Files; Free up space; cairn:// links open in the window |
+| Product signal | #95 | decided: local-only action counts, never sent, shared only when ticked |
+| Structure | #96 #100 (+ decided #97 #98) | middleware module; FAILURE-DOMAINS.md |
+| Decided not to build | #81 #97 #98 #108 | rationale in the tracker |
+
 ## Round 32 (2026-11-24): CI green, supply chain, console + window product pass
 
-Per-item truth for the whole review lives in [`REVIEW-BACKLOG.md`](REVIEW-BACKLOG.md) (80 done · 4 partial · 22 open · 2 blocked, CI-checked).
+Per-item truth for the whole review lives in [`REVIEW-BACKLOG.md`](REVIEW-BACKLOG.md) (CI-checked; see round 33 for the closing totals).
 
 | Item | Status | Detail |
 |---|---|---|

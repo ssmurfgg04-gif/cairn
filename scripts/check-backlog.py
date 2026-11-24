@@ -3,7 +3,8 @@
 
 Fails when:
   * docs/REVIEW-BACKLOG.md does not list every item 1..108 exactly once,
-  * a row's status is not Done / Partial / Open / Blocked,
+  * a row's status is not Done / Decided / Partial / Open / Blocked,
+  * a Decided row has no written "Decision:" rationale,
   * an Open / Partial / Blocked row has no "Acceptance" (or, for Blocked,
     no stated blocker), i.e. an open item silently turned into prose,
   * a CONTRACT-DEBT.md item that is not marked CLOSED lacks an
@@ -30,12 +31,14 @@ missing = sorted(set(range(1, 109)) - set(rows))
 if missing:
     errors.append(f"items missing from the tracker: {missing}")
 for n, (status, ev) in sorted(rows.items()):
-    if status not in {"Done", "Partial", "Open", "Blocked"}:
+    if status not in {"Done", "Decided", "Partial", "Open", "Blocked"}:
         errors.append(f"#{n}: unknown status {status!r}")
     elif status in {"Open", "Partial"} and "Acceptance" not in ev and "decision" not in ev:
         errors.append(f"#{n} is {status} but has no acceptance line")
     elif status == "Blocked" and not re.search(r"needs|requires", ev):
         errors.append(f"#{n} is Blocked but does not say what it needs")
+    elif status == "Decided" and "Decision:" not in ev:
+        errors.append(f"#{n} is Decided but gives no Decision: rationale")
     elif status == "Done" and not ev.strip():
         errors.append(f"#{n} is Done with no evidence")
 
