@@ -792,6 +792,7 @@ pub async fn review_publish(
     frames: Option<u64>,
     fps: Option<&str>,
 ) -> Json {
+    crate::service::views::invalidate_view("review:"); // #54
     if project.is_empty() || media.is_empty() {
         return json!({"ok": false, "error": "project_id, media required"});
     }
@@ -921,7 +922,8 @@ pub async fn review_link(
     role: &str,
     ttl_h: i64,
 ) -> Json {
-    // the route's contract bounds: 1h..=1y, default 30 days
+    crate::service::views::invalidate_view("review:"); // #54
+                                                       // the route's contract bounds: 1h..=1y, default 30 days
     let ttl_h = clamp_ttl_hours(ttl_h);
     let root = resolve_root(state, project).await;
     let Some(root) = root else {
@@ -994,6 +996,7 @@ pub async fn review_link(
 /// NOW. Expiry was never revocation: the "that link leaked" path needs a
 /// same-day kill switch (mom-test P0 follow-up).
 pub async fn review_revoke(state: &Arc<DaemonState>, project: &str, token: &str) -> Json {
+    crate::service::views::invalidate_view("review:"); // #54
     let token = token.trim().to_string();
     if token.is_empty() {
         return json!({"ok": false, "error": "token required"});

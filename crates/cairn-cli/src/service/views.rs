@@ -217,6 +217,16 @@ pub fn leases(state: &DaemonState) -> serde_json::Value {
 /// disk meter: the home store's disk AND every attached workspace's disk
 /// (a video studio's project drive is rarely the system drive).
 pub async fn storage(state: &DaemonState) -> serde_json::Value {
+    let key = format!("storage:{}", state.home.display());
+    if let Some(v) = cached_view(&key) {
+        return v;
+    }
+    let v = storage_uncached(state).await;
+    store_view(&key, &v);
+    v
+}
+
+async fn storage_uncached(state: &DaemonState) -> serde_json::Value {
     let home = state.home.as_path();
     let Some(store) = open_store(home) else {
         return json!({"ok": false, "error": "store unavailable"});
@@ -279,6 +289,15 @@ pub async fn storage(state: &DaemonState) -> serde_json::Value {
 /// touched). Such links are flagged `revoked_remotely` and stop counting as
 /// live; the portal refuses them via `RootProvider::link_revocations`.
 pub async fn review_summary(state: &DaemonState) -> serde_json::Value {
+    if let Some(v) = cached_view("review:") {
+        return v;
+    }
+    let v = review_summary_uncached(state).await;
+    store_view("review:", &v);
+    v
+}
+
+async fn review_summary_uncached(state: &DaemonState) -> serde_json::Value {
     let mut out = Vec::new();
     for rt in state.projects.list().await {
         let root = rt.workspace.clone();
@@ -417,7 +436,7 @@ pub async fn markers_export(
 /// or `cairn proxy status --verify` settles the doubt).
 #[cfg(test)]
 pub async fn files(state: &DaemonState, project: &str, needle: &str) -> serde_json::Value {
-    files_page(state, project, needle, 0, None).await
+    files_page_kind(state, project, needle, 0, None, false).await
 }
 
 /// True when `path` holds the real bytes locally (not a cloud placeholder,
@@ -441,6 +460,50 @@ fn is_local_copy(path: &std::path::Path, size: u64) -> bool {
     meta.len() >= size
 }
 
+/// Short-lived cache for read-heavy console views (review #53/#54):
+/// storage telemetry (blob stats + disk statvfs) and review summaries are
+/// recomputed at most every `VIEW_CACHE_TTL`, however many tabs poll.
+/// Mutations that change a cached view call [`invalidate_view`].
+pub const VIEW_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(10);
+static VIEW_CACHE: std::sync::Mutex<
+    Option<std::collections::HashMap<String, (std::time::Instant, serde_json::Value)>>,
+> = std::sync::Mutex::new(None);
+
+fn cached_view(key: &str) -> Option<serde_json::Value> {
+    let g = VIEW_CACHE.lock().ok()?;
+    let (at, v) = g.as_ref()?.get(key)?;
+    (at.elapsed() < VIEW_CACHE_TTL).then(|| v.clone())
+}
+
+fn store_view(key: &str, v: &serde_json::Value) {
+    if v["ok"] != json!(true) {
+        return; // never cache a failure
+    }
+    if let Ok(mut g) = VIEW_CACHE.lock() {
+        g.get_or_insert_with(Default::default)
+            .insert(key.to_owned(), (std::time::Instant::now(), v.clone()));
+    }
+}
+
+/// Drop a cached view so the next read is fresh (call after mutations).
+pub fn invalidate_view(prefix: &str) {
+    if let Ok(mut g) = VIEW_CACHE.lock() {
+        if let Some(m) = g.as_mut() {
+            m.retain(|k, _| !k.starts_with(prefix));
+        }
+    }
+}
+
+/// Media the review portal can play (#55: filtered server-side so Review
+/// never downloads the whole file list to fill one picker).
+pub fn is_review_media(path: &str) -> bool {
+    const EXT: [&str; 11] = [
+        "mp4", "mov", "m4v", "mkv", "avi", "webm", "mpg", "mpeg", "mxf", "r3d", "braw",
+    ];
+    path.rsplit_once('.')
+        .is_some_and(|(_, e)| EXT.iter().any(|x| e.eq_ignore_ascii_case(x)))
+}
+
 /// Hard ceiling on one page (#34): a 200k-file project must never
 /// serialize every row into one response or one DOM.
 pub const FILES_PAGE_MAX: usize = 5000;
@@ -451,12 +514,25 @@ pub const FILES_PAGE_MAX: usize = 5000;
 /// "showing 500 of 12,400" and fetch more on demand instead of silently
 /// truncating. `limit = None` keeps the legacy all-rows answer for
 /// in-process callers.
+#[cfg(test)]
 pub async fn files_page(
     state: &DaemonState,
     project: &str,
     needle: &str,
     offset: usize,
     limit: Option<usize>,
+) -> serde_json::Value {
+    files_page_kind(state, project, needle, offset, limit, false).await
+}
+
+/// [`files_page`] with an optional review-media filter (#55).
+pub async fn files_page_kind(
+    state: &DaemonState,
+    project: &str,
+    needle: &str,
+    offset: usize,
+    limit: Option<usize>,
+    media_only: bool,
 ) -> serde_json::Value {
     let needle = needle.to_lowercase();
     let Some(store) = open_store(state.home.as_path()) else {
@@ -535,6 +611,9 @@ pub async fn files_page(
             continue;
         }
         if !needle.is_empty() && !row.path.to_lowercase().contains(&needle) {
+            continue;
+        }
+        if media_only && !is_review_media(&row.path) {
             continue;
         }
         total_files += 1;
@@ -1221,5 +1300,24 @@ mod tests {
             !is_local_copy(&d.path().join("missing.mov"), 1),
             "missing = not here"
         );
+    }
+
+    #[test]
+    fn review_media_filter_and_view_cache() {
+        assert!(is_review_media("cuts/Hero_v3.MOV"));
+        assert!(is_review_media("a.braw"));
+        assert!(!is_review_media("edit/project.prproj"));
+        assert!(!is_review_media("noext"));
+        let v = json!({"ok": true, "n": 1});
+        store_view("test:a", &v);
+        assert_eq!(cached_view("test:a"), Some(v));
+        invalidate_view("test:");
+        assert_eq!(
+            cached_view("test:a"),
+            None,
+            "invalidated views are recomputed"
+        );
+        store_view("test:b", &json!({"ok": false}));
+        assert_eq!(cached_view("test:b"), None, "failures are never cached");
     }
 }

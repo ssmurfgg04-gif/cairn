@@ -662,7 +662,10 @@ async fn files(
     let needle = q.get("q").cloned().unwrap_or_default();
     let offset = q.get("offset").and_then(|v| v.parse().ok()).unwrap_or(0);
     let limit = q.get("limit").and_then(|v| v.parse().ok());
-    Json(service::views::files_page(&state, &project, &needle, offset, limit).await)
+    let media_only = q.get("kind").is_some_and(|k| k == "media");
+    Json(
+        service::views::files_page_kind(&state, &project, &needle, offset, limit, media_only).await,
+    )
 }
 
 async fn state_records(
@@ -970,17 +973,17 @@ async fn review_publish(
     let Some(Json(v)) = body else {
         return Json(json!({"ok": false, "error": "body required: {project_id, media}"}));
     };
-    Json(
-        service::actions::review_publish(
-            &state,
-            v["project_id"].as_str().unwrap_or_default(),
-            v["media"].as_str().unwrap_or_default(),
-            v["title"].as_str().unwrap_or_default(),
-            v["frames"].as_u64(),
-            v["fps"].as_str(),
-        )
-        .await,
+    let r = service::actions::review_publish(
+        &state,
+        v["project_id"].as_str().unwrap_or_default(),
+        v["media"].as_str().unwrap_or_default(),
+        v["title"].as_str().unwrap_or_default(),
+        v["frames"].as_u64(),
+        v["fps"].as_str(),
     )
+    .await;
+    service::views::invalidate_view("review:"); // #54: fresh after the mutation
+    Json(r)
 }
 
 async fn review_link(
@@ -988,18 +991,18 @@ async fn review_link(
     body: Option<Json<serde_json::Value>>,
 ) -> Json<serde_json::Value> {
     let v = body.map(|Json(j)| j).unwrap_or(json!({}));
-    Json(
-        service::actions::review_link(
-            &state,
-            v["project_id"].as_str().unwrap_or_default(),
-            v["note"].as_str().unwrap_or("Client"),
-            v["role"].as_str().unwrap_or("commenter"),
-            // contract freeze #2: optional ttl_hours, default 720 (=30
-            // days); the service action clamps to 1..=8760
-            v["ttl_hours"].as_i64().unwrap_or(720),
-        )
-        .await,
+    let r = service::actions::review_link(
+        &state,
+        v["project_id"].as_str().unwrap_or_default(),
+        v["note"].as_str().unwrap_or("Client"),
+        v["role"].as_str().unwrap_or("commenter"),
+        // contract freeze #2: optional ttl_hours, default 720 (=30
+        // days); the service action clamps to 1..=8760
+        v["ttl_hours"].as_i64().unwrap_or(720),
     )
+    .await;
+    service::views::invalidate_view("review:"); // #54: fresh after the mutation
+    Json(r)
 }
 
 async fn review_revoke(
@@ -1009,14 +1012,14 @@ async fn review_revoke(
     let Some(Json(v)) = body else {
         return Json(json!({"ok": false, "error": "body required: {token}"}));
     };
-    Json(
-        service::actions::review_revoke(
-            &state,
-            v["project_id"].as_str().unwrap_or_default(),
-            v["token"].as_str().unwrap_or_default(),
-        )
-        .await,
+    let r = service::actions::review_revoke(
+        &state,
+        v["project_id"].as_str().unwrap_or_default(),
+        v["token"].as_str().unwrap_or_default(),
     )
+    .await;
+    service::views::invalidate_view("review:"); // #54: fresh after the mutation
+    Json(r)
 }
 
 async fn tl_merge(body: Option<Json<serde_json::Value>>) -> Json<serde_json::Value> {

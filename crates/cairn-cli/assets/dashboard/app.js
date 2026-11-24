@@ -182,7 +182,7 @@ const STR = {
   "attach.root": { en: "/path/to/project", "de-DE": "/pfad/zum/projekt", "ja-JP": "/path/to/project", "zh-CN": "/path/to/project" },
   "attach.project": { en: "project id (optional)", "de-DE": "Projekt-ID (optional)", "ja-JP": "プロジェクト ID（任意）", "zh-CN": "项目 ID（可选）" },
   "versions.label": { en: "label (e.g. before color pass)", "de-DE": "Beschriftung (z.B. vor dem Colorgrading)", "ja-JP": "ラベル（例：カラーパスの前）", "zh-CN": "标签（如：调色前）" },
-  "versions.unlabeled": { en: "untitled version", "de-DE": "unbenannte Version", "ja-JP": "無題のバージョン", "zh-CN": "未命名版本" },
+  "versions.unlabeled": { en: "Automatic save {n}", "de-DE": "Automatische Sicherung {n}", "ja-JP": "自動保存 {n}", "zh-CN": "自动保存 {n}" },
   "recall.path": { en: "one file (optional, empty = whole project)", "de-DE": "eine Datei (optional, leer = ganzes Projekt)", "ja-JP": "1 ファイル（任意、空ならプロジェクト全体）", "zh-CN": "单个文件（可选，留空 = 整个项目）" },
 
   "dash.title": { en: "Your projects, in sync", "de-DE": "Deine Projekte, synchron", "ja-JP": "プロジェクトを同期したまま", "zh-CN": "项目随时同步" },
@@ -263,8 +263,8 @@ const STR = {
   "th.sync": { en: "status", "de-DE": "Status", "ja-JP": "状態", "zh-CN": "状态" },
   "th.actions": { en: "actions", "de-DE": "Aktionen", "ja-JP": "操作", "zh-CN": "操作" },
   "th.status": { en: "status", "de-DE": "Status", "ja-JP": "状態", "zh-CN": "状态" },
-  "th.label": { en: "label", "de-DE": "Beschriftung", "ja-JP": "ラベル", "zh-CN": "标签" },
-  "th.author": { en: "author", "de-DE": "Autor", "ja-JP": "作成者", "zh-CN": "作者" },
+  "th.label": { en: "Version", "de-DE": "Version", "ja-JP": "バージョン", "zh-CN": "版本" },
+  "th.author": { en: "Saved by", "de-DE": "Gespeichert von", "ja-JP": "保存した人", "zh-CN": "保存者" },
   "th.member": { en: "member", "de-DE": "Mitglied", "ja-JP": "メンバー", "zh-CN": "成员" },
   "th.role": { en: "role", "de-DE": "Rolle", "ja-JP": "役割", "zh-CN": "角色" },
   "th.pinned": { en: "kept on this computer", "de-DE": "auf diesem Rechner behalten", "ja-JP": "このパソコンに保持中", "zh-CN": "已保留在此电脑" },
@@ -369,6 +369,15 @@ const STR = {
   "notify.note": { en: "Only when Cairn is in the background, and only for things you'd act on: files ready, files needing attention, storage running low.", "de-DE": "Nur wenn Cairn im Hintergrund ist und nur für Dinge, auf die du reagieren würdest: Dateien bereit, Dateien brauchen Aufmerksamkeit, Speicher wird knapp.", "ja-JP": "Cairn がバックグラウンドにあるときだけ、対応が必要なことだけを通知します：ファイルの準備完了、確認が必要なファイル、ストレージ残量の低下。", "zh-CN": "仅在 Cairn 处于后台时通知，且只通知需要你处理的事：文件已就绪、文件需要处理、存储空间不足。" },
   "notify.blocked": { en: "Notifications are blocked for Cairn in this browser or system settings.", "de-DE": "Benachrichtigungen für Cairn sind in den Browser- oder Systemeinstellungen blockiert.", "ja-JP": "このブラウザーまたはシステム設定で Cairn の通知がブロックされています。", "zh-CN": "Cairn 的通知已在此浏览器或系统设置中被阻止。" },
   "notify.ready": { en: "Files are ready on this computer.", "de-DE": "Dateien sind auf diesem Rechner bereit.", "ja-JP": "ファイルがこのパソコンで利用可能になりました。", "zh-CN": "文件已在此电脑上就绪。" },
+  "versions.when": { en: "Saved {when}", "de-DE": "Gespeichert {when}", "ja-JP": "{when}に保存", "zh-CN": "保存于{when}" },
+  "review.forTeam": { en: "This link is for my team (sees internal notes)", "de-DE": "Dieser Link ist für mein Team (sieht interne Notizen)", "ja-JP": "このリンクはチーム用（内部メモも表示）", "zh-CN": "此链接供我的团队使用（可查看内部备注）" },
+  "review.copied": { en: "Link copied. Paste it into your message.", "de-DE": "Link kopiert. Füge ihn in deine Nachricht ein.", "ja-JP": "リンクをコピーしました。メッセージに貼り付けてください。", "zh-CN": "链接已复制。粘贴到你的消息中即可。" },
+  "files.emptyNoProject": { en: "Add the folder where your project lives and its files show up here.", "de-DE": "Füge den Ordner deines Projekts hinzu, dann erscheinen seine Dateien hier.", "ja-JP": "プロジェクトのフォルダーを追加すると、ここにファイルが表示されます。", "zh-CN": "添加项目所在的文件夹，其文件就会显示在这里。" },
+  "files.emptyFolder": { en: "This project folder is empty. Put media in it and Cairn picks it up automatically.", "de-DE": "Dieser Projektordner ist leer. Lege Medien hinein, Cairn erkennt sie automatisch.", "ja-JP": "このプロジェクトフォルダーは空です。メディアを入れると Cairn が自動で取り込みます。", "zh-CN": "此项目文件夹为空。把媒体放进去，Cairn 会自动识别。" },
+  "files.emptyFilter": { en: "No files match \"{q}\".", "de-DE": "Keine Dateien passen zu \"{q}\".", "ja-JP": "「{q}」に一致するファイルはありません。", "zh-CN": "没有与“{q}”匹配的文件。" },
+  "files.clearFilter": { en: "Clear search", "de-DE": "Suche löschen", "ja-JP": "検索をクリア", "zh-CN": "清除搜索" },
+  "files.openFolder": { en: "Open folder", "de-DE": "Ordner öffnen", "ja-JP": "フォルダーを開く", "zh-CN": "打开文件夹" },
+  "state.recovered": { en: "Back to normal. Cairn reconnected and caught up on its own.", "de-DE": "Wieder normal. Cairn hat sich selbst neu verbunden und aufgeholt.", "ja-JP": "通常に戻りました。Cairn が自動で再接続して追いつきました。", "zh-CN": "已恢复正常。Cairn 已自动重新连接并完成同步。" },
   "ctx.project": { en: "Project", "de-DE": "Projekt", "ja-JP": "プロジェクト", "zh-CN": "项目" },
   "files.showing": { en: "Showing {n} of {total} files", "de-DE": "{n} von {total} Dateien angezeigt", "ja-JP": "{total} 件中 {n} 件のファイルを表示中", "zh-CN": "显示 {total} 个文件中的 {n} 个" },
   "btn.showMore": { en: "Show more", "de-DE": "Mehr anzeigen", "ja-JP": "さらに表示", "zh-CN": "显示更多" },
@@ -1048,6 +1057,7 @@ let HEALTHY = false;
 let DAEMON_UP = null;
 let VERSION_STR = "";
 let LAST_TEAM = null;      // /api/v1/team payload (People view + Home computers count)
+let TROUBLE_SINCE = 0;   // #59: when the current trouble began (flap guard)
 let LAST_STATE = null;     // previous derived state (announce transitions, #78)
 
 /* declared up front: paintState() reads these on its first call (#85/#105) */
@@ -1134,7 +1144,11 @@ function paintState() {
   // avoid chatty feedback on every poll cycle
   if (LAST_STATE && LAST_STATE !== st) {
     if ((st === "error" || st === "bad") && LAST_STATE !== "error" && LAST_STATE !== "bad") toast(stateLabel(st), st === "bad");
+    // #59: auto-recovery is visible but quiet - one polite line, no modal
+    else if (st === "ok" && ["error", "bad", "retry"].includes(LAST_STATE) && TROUBLE_SINCE && Date.now() - TROUBLE_SINCE >= 10000) toast(t("state.recovered"));
   }
+  if (["error", "bad", "retry"].includes(st)) { if (!TROUBLE_SINCE) TROUBLE_SINCE = Date.now(); }
+  else TROUBLE_SINCE = 0;
   LAST_STATE = st;
   renderFooter();
   renderHero();
@@ -2033,7 +2047,14 @@ function renderFilesInner(r, project) {
   const keepScroll = scroller ? scroller.scrollTop : 0;
   body.innerHTML = "";
   if (!r || r.ok !== true || !r.files || r.files.length === 0) {
-    body.innerHTML = `<tr><td colspan="4" class="empty">${esc(t("empty.files"))}</td></tr>`;
+    // #37: say which empty this is, and offer the one next step
+    const q = ($("files-filter") && $("files-filter").value.trim()) || "";
+    let msg, cta, act;
+    if (!project) { msg = t("files.emptyNoProject"); cta = t("btn.addWs"); act = () => openPanel("panel-add"); }
+    else if (q) { msg = t("files.emptyFilter", { q }); cta = t("files.clearFilter"); act = () => { $("files-filter").value = ""; refreshFiles(); }; }
+    else { msg = t("files.emptyFolder"); cta = t("files.openFolder"); act = () => doFileOpen(project, ""); }
+    body.innerHTML = `<tr><td colspan="4" class="empty files-empty"><p>${esc(msg)}</p><button type="button" class="btn btn-primary">${esc(cta)}</button></td></tr>`;
+    body.querySelector(".files-empty .btn").addEventListener("click", act);
     FOOT.files = 0;
     FOOT.synced = 0;
     renderFooter();
@@ -2927,13 +2948,17 @@ function renderSnapshots(snapshots) {
   }
   for (const s of snapshots.slice(0, 10)) {
     const labeled = !!(s.label && String(s.label).trim());
-    const version = labeled ? String(s.label) : t("versions.unlabeled");
+    const version = labeled ? String(s.label) : t("versions.unlabeled", { n: s.snapshot_seq ?? "" });
     const tr = document.createElement("tr");
-    // human version row: the label (or "untitled version") is the row's
-    // words; the commit hash is technical detail living in the title
+    // #29/#87: a version reads as words + when + who. The commit hash is
+    // support detail: tooltip only, never in the row.
+    const tsRaw = Number(s.server_ts || 0);
+    const tsMs = tsRaw > 1e12 ? tsRaw : tsRaw * 1000;
+    const team = LAST_TEAM && LAST_TEAM.projects && LAST_TEAM.projects[0];
+    const who = team ? memberName(team, s.author) : shortDevice(s.author);
     tr.innerHTML =
-      `<td class="sans" title="${esc(s.commit_hash || "")}">${esc(version)}${labeled ? "" : ` <span class="mono dim">${esc((s.commit_hash || "").slice(0, 10))}</span>`}</td>` +
-      `<td class="sans dim">${esc(s.author || "")}</td>` +
+      `<td class="sans" title="${esc(s.commit_hash || "")}"><span>${esc(version)}</span>${tsMs ? `<br><span class="dim">${esc(t("versions.when", { when: relTime(tsMs) }))}</span>` : ""}</td>` +
+      `<td class="sans dim" title="${esc(s.author || "")}">${esc(who || "")}</td>` +
       `<td class="sans"><button type="button" class="btn btn-ghost btn-sm" data-restore="${esc(s.commit_hash)}">${esc(t("btn.restoreThis"))}</button></td>`;
     tr.querySelector("[data-restore]").addEventListener("click", async (ev) => {
       const project = selectedProject();
@@ -3847,7 +3872,8 @@ async function refreshReviewMedia() {
   if (!project) { sel.innerHTML = ""; REVIEW_MEDIA_PID = ""; return; }
   if (REVIEW_MEDIA_PID === project && sel.options.length) return; // stable
   try {
-    const files = await getJSON(`/api/v1/files?project=${encodeURIComponent(project)}`);
+    // #55: the server filters to playable media; no whole-list download
+    const files = await getJSON(`/api/v1/files?project=${encodeURIComponent(project)}&kind=media&limit=2000`);
     const media = (files.files || []).filter((f) => !f.placeholder && REVIEW_MEDIA_RE.test(f.path));
     sel.innerHTML = "";
     for (const f of media) {
@@ -3898,7 +3924,10 @@ document.getElementById("connect-join")?.addEventListener("click", async (ev) =>
 document.getElementById("review-link-create")?.addEventListener("click", async (ev) => {
   const btn = ev.currentTarget;
   const note = document.getElementById("review-link-note")?.value || "Client";
-  const role = document.getElementById("review-link-role")?.value || "commenter";
+  // #30: two everyday roles; the internal "studio" role is a team checkbox
+  const role = document.getElementById("review-link-team")?.checked
+    ? "studio"
+    : (document.getElementById("review-link-role")?.value || "commenter");
   // expiry chooser (contract freeze item 2): the select's value IS the
   // ttl in hours - 168/720/2160 = 7/30/90 days; the backend defaults to
   // 720 when the key is absent
@@ -3912,14 +3941,16 @@ document.getElementById("review-link-create")?.addEventListener("click", async (
       if (r.ok) {
         const full = `${location.origin}${r.link}`;
         const expires = new Date(Date.now() + ttl * 3600e3).toLocaleDateString(LANG);
-        // the spec'd result card: "✓ Link ready · <note> · expires <date>"
-        // + [Copy link] + who can open it. No auto-copy: the button is
-        // the explicit act (clipboard permission prompts surprise people).
+        // #32: the link lands on the clipboard straight away when the
+        // browser allows it (the click is still the user's gesture), and the
+        // card says so; otherwise one big Copy button does it.
+        const copied = await copyText(full);
         out.innerHTML =
-          `<p class="review-link-ok">✓ ${esc(t("review.linkReady"))} · ${esc(note)} · ${esc(t("review.linkExpiresOn", { d: expires }))}</p>` +
-          `<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><code class="mono" style="word-break:break-all">${esc(full)}</code>` +
-          `<button type="button" class="btn btn-ghost btn-sm" data-copy="${esc(full)}">${esc(t("review.linkCopy"))}</button></div>` +
+          `<p class="review-link-ok">✓ ${esc(copied ? t("review.copied") : t("review.linkReady"))} · ${esc(note)} · ${esc(t("review.linkExpiresOn", { d: expires }))}</p>` +
+          `<div class="review-link-row"><code class="mono">${esc(full)}</code>` +
+          `<button type="button" class="btn ${copied ? "btn-ghost" : "btn-primary"}" data-copy="${esc(full)}">${esc(copied ? t("toast.copied") : t("review.linkCopy"))}</button></div>` +
           `<p class="note" style="margin:6px 0 0">${esc(t("review.linkAnyone"))}</p>`;
+        if (copied) toast(t("review.copied"));
         refreshReviewPage();
       } else {
         out.textContent = t("toast.failed", { e: humanError(r) });

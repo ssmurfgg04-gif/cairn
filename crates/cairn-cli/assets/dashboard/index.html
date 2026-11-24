@@ -635,7 +635,8 @@
             <header class="card-head"><h3 class="card-title" data-i18n="review.linkTitle">Generate review link</h3></header>
             <div class="card-body" style="display:flex;gap:8px;flex-wrap:wrap;align-items:end">
               <label style="flex:1"><span data-i18n="review.noteLabel">Note</span><input id="review-link-note" class="input" data-i18n-attr="placeholder:review.notePh" placeholder="Client A" style="width:100%"></label>
-              <label><span data-i18n="review.roleLabel">Role</span><select id="review-link-role" class="input"><option value="commenter" data-i18n="review.roleCommenter">Can comment</option><option value="viewer" data-i18n="review.roleViewer">View only</option><option value="studio" data-i18n="review.roleStudio">Studio (internal)</option></select></label>
+              <label><span data-i18n="review.roleLabel">Role</span><select id="review-link-role" class="input"><option value="commenter" data-i18n="review.roleCommenter">Can comment</option><option value="viewer" data-i18n="review.roleViewer">View only</option></select></label>
+              <label class="review-team-opt"><input type="checkbox" id="review-link-team"> <span data-i18n="review.forTeam">This link is for my team (sees internal notes)</span></label>
               <label><span data-i18n="review.expiresLabel">Expires</span><select id="review-link-ttl" class="input"><option value="168" data-i18n="review.ttl7">7 days</option><option value="720" selected data-i18n="review.ttl30">30 days</option><option value="2160" data-i18n="review.ttl90">90 days</option></select></label>
               <button type="button" class="btn btn-primary" id="review-link-create" data-i18n="review.linkCreate">Generate link</button>
             </div>
