@@ -3,7 +3,7 @@
 // - they are include_str!'d into the daemon binary, so a stale build would
 // serve stale UI) with the %%CAIRN_TOKEN%% placeholder filled, plus
 // contract-shaped stubs for every /api/v1 endpoint the console calls. The
-// shapes mirror crates/cairn-cli/src/dashboard.rs + the frozen contract in
+// shapes mirror crates/cairn-cli/src/dashboard/ + the frozen contract in
 // the worklog (proxy generate 200/409, review link ttl_hours, restore
 // checkpoint_version, state-records records).
 //
