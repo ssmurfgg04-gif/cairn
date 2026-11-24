@@ -317,19 +317,24 @@ fn mint_download_ticket(project: &str, path: &str) -> String {
 /// Consume a ticket: valid only once, only within TTL, only for the exact
 /// project+path it was minted for.
 fn download_ticket_ok(uri: &axum::http::Uri) -> bool {
-    let Ok(axum::extract::Query(q)) =
+    let Ok(axum::extract::Query(query)) =
         axum::extract::Query::<std::collections::HashMap<String, String>>::try_from_uri(uri)
     else {
         return false;
     };
-    let (Some(t), Some(project), Some(path)) = (q.get("ticket"), q.get("project"), q.get("path"))
+    let (Some(ticket), Some(project), Some(path)) =
+        (query.get("ticket"), query.get("project"), query.get("path"))
     else {
         return false;
     };
-    let mut g = DOWNLOAD_TICKETS.lock().unwrap_or_else(|p| p.into_inner());
-    let Some(m) = g.as_mut() else { return false };
-    match m.remove(t) {
-        Some((p, f, at)) => at.elapsed() < TICKET_TTL && &p == project && &f == path,
+    let mut guard = DOWNLOAD_TICKETS.lock().unwrap_or_else(|p| p.into_inner());
+    let Some(tickets) = guard.as_mut() else {
+        return false;
+    };
+    match tickets.remove(ticket) {
+        Some((minted_project, minted_path, at)) => {
+            at.elapsed() < TICKET_TTL && &minted_project == project && &minted_path == path
+        }
         None => false,
     }
 }
