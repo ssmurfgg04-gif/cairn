@@ -53,6 +53,28 @@ jobs:
           RUSTFLAGS: -C target-feature=+crt-static --cfg tokio_unstable
         run: cargo build --release -p cairn-tray --bin cairn-tray
 
+      # #72 code signing. Configure once: repository secrets
+      # WINDOWS_CERT_PFX_BASE64 (base64 of the .pfx) + WINDOWS_CERT_PASSWORD.
+      # Absent secrets = a notice and unsigned artifacts, exactly as before.
+      - name: Import the code-signing certificate (when configured)
+        shell: pwsh
+        env:
+          PFX_B64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          PFX_PASS: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          if (-not $env:PFX_B64) { Write-Output "::notice::no signing certificate configured"; exit 0 }
+          $pfx = Join-Path $env:RUNNER_TEMP "cairn-sign.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:PFX_B64))
+          $sec = ConvertTo-SecureString $env:PFX_PASS -AsPlainText -Force
+          $cert = Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $sec
+          Remove-Item $pfx
+          "CAIRN_SIGN_THUMBPRINT=$($cert.Thumbprint)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Sign the engine and tray
+        shell: pwsh
+        run: pwsh scripts/sign-windows.ps1 target\release\cairn.exe target\release\cairn-tray.exe
+
       - name: Build the native window (Tauri NSIS bundle, ADR-0022)
         working-directory: crates/cairn-app
         shell: pwsh
@@ -60,7 +82,13 @@ jobs:
           $ErrorActionPreference = "Stop"
           # tauri-cli on the pinned toolchain (cached by rust-cache's prefix)
           cargo install tauri-cli --version ^2 --locked
-          cargo tauri build --bundles nsis
+          if ($env:CAIRN_SIGN_THUMBPRINT) {
+            # Tauri signs both the window exe and its NSIS installer
+            $cfg = @{ bundle = @{ windows = @{ certificateThumbprint = $env:CAIRN_SIGN_THUMBPRINT; digestAlgorithm = "sha256"; timestampUrl = "http://timestamp.digicert.com" } } } | ConvertTo-Json -Depth 5 -Compress
+            cargo tauri build --bundles nsis --config $cfg
+          } else {
+            cargo tauri build --bundles nsis
+          }
           $bundle = Get-ChildItem "target\release\bundle\nsis\*-setup.exe" | Select-Object -First 1
           if (-not $bundle) { throw "NSIS bundle missing after tauri build" }
           Write-Host "NSIS bundle: $($bundle.Name) ($([int]($bundle.Length / 1MB)) MiB)"
