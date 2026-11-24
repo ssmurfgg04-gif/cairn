@@ -811,9 +811,11 @@ async function getJSON(url) {
 }
 
 async function postJSON(url, body) {
+  // #42: one key per user action; the daemon applies a replay only once
+  const key = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random()).replace(/[^0-9a-z-]/gi, "").slice(0, 64);
   const res = await fetchWithTimeout(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders() },
+    headers: { "Content-Type": "application/json", "idempotency-key": key, ...authHeaders() },
     body: JSON.stringify(body || {}),
   });
   const out = await readBody(res, url);

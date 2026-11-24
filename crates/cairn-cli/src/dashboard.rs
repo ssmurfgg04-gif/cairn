@@ -124,6 +124,8 @@ pub async fn serve(addr: String, state: Arc<DaemonState>) -> anyhow::Result<()> 
             token.clone(),
             security_gate,
         ))
+        // #42: replayed POSTs (double clicks, retries) apply once
+        .layer(axum::middleware::from_fn(idempotency))
         // #94: outermost, so even gate denials carry a support reference.
         .layer(axum::middleware::from_fn(request_id))
         .with_state(state);
@@ -283,6 +285,89 @@ async fn security_gate(
 
     req.extensions_mut().insert(DashToken(expected));
     next.run(req).await
+}
+
+/// #42 idempotent mutations. A POST carrying `idempotency-key` (the
+/// console sends a fresh one per user action) is applied at most once:
+/// a repeat of a COMPLETED request gets the stored answer back
+/// (`x-idempotent-replay: 1`), and a repeat that arrives while the first
+/// is still running is refused as busy (409) instead of running twice.
+/// Keys live 10 minutes, in memory; only small JSON answers are stored.
+async fn idempotency(
+    req: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::http::{HeaderValue, Method, StatusCode};
+    use axum::response::IntoResponse;
+    const TTL: std::time::Duration = std::time::Duration::from_secs(600);
+    enum Slot {
+        Running,
+        Done(StatusCode, axum::body::Bytes),
+    }
+    static SEEN: std::sync::Mutex<
+        Option<std::collections::HashMap<String, (std::time::Instant, Slot)>>,
+    > = std::sync::Mutex::new(None);
+
+    let key = (req.method() == Method::POST)
+        .then(|| req.headers().get("idempotency-key"))
+        .flatten()
+        .and_then(|v| v.to_str().ok())
+        .filter(|k| !k.is_empty() && k.len() <= 64)
+        .map(|k| format!("{}|{k}", req.uri().path()));
+    let Some(key) = key else {
+        return next.run(req).await;
+    };
+    {
+        let mut g = SEEN.lock().unwrap_or_else(|p| p.into_inner());
+        let map = g.get_or_insert_with(Default::default);
+        map.retain(|_, (at, _)| at.elapsed() < TTL);
+        match map.get(&key) {
+            Some((_, Slot::Done(code, body))) => {
+                let mut res = (*code, body.clone()).into_response();
+                let h = res.headers_mut();
+                h.insert(
+                    axum::http::header::CONTENT_TYPE,
+                    HeaderValue::from_static("application/json"),
+                );
+                h.insert("x-idempotent-replay", HeaderValue::from_static("1"));
+                return res;
+            }
+            Some((_, Slot::Running)) => {
+                return (
+                    StatusCode::CONFLICT,
+                    Json(
+                        json!({"ok": false, "code": "IN_PROGRESS", "error": "already in progress"}),
+                    ),
+                )
+                    .into_response();
+            }
+            None => {
+                map.insert(key.clone(), (std::time::Instant::now(), Slot::Running));
+            }
+        }
+    }
+    let res = next.run(req).await;
+    let (parts, body) = res.into_parts();
+    let bytes = axum::body::to_bytes(body, 256 * 1024)
+        .await
+        .unwrap_or_default();
+    {
+        let mut g = SEEN.lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(map) = g.as_mut() {
+            if parts.status.is_server_error() {
+                map.remove(&key); // a crash-y attempt may be retried
+            } else {
+                map.insert(
+                    key,
+                    (
+                        std::time::Instant::now(),
+                        Slot::Done(parts.status, bytes.clone()),
+                    ),
+                );
+            }
+        }
+    }
+    axum::response::Response::from_parts(parts, axum::body::Body::from(bytes))
 }
 
 /// #94 correlation IDs: every dashboard response carries a short
@@ -1279,5 +1364,48 @@ mod request_id_tests {
         let (id, _) = call("/api/v1/ok", Some("not hex; <script>")).await;
         assert_ne!(id, "not hex; <script>");
         assert_eq!(id.len(), 12);
+    }
+
+    #[tokio::test]
+    async fn idempotency_key_applies_a_post_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static HITS: AtomicUsize = AtomicUsize::new(0);
+        let app = || {
+            Router::new()
+                .route(
+                    "/api/v1/do",
+                    axum::routing::post(|| async {
+                        let n = HITS.fetch_add(1, Ordering::SeqCst) + 1;
+                        Json(json!({"ok": true, "n": n}))
+                    }),
+                )
+                .layer(axum::middleware::from_fn(super::idempotency))
+        };
+        let post = |k: &str| {
+            Request::builder()
+                .method("POST")
+                .uri("/api/v1/do")
+                .header("idempotency-key", k)
+                .body(Body::empty())
+                .unwrap()
+        };
+        let a = app().oneshot(post("k-1")).await.unwrap();
+        let b = app().oneshot(post("k-1")).await.unwrap();
+        assert_eq!(b.headers()["x-idempotent-replay"], "1");
+        let body = |r: axum::response::Response| async move {
+            serde_json::from_slice::<serde_json::Value>(
+                &axum::body::to_bytes(r.into_body(), 1 << 16).await.unwrap(),
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            body(a).await["n"],
+            body(b).await["n"],
+            "replay returns the first answer"
+        );
+        assert_eq!(HITS.load(Ordering::SeqCst), 1, "the handler ran once");
+        let c = app().oneshot(post("k-2")).await.unwrap();
+        assert!(c.headers().get("x-idempotent-replay").is_none());
+        assert_eq!(HITS.load(Ordering::SeqCst), 2, "a new key is a new action");
     }
 }
