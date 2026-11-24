@@ -75,6 +75,18 @@ echo "$HTML" | grep -q "cairn" && chk ok "UI index served" || chk fail "UI index
 curl -sf -o /dev/null "$B/assets/app.css" && chk ok "css served" || chk fail "css served" "—"
 curl -sf -o /dev/null "$B/assets/app.js" && chk ok "js served" || chk fail "js served" "—"
 
+# ---------- P0 token gate ----------
+# Every /api route requires the per-launch token the daemon injects into the
+# page (window.CAIRN_TOKEN). Scrape it the way app.js reads it, prove the gate
+# refuses token-less calls, then route every later curl through the header.
+TOKEN=$(echo "$HTML" | sed -n 's/.*window\.CAIRN_TOKEN = "\([0-9a-f]\{32\}\)".*/\1/p' | head -1)
+[ -n "$TOKEN" ] && chk ok "token injected into page" || chk fail "token injected into page" "no window.CAIRN_TOKEN"
+CODE_HTTP=$(curl -s -o /dev/null -w "%{http_code}" "$B/api/v1/status")
+[ "$CODE_HTTP" = 403 ] && chk ok "api refuses missing token" || chk fail "api refuses missing token" "HTTP $CODE_HTTP"
+CODE_HTTP=$(curl -s -o /dev/null -w "%{http_code}" -H "x-cairn-token: deadbeef" "$B/api/v1/status")
+[ "$CODE_HTTP" = 403 ] && chk ok "api refuses wrong token" || chk fail "api refuses wrong token" "HTTP $CODE_HTTP"
+curl(){ command curl -H "x-cairn-token: $TOKEN" "$@"; }
+
 # ---------- attach via the DASHBOARD itself ----------
 R=$(curl -sf -X POST "$B/api/v1/attach" -H 'Content-Type: application/json' \
      -d "{\"root_path\": \"$ROOT\"}")

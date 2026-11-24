@@ -260,6 +260,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with: { prefix-key: beta-win-nle }
       - run: cargo build --release -p cairn-cli
+      # W3 needs headless Blender; mirror nle-matrix.yml's pinned bpy setup
+      # (bpy 5.2.1 wheels ship for CPython 3.13 only).
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install bpy
+        shell: pwsh
+        run: |
+          pip install --quiet bpy==5.2.1
+          python -c "import bpy; print('bpy', bpy.app.version_string)"
       - run: powershell -File scripts/win_nle_matrix.ps1
 
   windows-tauri:
