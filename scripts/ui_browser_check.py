@@ -198,6 +198,22 @@ def main():
             issues = pg.locator("#hs-issues").inner_text()
             check("almost out of space" in issues, "Home warns when the disk is nearly full", issues)
 
+            # #105 notifications: opt-in, background-only, no repeats
+            sent = pg.evaluate("""() => {
+                const out = [];
+                window.Notification = class { constructor(title, o) { out.push(o.body); } static get permission() { return "granted"; } };
+                localStorage.setItem("cairn.notify", "1");
+                Object.defineProperty(document, "hidden", { configurable: true, get: () => false });
+                paintState();                       // foreground: nothing
+                const fg = out.length;
+                Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+                paintState(); paintState(); paintState();  // background, same state x3
+                return { fg, bg: out.slice() };
+            }""")
+            check(sent["fg"] == 0, "no notifications while the window is in front", sent)
+            check(len(sent["bg"]) == 1 and "space" in sent["bg"][0], "one notification for low disk in the background, not three", sent)
+            pg.evaluate("Object.defineProperty(document, 'hidden', { configurable: true, get: () => false }); LOW_DISK = null; localStorage.setItem('cairn.notify', '0')")
+
             check(not errors, "no uncaught page errors", errors[:3])
 
             # #57 stale token: restart the daemon behind the open page

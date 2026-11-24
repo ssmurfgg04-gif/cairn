@@ -365,6 +365,10 @@ const STR = {
   "quit.title": { en: "Quit Cairn?", "de-DE": "Cairn beenden?", "ja-JP": "Cairn を終了しますか？", "zh-CN": "退出 Cairn？" },
   "quit.body": { en: "Syncing stops on this computer until you open Cairn again. Nothing is lost: every change already saved stays safe.", "de-DE": "Die Synchronisierung auf diesem Rechner stoppt, bis du Cairn wieder öffnest. Es geht nichts verloren: Jede gespeicherte Änderung bleibt sicher.", "ja-JP": "Cairn を再び開くまで、このパソコンでの同期は停止します。保存済みの変更はすべて安全です。", "zh-CN": "在你再次打开 Cairn 之前，这台电脑将停止同步。不会丢失任何内容：已保存的更改都是安全的。" },
   "quit.done": { en: "Cairn has stopped. Open Cairn again to resume syncing.", "de-DE": "Cairn wurde beendet. Öffne Cairn erneut, um die Synchronisierung fortzusetzen.", "ja-JP": "Cairn を終了しました。同期を再開するには Cairn をもう一度開いてください。", "zh-CN": "Cairn 已停止。再次打开 Cairn 即可恢复同步。" },
+  "notify.toggle": { en: "Desktop notifications", "de-DE": "Desktop-Benachrichtigungen", "ja-JP": "デスクトップ通知", "zh-CN": "桌面通知" },
+  "notify.note": { en: "Only when Cairn is in the background, and only for things you'd act on: files ready, files needing attention, storage running low.", "de-DE": "Nur wenn Cairn im Hintergrund ist und nur für Dinge, auf die du reagieren würdest: Dateien bereit, Dateien brauchen Aufmerksamkeit, Speicher wird knapp.", "ja-JP": "Cairn がバックグラウンドにあるときだけ、対応が必要なことだけを通知します：ファイルの準備完了、確認が必要なファイル、ストレージ残量の低下。", "zh-CN": "仅在 Cairn 处于后台时通知，且只通知需要你处理的事：文件已就绪、文件需要处理、存储空间不足。" },
+  "notify.blocked": { en: "Notifications are blocked for Cairn in this browser or system settings.", "de-DE": "Benachrichtigungen für Cairn sind in den Browser- oder Systemeinstellungen blockiert.", "ja-JP": "このブラウザーまたはシステム設定で Cairn の通知がブロックされています。", "zh-CN": "Cairn 的通知已在此浏览器或系统设置中被阻止。" },
+  "notify.ready": { en: "Files are ready on this computer.", "de-DE": "Dateien sind auf diesem Rechner bereit.", "ja-JP": "ファイルがこのパソコンで利用可能になりました。", "zh-CN": "文件已在此电脑上就绪。" },
   "ctx.project": { en: "Project", "de-DE": "Projekt", "ja-JP": "プロジェクト", "zh-CN": "项目" },
   "files.showing": { en: "Showing {n} of {total} files", "de-DE": "{n} von {total} Dateien angezeigt", "ja-JP": "{total} 件中 {n} 件のファイルを表示中", "zh-CN": "显示 {total} 个文件中的 {n} 个" },
   "btn.showMore": { en: "Show more", "de-DE": "Mehr anzeigen", "ja-JP": "さらに表示", "zh-CN": "显示更多" },
@@ -1046,6 +1050,10 @@ let VERSION_STR = "";
 let LAST_TEAM = null;      // /api/v1/team payload (People view + Home computers count)
 let LAST_STATE = null;     // previous derived state (announce transitions, #78)
 
+/* declared up front: paintState() reads these on its first call (#85/#105) */
+let LOW_DISK = null;
+const NOTIFY_KEY = "cairn.notify";
+let NOTIFY_LAST = {};
 const FOOT = {
   pending: null, cursor: null, conflicts: null, files: null, synced: null,
   disk: null,
@@ -1102,6 +1110,7 @@ const CHIP_ICONS = {
 };
 
 function paintState() {
+  notifyFromState();
   const st = deriveState();
   const chip = $("state-chip");
   chip.className = `state-chip is-${st}`;
@@ -1435,7 +1444,6 @@ async function refreshStatus() {
 
 /* #85: warn BEFORE the disk is critically full, on Home (not only in
    Settings): under 10% free, or under 10 GiB, on any volume Cairn uses. */
-let LOW_DISK = null;
 function lowDiskOf(vols) {
   let worst = null;
   for (const v of vols) {
@@ -3028,7 +3036,10 @@ async function pollRecallJobs() {
     if (j.state === "completed" || j.state === "failed") continue;
     try {
       const r = await getJSON(`/api/v1/recall/${encodeURIComponent(id)}`);
-      if (r.ok) RECALL_JOBS.set(id, r);
+      if (r.ok) {
+        if (r.state === "completed" && j.state !== "completed") osNotify(`ready-${id}`, t("notify.ready"));
+        RECALL_JOBS.set(id, r);
+      }
     } catch { /* keep last state */ }
   }
   renderRecallJobs();
@@ -3388,6 +3399,43 @@ function toggleHelp(force) {
 }
 $("help-close").addEventListener("click", () => toggleHelp(false));
 $("foot-help").addEventListener("click", () => toggleHelp(true));
+
+/* #105 OS notifications: opt-in, background-only, change-only. Three
+   events the review named and nothing else (no spam): files became
+   available, files need attention (conflicts), storage running low. One
+   notification per distinct state, tagged so the OS replaces rather than
+   stacks them. Web Notification API: works in browsers and in the native
+   window's webview where the platform allows it; silently off otherwise. */
+function notifyEnabled() {
+  try { return localStorage.getItem(NOTIFY_KEY) === "1" && "Notification" in window && Notification.permission === "granted"; } catch (_) { return false; }
+}
+function osNotify(tag, body) {
+  if (!notifyEnabled() || !document.hidden) return;
+  if (NOTIFY_LAST[tag] === body) return;
+  NOTIFY_LAST[tag] = body;
+  try { new Notification("Cairn", { body, tag, silent: false }); } catch (_) { /* platform refused */ }
+}
+function notifyFromState() {
+  const conflicts = FOOT.conflicts ?? 0;
+  if (conflicts > 0) osNotify("attention", t(conflicts === 1 ? "home.issue.conflict.one" : "home.issue.conflict", { n: conflicts }));
+  else delete NOTIFY_LAST.attention;
+  if (LOW_DISK) osNotify("disk", t("home.issue.diskLow", { free: fmtBytes(LOW_DISK.free_bytes) }));
+  else delete NOTIFY_LAST.disk;
+}
+async function setNotify(on, input) {
+  if (on && "Notification" in window && Notification.permission !== "granted") {
+    let perm = "denied";
+    try { perm = await Notification.requestPermission(); } catch (_) { /* unsupported */ }
+    if (perm !== "granted") { toast(t("notify.blocked"), true); if (input) input.checked = false; on = false; }
+  }
+  try { localStorage.setItem(NOTIFY_KEY, on ? "1" : "0"); } catch (_) { /* storage blocked */ }
+}
+if ($("notify-toggle")) {
+  const nt = $("notify-toggle");
+  if (!("Notification" in window)) nt.closest(".notify-row").hidden = true;
+  nt.checked = notifyEnabled();
+  nt.addEventListener("change", () => setNotify(nt.checked, nt));
+}
 
 /* #93 Send diagnostics: the daemon's redacted bundle + what only the page
    knows (recent errors with their support refs, browser, language, view),
