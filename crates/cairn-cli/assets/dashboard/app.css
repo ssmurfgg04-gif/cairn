@@ -1516,7 +1516,7 @@ tr:hover .row-actions .btn-qa,
 
 /* onboarding scene: Browse is the wide, obvious first move */
 .ob-scene { display: flex; flex-direction: column; gap: 10px; }
-.ob-browse { width: 100%; }
+.ob-browse { width: 100%; justify-content: center; padding: 12px 18px; font-size: 15px; }
 
 /* ============================== how to use ============================== */
 
@@ -1830,7 +1830,10 @@ details.adv .note, details.adv .panel-cli { margin: 8px 0 0; }
 /* ============================== onboarding extras ==================== */
 
 .ob-hint { margin: 2px 0 0; color: var(--text-2); }
-.ob-sub2 { margin: 4px 0 0; color: var(--text-2); }
+.ob-sub2 { margin: 0 0 28px; color: var(--text-2); text-wrap: balance; }
+/* the two lede lines read as one paragraph; the breathing room goes
+   BEFORE the button, not between the sentences */
+.ob-sub:has(+ .ob-sub2:not([hidden])) { margin-bottom: 4px; }
 .ob-error {
   margin-top: 22px;
   padding: 18px 20px;
@@ -1871,3 +1874,26 @@ details.adv .note, details.adv .panel-cli { margin: 8px 0 0; }
 /* #93 Send diagnostics row (Settings > System) */
 .diag-row { display: flex; align-items: flex-start; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
 .diag-row .note { flex: 1; min-width: 220px; margin: 4px 0 0; }
+
+/* "System details" carries BOTH .fold and .adv: the two styles fought
+   (space-between flex + a ::before chevron = chevron left, title right,
+   inside a dashed box). Inside a card it reads as a plain fold. */
+details.fold.adv { border: 0; border-top: 1px solid var(--border); border-radius: 0; padding: 0; margin-top: 12px; }
+details.fold.adv summary { font: 500 12.5px/1.3 var(--font-sans); color: var(--text-2); padding: 11px 0 4px; }
+details.fold.adv summary::before { display: none; }
+details.fold.adv summary::after {
+  content: ""; width: 8px; height: 8px; flex: none; margin-right: 3px;
+  border-right: 1.5px solid var(--text-3); border-bottom: 1.5px solid var(--text-3);
+  transform: rotate(45deg); transition: transform 180ms var(--ease);
+}
+details.fold.adv[open] summary::after { transform: rotate(225deg); }
+
+/* #58 Quit Cairn */
+.btn-quit { color: var(--bad-fg); border-color: var(--bad-bg); }
+.quit-overlay {
+  position: fixed; inset: 0; z-index: 100; display: grid; place-items: center;
+  background: var(--bg); color: var(--text); font: 500 17px/1.5 var(--font-sans);
+  text-align: center; padding: 32px;
+}
+.card-body > details.fold.adv:first-child { border-top: 0; margin-top: 0; }
+.diag-row .note { flex-basis: 100%; order: 3; margin-top: 2px; }

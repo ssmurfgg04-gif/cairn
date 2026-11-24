@@ -19,6 +19,7 @@ mod review;
 mod search;
 mod service;
 mod state_records;
+mod stop;
 mod tlbranch;
 mod win_attach;
 
@@ -306,6 +307,14 @@ pub enum Cmd {
         /// Project-relative path
         #[arg(long)]
         path: String,
+    },
+    /// Stop the local daemon cleanly ("Quit Cairn"): syncing stops until
+    /// the daemon is started again. Nothing is lost (every acked change is
+    /// already durable).
+    Stop {
+        /// The daemon's dashboard address
+        #[arg(long, default_value = "127.0.0.1:17778")]
+        ui_addr: String,
     },
     /// Run the local daemon (ctl gRPC :17777 + dashboard :17778)
     Daemon {
@@ -897,6 +906,17 @@ async fn run(cli: Cli, home: std::path::PathBuf) -> anyhow::Result<()> {
             .await
             .map_err(|e| anyhow::anyhow!("{e}"))
         }
+        Cmd::Stop { ui_addr } => match crate::stop::stop_daemon(&ui_addr) {
+            Ok(true) => {
+                println!("cairn stopped (syncing paused until it starts again)");
+                Ok(())
+            }
+            Ok(false) => {
+                println!("cairn is not running");
+                Ok(())
+            }
+            Err(e) => Err(e),
+        },
         Cmd::Daemon {
             ctl_addr,
             ui_addr,

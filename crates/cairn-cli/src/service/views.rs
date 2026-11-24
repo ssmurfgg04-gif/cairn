@@ -420,6 +420,27 @@ pub async fn files(state: &DaemonState, project: &str, needle: &str) -> serde_js
     files_page(state, project, needle, 0, None).await
 }
 
+/// True when `path` holds the real bytes locally (not a cloud placeholder,
+/// not missing). Windows CfAPI placeholders report their full logical size,
+/// so their RECALL/OFFLINE attributes decide; elsewhere a missing file or a
+/// short one (bytes not yet fetched) is "not here".
+fn is_local_copy(path: &std::path::Path, size: u64) -> bool {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const OFFLINE: u32 = 0x0000_1000;
+        const RECALL_ON_OPEN: u32 = 0x0004_0000;
+        const RECALL_ON_DATA_ACCESS: u32 = 0x0040_0000;
+        if meta.file_attributes() & (OFFLINE | RECALL_ON_OPEN | RECALL_ON_DATA_ACCESS) != 0 {
+            return false;
+        }
+    }
+    meta.len() >= size
+}
+
 /// Hard ceiling on one page (#34): a 200k-file project must never
 /// serialize every row into one response or one DOM.
 pub const FILES_PAGE_MAX: usize = 5000;
@@ -530,7 +551,9 @@ pub async fn files_page(
             "state": file_badge(&row),
             "pinned": pins.contains(&row.path),
             "merge_available": merge_available,
-            "placeholder": row.manifest_hash.is_some(),
+            // decided per page row below (#placeholder-truth): needs a stat
+            "placeholder": false,
+            "local_state": row.local_state,
             "proxy_state": proxy_states.get(&row.path).copied().unwrap_or("none"),
         }));
     }
@@ -553,7 +576,29 @@ pub async fn files_page(
     let start = offset.min(total);
     let end = start.saturating_add(limit).min(total);
     let next_offset = (end < total).then_some(end);
-    let page: Vec<serde_json::Value> = rows_out.drain(start..end).collect();
+    let mut page: Vec<serde_json::Value> = rows_out.drain(start..end).collect();
+    // "Is this file actually on this computer?" The old answer was
+    // `manifest_hash.is_some()`, which is true for EVERY synced file, so
+    // Home told the machine that owns the media that all of it was
+    // missing. The truth is on disk; stat only the returned page (bounded
+    // by the page size, never the whole project per 2s refresh).
+    if let Some(root) = state.projects.project_root(project).await {
+        for row in &mut page {
+            let rel = row["path"].as_str().unwrap_or_default().to_owned();
+            let size = row["size"].as_u64().unwrap_or(0);
+            let dirty = row["local_state"] == "dirty";
+            row["placeholder"] = json!(!dirty && !is_local_copy(&root.join(&rel), size));
+            if let Some(obj) = row.as_object_mut() {
+                obj.remove("local_state");
+            }
+        }
+    } else {
+        for row in &mut page {
+            if let Some(obj) = row.as_object_mut() {
+                obj.remove("local_state");
+            }
+        }
+    }
     json!({
         "ok": true,
         "project": project,
@@ -1156,5 +1201,25 @@ mod tests {
         ] {
             assert!(out.contains(kept), "lost context {kept}: {out}");
         }
+    }
+
+    /// Placeholder truth: a synced file that is really on disk is NOT a
+    /// placeholder (the old manifest_hash rule said every synced file was).
+    #[test]
+    fn local_copy_is_decided_by_the_disk() {
+        let d = tempfile::tempdir().unwrap();
+        let full = d.path().join("full.mov");
+        std::fs::write(&full, vec![1u8; 4096]).unwrap();
+        assert!(is_local_copy(&full, 4096), "real bytes on disk = local");
+        let short = d.path().join("short.mov");
+        std::fs::write(&short, vec![1u8; 10]).unwrap();
+        assert!(
+            !is_local_copy(&short, 4096),
+            "bytes not fetched yet = not here"
+        );
+        assert!(
+            !is_local_copy(&d.path().join("missing.mov"), 1),
+            "missing = not here"
+        );
     }
 }

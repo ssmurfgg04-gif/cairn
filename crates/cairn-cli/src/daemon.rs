@@ -674,6 +674,11 @@ impl CtlDiagnostics for CtlDiagSvc {
 ///
 /// `swarm` (ADR-0017): when set, every attached project joins the signal server's
 /// swarm and hydration goes peer-first (LAN blocks before cloud egress).
+/// #58 "Quit Cairn": the console's POST /api/v1/quit (and `cairn stop`)
+/// fire this; `run` exits like ctrl-c. Safe because of I2 — every acked
+/// change is already durable, so quitting never loses work.
+pub static QUIT: tokio::sync::Notify = tokio::sync::Notify::const_new();
+
 pub async fn run(
     home: PathBuf,
     ctl_addr: String,
@@ -807,6 +812,9 @@ pub async fn run(
         r = ui => r?,
         _ = tokio::signal::ctrl_c() => {
             tracing::info!("daemon: ctrl-c, exiting cleanly (all acked state already durable)");
+        }
+        () = QUIT.notified() => {
+            tracing::warn!("daemon: quit requested from the console (Quit Cairn); exiting cleanly");
         }
     }
     Ok(())

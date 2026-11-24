@@ -214,6 +214,17 @@ def main():
             pg.wait_for_function("window.CAIRN_TOKEN && window.CAIRN_TOKEN.length === 32", timeout=15000)
             ok = pg.evaluate("getJSON('/api/v1/status').then(() => true, () => false)")
             check(ok, "page reloaded onto the new daemon's token and works")
+
+            # #58 Quit Cairn: confirm dialog, then the daemon really exits
+            pg.evaluate("showView('settings')")
+            pg.click("#btn-quit")
+            pg.wait_for_selector("#modal-confirm:not([hidden])", timeout=5000)
+            pg.click("#modal-ok")
+            pg.wait_for_selector(".quit-overlay", timeout=10000)
+            end = time.time() + 10
+            while time.time() < end and wait_port(17788, 0.3):
+                time.sleep(0.3)
+            check(not wait_port(17788, 0.3), "Quit Cairn stops the daemon after confirming")
             browser.close()
     finally:
         for p in procs:

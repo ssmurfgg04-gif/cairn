@@ -764,7 +764,11 @@ unsafe fn show_menu(hwnd: HWND) {
         PCWSTR(disconnect_w.as_ptr()),
     );
     let _ = AppendMenuW(menu, MF_SEPARATOR, 0, None);
-    let exit_w = to_wide("Exit");
+    // #58: one honest quit. The tray supervises the daemon (ADR-0029), so
+    // closing only the tray used to leave syncing running with no visible
+    // owner; "Quit Cairn" stops the daemon (`cairn stop`, crash-safe per
+    // I2) and then the tray. Closing the console WINDOW never stops sync.
+    let exit_w = to_wide("Quit Cairn (stops syncing)");
     let _ = AppendMenuW(
         menu,
         MF_STRING,
@@ -795,6 +799,9 @@ unsafe fn show_menu(hwnd: HWND) {
         menu::SETTINGS => do_settings(hwnd, &status),
         menu::DISCONNECT => do_disconnect(hwnd, &shared, &status),
         menu::EXIT => {
+            // stop the daemon first; even if that fails (already stopped,
+            // port busy) the tray still exits, as the user asked
+            let _ = run_cairn(&["stop"]);
             DestroyWindow(hwnd).ok();
         }
         _ => {}

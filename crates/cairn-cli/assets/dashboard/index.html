@@ -388,17 +388,23 @@
               </details>
               <div class="diag-row">
                 <button type="button" class="btn btn-ghost" id="btn-diagnostics" data-i18n="diag.btn">Send diagnostics</button>
+                <button type="button" class="btn btn-ghost btn-quit" id="btn-quit" data-i18n="quit.btn">Quit Cairn</button>
                 <p class="note" data-i18n="diag.note">Saves one file with Cairn's health report and recent problems (passwords, links and codes removed). Attach it when you contact support. Nothing is uploaded.</p>
               </div>
             </div>
           </article>
 
           <article class="card" id="set-flags">
-            <header class="card-head"><h3 class="card-title" data-i18n="set.flags">Feature flags</h3></header>
+            <header class="card-head"><h3 class="card-title" data-i18n="set.advanced">Advanced</h3></header>
             <div class="card-body">
-              <p class="note" data-i18n="flags.lead">Flags apply on the next job run, no restart. Owner and lead only (RBAC enforced). Click a flag to see what it does.</p>
-              <div class="flag-grid" id="flag-grid"></div>
-              <p class="note live-note" id="live-note" hidden></p>
+              <!-- review #16: engine knobs stay reachable for support, but
+                   folded away from the everyday Settings page -->
+              <details class="fold adv" id="flags-fold">
+                <summary data-i18n="set.flagsShow">Engine settings (for troubleshooting)</summary>
+                <p class="note" data-i18n="flags.lead">Flags apply on the next job run, no restart. Owner and lead only (RBAC enforced). Click a flag to see what it does.</p>
+                <div class="flag-grid" id="flag-grid"></div>
+                <p class="note live-note" id="live-note" hidden></p>
+              </details>
             </div>
           </article>
 

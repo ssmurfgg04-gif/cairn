@@ -53,6 +53,7 @@ pub async fn serve(addr: String, state: Arc<DaemonState>) -> anyhow::Result<()> 
         .route("/api/v1/flags", get(flags).post(set_flag))
         .route("/api/v1/doctor", get(doctor))
         .route("/api/v1/diagnostics", get(diagnostics))
+        .route("/api/v1/quit", post(quit))
         // WO6-UI: full ctl parity over HTTP (same svc impls as the gRPC ctl server)
         .route("/api/v1/projects", get(projects))
         .route("/api/v1/attach", post(attach))
@@ -632,6 +633,17 @@ async fn set_flag(
         )
             .into_response(),
     }
+}
+
+/// #58 POST /api/v1/quit — stop syncing and exit the daemon (token-gated
+/// like every /api route, so only the local user's console or `cairn stop`
+/// can reach it). Answers first, exits a beat later so the reply lands.
+async fn quit() -> Json<serde_json::Value> {
+    tokio::spawn(async {
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        crate::daemon::QUIT.notify_one();
+    });
+    Json(json!({"ok": true, "quitting": true}))
 }
 
 async fn diagnostics(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {

@@ -105,7 +105,7 @@ const STR = {
   "home.down.sub": { en: "We're trying to restart it.", "de-DE": "Wir versuchen einen Neustart.", "ja-JP": "再起動を試みています。", "zh-CN": "正在尝试重启。" },
   "home.files": { en: "files", "de-DE": "Dateien", "ja-JP": "ファイル", "zh-CN": "个文件" },
   "home.computers": { en: "computers connected", "de-DE": "Rechner verbunden", "ja-JP": "台のパソコンが接続中", "zh-CN": "台电脑已连接" },
-  "home.oneComputer": { en: "only this computer", "de-DE": "nur dieser Rechner", "ja-JP": "このパソコンのみ", "zh-CN": "仅此电脑" },
+  "home.oneComputer": { en: "Only this computer", "de-DE": "Nur dieser Rechner", "ja-JP": "このパソコンのみ", "zh-CN": "仅此电脑" },
   "home.openFolder": { en: "Open folder", "de-DE": "Ordner öffnen", "ja-JP": "フォルダーを開く", "zh-CN": "打开文件夹" },
   "home.issue.files": { en: "{n} files aren't on this computer", "de-DE": "{n} Dateien sind nicht auf diesem Rechner", "ja-JP": "{n} 個のファイルがこのパソコンにありません", "zh-CN": "{n} 个文件不在这台电脑上" },
   "home.issue.files.one": { en: "{n} file isn't on this computer", "de-DE": "{n} Datei ist nicht auf diesem Rechner", "ja-JP": "{n} 個のファイルがこのパソコンにありません", "zh-CN": "{n} 个文件不在这台电脑上" },
@@ -186,7 +186,8 @@ const STR = {
   "recall.path": { en: "one file (optional, empty = whole project)", "de-DE": "eine Datei (optional, leer = ganzes Projekt)", "ja-JP": "1 ファイル（任意、空ならプロジェクト全体）", "zh-CN": "单个文件（可选，留空 = 整个项目）" },
 
   "dash.title": { en: "Your projects, in sync", "de-DE": "Deine Projekte, synchron", "ja-JP": "プロジェクトを同期したまま", "zh-CN": "项目随时同步" },
-  "dash.sub": { en: "{n} project(s) · {files} files · {synced} ready", "de-DE": "{n} Projekt(e) · {files} Dateien · {synced} bereit", "ja-JP": "{n} 件のプロジェクト · {files} ファイル · {synced} 件準備完了", "zh-CN": "{n} 个项目 · {files} 个文件 · {synced} 个就绪" },
+  "dash.sub.one": { en: "1 project · {files} files · {synced} ready", "de-DE": "1 Projekt · {files} Dateien · {synced} bereit", "ja-JP": "1 件のプロジェクト · {files} ファイル · {synced} 件準備完了", "zh-CN": "1 个项目 · {files} 个文件 · {synced} 个就绪" },
+  "dash.sub": { en: "{n} projects · {files} files · {synced} ready", "de-DE": "{n} Projekte · {files} Dateien · {synced} bereit", "ja-JP": "{n} 件のプロジェクト · {files} ファイル · {synced} 件準備完了", "zh-CN": "{n} 个项目 · {files} 个文件 · {synced} 个就绪" },
   "dash.subEmpty": { en: "Add your first project folder to start.", "de-DE": "Füge deinen ersten Projektordner hinzu.", "ja-JP": "最初のプロジェクトフォルダーを追加しましょう。", "zh-CN": "添加第一个项目文件夹即可开始。" },
 
   "card.assets": { en: "Recent files", "de-DE": "Neueste Dateien", "ja-JP": "最近のファイル", "zh-CN": "最近文件" },
@@ -345,6 +346,25 @@ const STR = {
   "diag.busy": { en: "Collecting…", "de-DE": "Wird gesammelt…", "ja-JP": "収集中…", "zh-CN": "正在收集…" },
   "home.issue.diskLow": { en: "This computer is almost out of space ({free} free). Cairn may pause syncing.", "de-DE": "Auf diesem Computer ist kaum noch Platz ({free} frei). Cairn pausiert eventuell die Synchronisierung.", "ja-JP": "このコンピューターの空き容量が残りわずかです（空き {free}）。同期が一時停止する場合があります。", "zh-CN": "此电脑磁盘空间即将用尽（剩余 {free}）。Cairn 可能会暂停同步。" },
   "home.issue.diskCta": { en: "See storage", "de-DE": "Speicher ansehen", "ja-JP": "ストレージを見る", "zh-CN": "查看存储" },
+  "act.attach": { en: "added a project folder", "de-DE": "hat einen Projektordner hinzugefügt", "ja-JP": "プロジェクトフォルダーを追加", "zh-CN": "添加了项目文件夹" },
+  "act.detach": { en: "removed a project folder", "de-DE": "hat einen Projektordner entfernt", "ja-JP": "プロジェクトフォルダーを削除", "zh-CN": "移除了项目文件夹" },
+  "act.snapshot": { en: "saved a version", "de-DE": "hat eine Version gespeichert", "ja-JP": "バージョンを保存", "zh-CN": "保存了一个版本" },
+  "act.restore": { en: "restored a version", "de-DE": "hat eine Version wiederhergestellt", "ja-JP": "バージョンを復元", "zh-CN": "恢复了一个版本" },
+  "act.pin": { en: "kept a file on this computer", "de-DE": "hat eine Datei auf diesem Rechner behalten", "ja-JP": "ファイルをこのパソコンに保持", "zh-CN": "将文件保留在此电脑上" },
+  "act.unpin": { en: "stopped keeping a file", "de-DE": "behält eine Datei nicht mehr", "ja-JP": "ファイルの保持を解除", "zh-CN": "不再保留文件" },
+  "act.recall": { en: "made files available", "de-DE": "hat Dateien verfügbar gemacht", "ja-JP": "ファイルを利用可能にした", "zh-CN": "使文件可用" },
+  "act.flag": { en: "changed a setting", "de-DE": "hat eine Einstellung geändert", "ja-JP": "設定を変更", "zh-CN": "更改了设置" },
+  "act.review": { en: "shared a review", "de-DE": "hat ein Review geteilt", "ja-JP": "レビューを共有", "zh-CN": "共享了审阅" },
+  "act.invite": { en: "changed the invite code", "de-DE": "hat den Einladungscode geändert", "ja-JP": "招待コードを変更", "zh-CN": "更改了邀请码" },
+  "act.join": { en: "joined the project", "de-DE": "ist dem Projekt beigetreten", "ja-JP": "プロジェクトに参加", "zh-CN": "加入了项目" },
+  "act.proxy": { en: "made an editing copy", "de-DE": "hat eine Bearbeitungskopie erstellt", "ja-JP": "編集用コピーを作成", "zh-CN": "创建了编辑副本" },
+  "team.thisComputer": { en: "This computer", "de-DE": "Dieser Rechner", "ja-JP": "このパソコン", "zh-CN": "这台电脑" },
+  "set.advanced": { en: "Advanced", "de-DE": "Erweitert", "ja-JP": "詳細設定", "zh-CN": "高级" },
+  "set.flagsShow": { en: "Engine settings (for troubleshooting)", "de-DE": "Engine-Einstellungen (zur Fehlerbehebung)", "ja-JP": "エンジン設定（トラブルシューティング用）", "zh-CN": "引擎设置（用于故障排除）" },
+  "quit.btn": { en: "Quit Cairn", "de-DE": "Cairn beenden", "ja-JP": "Cairn を終了", "zh-CN": "退出 Cairn" },
+  "quit.title": { en: "Quit Cairn?", "de-DE": "Cairn beenden?", "ja-JP": "Cairn を終了しますか？", "zh-CN": "退出 Cairn？" },
+  "quit.body": { en: "Syncing stops on this computer until you open Cairn again. Nothing is lost: every change already saved stays safe.", "de-DE": "Die Synchronisierung auf diesem Rechner stoppt, bis du Cairn wieder öffnest. Es geht nichts verloren: Jede gespeicherte Änderung bleibt sicher.", "ja-JP": "Cairn を再び開くまで、このパソコンでの同期は停止します。保存済みの変更はすべて安全です。", "zh-CN": "在你再次打开 Cairn 之前，这台电脑将停止同步。不会丢失任何内容：已保存的更改都是安全的。" },
+  "quit.done": { en: "Cairn has stopped. Open Cairn again to resume syncing.", "de-DE": "Cairn wurde beendet. Öffne Cairn erneut, um die Synchronisierung fortzusetzen.", "ja-JP": "Cairn を終了しました。同期を再開するには Cairn をもう一度開いてください。", "zh-CN": "Cairn 已停止。再次打开 Cairn 即可恢复同步。" },
   "ctx.project": { en: "Project", "de-DE": "Projekt", "ja-JP": "プロジェクト", "zh-CN": "项目" },
   "files.showing": { en: "Showing {n} of {total} files", "de-DE": "{n} von {total} Dateien angezeigt", "ja-JP": "{total} 件中 {n} 件のファイルを表示中", "zh-CN": "显示 {total} 个文件中的 {n} 个" },
   "btn.showMore": { en: "Show more", "de-DE": "Mehr anzeigen", "ja-JP": "さらに表示", "zh-CN": "显示更多" },
@@ -1153,7 +1173,8 @@ function renderHomeStatus(st0) {
   const nComputers = Math.max(1, members.length);
   const hsComp = $("hs-computers");
   const hsCompLabel = $("hs-computers-label");
-  if (hsComp) hsComp.textContent = String(nComputers);
+  // a solo machine reads "Only this computer", not "1 only this computer"
+  if (hsComp) { hsComp.textContent = String(nComputers); hsComp.hidden = nComputers <= 1; }
   if (hsCompLabel) hsCompLabel.textContent = nComputers > 1 ? t("home.computers") : t("home.oneComputer");
 
   const issuesEl = $("hs-issues");
@@ -1209,7 +1230,7 @@ function renderHero() {
     sub.textContent = t("dash.subEmpty");
     return;
   }
-  sub.textContent = t("dash.sub", { n: PROJECTS.length, files: FOOT.files ?? 0, synced: FOOT.synced ?? 0 });
+  sub.textContent = t(PROJECTS.length === 1 ? "dash.sub.one" : "dash.sub", { n: PROJECTS.length, files: FOOT.files ?? 0, synced: FOOT.synced ?? 0 });
 }
 
 /* round 27: the path field left the hero (it is a power-user affordance
@@ -2731,6 +2752,32 @@ function renderLocks(locks) {
 
 /* ============================== team ============================== */
 
+/* People speaks human (review #16): names over device ids, plain verbs
+   over "dash/attach", one capitalization for roles. Raw values stay in
+   the title tooltip for support. */
+function shortDevice(id) {
+  const s = String(id || "");
+  return s.length > 14 ? `${s.slice(0, 10)}…` : s;
+}
+function roleLabel(r) {
+  const s = String(r || "");
+  return s ? s[0].toUpperCase() + s.slice(1).toLowerCase() : "";
+}
+function memberName(p, device) {
+  const m = (p.members || []).find((x) => x.device_id === device);
+  if (m && m.is_me) return t("team.thisComputer");
+  return (m && m.name) || shortDevice(device);
+}
+const ACTION_KEYS = [
+  [/restore/, "act.restore"], [/snapshot/, "act.snapshot"], [/unpin/, "act.unpin"], [/pin/, "act.pin"],
+  [/recall/, "act.recall"], [/flag/, "act.flag"], [/review/, "act.review"], [/code|regenerate/, "act.invite"],
+  [/join/, "act.join"], [/proxy/, "act.proxy"], [/detach/, "act.detach"], [/attach/, "act.attach"],
+];
+function actionLabel(a) {
+  for (const [re, k] of ACTION_KEYS) if (re.test(String(a || ""))) return t(k);
+  return String(a || "");
+}
+
 function renderTeam(r) {
   const body = $("team-body");
   if (!body) return;
@@ -2750,9 +2797,11 @@ function renderTeam(r) {
 
     const me = document.createElement("div");
     me.className = "team-me";
+    const mine = (p.members || []).find((m) => m.is_me);
     me.innerHTML =
-      `<span class="role-chip">${esc(t("team.myRole"))}: <b>${esc(p.my_role)}</b></span>` +
-      `<span class="mono dim">${esc(p.my_device)}</span>`;
+      `<span class="role-chip">${esc(t("team.myRole"))}: <b>${esc(roleLabel(p.my_role))}</b></span>` +
+      `<span>${esc(t("team.thisComputer"))}${mine && mine.name ? ` · ${esc(mine.name)}` : ""}</span>` +
+      `<span class="mono dim" title="${esc(p.my_device)}">${esc(shortDevice(p.my_device))}</span>`;
     card.appendChild(me);
 
     const table = document.createElement("table");
@@ -2764,7 +2813,7 @@ function renderTeam(r) {
       const tr = document.createElement("tr");
       tr.innerHTML =
         `<td class="sans">${m.is_me ? `<span class="role-chip">${esc(t("team.you"))}</span> ` : ""}${esc(m.name || m.device_id)}</td>` +
-        `<td class="sans"><span class="tag ${m.role === "Owner" ? "info" : ""}">${esc(m.role)}</span> <span class="mono dim">${esc(m.device_id)}</span></td>`;
+        `<td class="sans"><span class="tag ${m.role === "Owner" ? "info" : ""}">${esc(roleLabel(m.role))}</span> <span class="mono dim" title="${esc(m.device_id)}">${esc(shortDevice(m.device_id))}</span></td>`;
       table.querySelector("tbody").appendChild(tr);
     }
     if (!rows.length) {
@@ -2793,8 +2842,8 @@ function renderTeam(r) {
         const allow = e.allowed === true;
         li.innerHTML =
           `<span class="tag ${allow ? "ok" : "bad"}">${esc(allow ? t("team.allowed") : t("team.denied"))}</span>` +
-          `<span class="audit-action">${esc(e.action)}</span>` +
-          `<span class="dim">${esc(e.device)} · ${esc(e.role)}</span>` +
+          `<span class="audit-action" title="${esc(e.action)}">${esc(actionLabel(e.action))}</span>` +
+          `<span class="dim">${esc(memberName(p, e.device))} · ${esc(roleLabel(e.role))}</span>` +
           `<span class="mono dim">${esc(relTime(e.ts_ms))}</span>`;
         list.appendChild(li);
       }
@@ -3373,6 +3422,31 @@ async function doDiagnostics(btn) {
     done(b);
   }
 }
+/* #58: one honest Quit. Closing the window never stops syncing; this does,
+   and says so before it happens. */
+async function doQuit(btn) {
+  const ok = await confirmDialog({ title: t("quit.title"), body: t("quit.body"), okLabel: t("quit.btn"), danger: true });
+  if (!ok) return;
+  const b = busy(btn, t("quit.btn"));
+  try {
+    const r = await postJSON("/api/v1/quit", {});
+    if (r && r.quitting) {
+      stopPolling();
+      document.body.classList.add("is-quit");
+      const ov = document.createElement("div");
+      ov.className = "quit-overlay";
+      ov.setAttribute("role", "status");
+      ov.textContent = t("quit.done");
+      document.body.appendChild(ov);
+      return;
+    }
+    toast(t("toast.denied", { e: humanError(r) }), true);
+  } catch (e) {
+    toast(t("toast.failed", { e: humanError(e) }), true);
+  }
+  done(b);
+}
+if ($("btn-quit")) $("btn-quit").addEventListener("click", (ev) => doQuit(ev.currentTarget));
 if ($("btn-diagnostics")) $("btn-diagnostics").addEventListener("click", (ev) => doDiagnostics(ev.currentTarget));
 
 /* #83: one delegated listener for file-row keyboard navigation */
