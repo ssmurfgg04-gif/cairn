@@ -5,6 +5,26 @@ A Tauri 2 shell around the daemon's loopback console
 WKWebView on macOS. No bundled Chromium, no plugins, no IPC: the window
 is a viewport onto a surface the daemon already serves (ADR-0022).
 
+## What the window does (review #58/#60)
+
+- **Opens without a daemon.** It starts on a bundled screen
+  (`dist/index.html`), launches `cairn daemon` hidden if nothing answers on
+  the console port (stderr appended to `<home>/daemon.log`, like the tray's
+  supervisor), and hands over to the console as soon as it answers. After
+  ~20 s it says plainly that Cairn isn't starting, with a Try again button.
+  No browser error page.
+- **One window.** A second launch focuses the existing window.
+- **Remembers itself.** Size, position and maximized state persist.
+- **Stays on the console.** Only the start screen and
+  `http://127.0.0.1:17778` load in the window; any other link opens in the
+  system browser.
+- **Closing is not quitting.** Closing the window never stops syncing.
+  "Quit Cairn" lives in the tray menu and in the console's Settings, and
+  both say that syncing stops (`cairn stop` / `POST /api/v1/quit`).
+
+Icons are generated from `icons/cairn.svg` (rsvg-convert + Pillow): PNGs
+for macOS/Linux and a multi-size `cairn.ico` (16-256 px) for Windows.
+
 ## Build
 
 ```sh
@@ -12,6 +32,8 @@ is a viewport onto a surface the daemon already serves (ADR-0022).
 cd crates/cairn-app
 cargo tauri build          # NSIS bundle in target/release/bundle/
 cargo check                # compile gate only
+cargo test                 # navigation guard + engine discovery
+# Linux: needs libwebkit2gtk-4.1-dev (CI compiles on windows-latest)
 
 # macOS
 cargo tauri build          # .app bundle

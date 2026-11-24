@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cairn</title>
+<!-- The window's own start screen (bundled, works with no daemon). It waits
+     for the local console at 127.0.0.1:17778, then hands the window over.
+     No network beyond loopback; no Tauri IPC (the window stays a viewport). -->
+<style>
+  :root { color-scheme: light dark; --bg:#0b1322; --fg:#e8eef6; --muted:#9aa7b8; --accent:#7cdbf5; --btn:#087cff; }
+  @media (prefers-color-scheme: light) { :root { --bg:#f4f6f9; --fg:#0f1b2d; --muted:#5a6676; } }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { display: grid; place-items: center; background: var(--bg); color: var(--fg);
+         font: 15px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif; }
+  main { text-align: center; max-width: 440px; padding: 32px; }
+  img { width: 88px; height: 88px; }
+  h1 { font-size: 20px; font-weight: 600; margin: 18px 0 6px; }
+  p { color: var(--muted); margin: 0 0 18px; }
+  .dots { display: inline-flex; gap: 6px; margin-top: 6px; }
+  .dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); opacity: .3; animation: p 1.2s infinite; }
+  .dots i:nth-child(2) { animation-delay: .2s; } .dots i:nth-child(3) { animation-delay: .4s; }
+  @keyframes p { 50% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .dots i { animation: none; opacity: .8; } }
+  button { font: inherit; border: 0; border-radius: 8px; padding: 9px 18px; background: var(--btn); color: #fff; cursor: pointer; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .hint { font-size: 13px; margin-top: 14px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <img src="cairn.svg" alt="">
+  <h1 id="title">Starting Cairn…</h1>
+  <p id="body" role="status" aria-live="polite">Getting your projects ready.</p>
+  <div class="dots" id="dots" aria-hidden="true"><i></i><i></i><i></i></div>
+  <div id="stuck" hidden>
+    <button type="button" id="retry">Try again</button>
+    <p class="hint" id="hint">If this keeps happening, restart your computer or reinstall Cairn. Your files are safe either way.</p>
+  </div>
+</main>
+<script>
+  const CONSOLE = "http://127.0.0.1:17778/";
+  const L = {
+    de: { t: "Cairn wird gestartet…", b: "Deine Projekte werden vorbereitet.", st: "Cairn startet nicht", sb: "Der Cairn-Hintergrunddienst antwortet nicht.", r: "Erneut versuchen", h: "Wenn das wieder passiert, starte den Computer neu oder installiere Cairn erneut. Deine Dateien sind in jedem Fall sicher." },
+    ja: { t: "Cairn を起動しています…", b: "プロジェクトを準備しています。", st: "Cairn を起動できません", sb: "Cairn のバックグラウンドサービスが応答しません。", r: "もう一度試す", h: "繰り返し発生する場合は、コンピューターを再起動するか Cairn を再インストールしてください。ファイルはいずれの場合も安全です。" },
+    zh: { t: "正在启动 Cairn…", b: "正在准备你的项目。", st: "Cairn 无法启动", sb: "Cairn 后台服务没有响应。", r: "重试", h: "如果反复出现，请重启电脑或重新安装 Cairn。你的文件在任何情况下都是安全的。" },
+  };
+  const l = L[(navigator.language || "en").slice(0, 2)];
+  if (l) {
+    document.getElementById("title").textContent = l.t;
+    document.getElementById("body").textContent = l.b;
+    document.getElementById("retry").textContent = l.r;
+    document.getElementById("hint").textContent = l.h;
+  }
+  let tries = 0;
+  async function up() {
+    try { await fetch(CONSOLE, { mode: "no-cors", cache: "no-store" }); return true; } catch (_) { return false; }
+  }
+  async function wait() {
+    if (await up()) { location.replace(CONSOLE); return; }
+    tries += 1;
+    if (tries === 40) { // ~20s: say so plainly, keep trying quietly
+      document.getElementById("title").textContent = l ? l.st : "Cairn isn't starting";
+      document.getElementById("body").textContent = l ? l.sb : "The Cairn background service isn't answering.";
+      document.getElementById("dots").hidden = true;
+      document.getElementById("stuck").hidden = false;
+    }
+    setTimeout(wait, 500);
+  }
+  document.getElementById("retry").addEventListener("click", () => location.reload());
+  wait();
+</script>
+</body>
+</html>

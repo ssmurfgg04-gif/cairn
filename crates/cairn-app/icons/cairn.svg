@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0f1b2d"/>
+      <stop offset="1" stop-color="#0a1220"/>
+    </linearGradient>
+  </defs>
+  <rect x="16" y="16" width="480" height="480" rx="108" fill="url(#bg)"/>
+  <!-- the cairn: three stacked stones (the console's brand mark, ADR-0002) -->
+  <rect x="192" y="104" width="128" height="80" rx="26" fill="#7cdbf5"/>
+  <rect x="139" y="212" width="234" height="80" rx="26" fill="#087cff"/>
+  <rect x="75" y="320" width="362" height="80" rx="26" fill="#e8eef6"/>
+</svg>

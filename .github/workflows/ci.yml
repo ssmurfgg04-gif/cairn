@@ -100,6 +100,9 @@ jobs:
           workspaces: crates/cairn-app
           prefix-key: tauri
       - run: cargo check
+      # navigation guard + engine discovery unit tests (review #60)
+      - run: cargo test
+      - run: cargo clippy --all-targets -- -D warnings
 
   # WO6-9 security sweep: RustSec advisories + the repo's own gate script
   # (secret-shape scan, unsafe policy, path-traversal gates, TLS fail-closed, I3).
