@@ -1298,6 +1298,41 @@ pub async fn storage_free(state: &Arc<DaemonState>) -> Json {
     }
 }
 
+/// #5 POST /api/v1/team/default-role {project_id, role}: the role a
+/// device NOT on the roster gets. Owner-only (ManageMembers). Allowed
+/// values: `editor` (the historical default) or `reviewer` (comment-only:
+/// newcomers wait until an owner adds them by name).
+pub async fn team_default_role(state: &Arc<DaemonState>, project: &str, role: &str) -> Json {
+    let role = match role {
+        "editor" => cairn_core::rbac::Role::Editor,
+        "reviewer" => cairn_core::rbac::Role::Reviewer,
+        _ => return json!({"ok": false, "error": "role must be editor or reviewer"}),
+    };
+    if let Err(s) = crate::daemon::rbac_guard(
+        state,
+        project,
+        None,
+        cairn_core::rbac::Permission::ManageMembers,
+        "dash/team-default-role",
+    )
+    .await
+    {
+        return json!({"ok": false, "error": s.message()});
+    }
+    let Some(root) = state.projects.project_root(project).await else {
+        return json!({"ok": false, "error": "project not found"});
+    };
+    let mut f = match crate::members::load(&root) {
+        Ok(f) => f,
+        Err(e) => return json!({"ok": false, "error": e.to_string()}),
+    };
+    f.unlisted_role = Some(role);
+    match crate::members::save(&root, &f) {
+        Ok(()) => json!({"ok": true, "unlisted_role": role.as_str()}),
+        Err(e) => json!({"ok": false, "error": e.to_string()}),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

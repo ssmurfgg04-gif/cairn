@@ -55,6 +55,7 @@ pub async fn serve(addr: String, state: Arc<DaemonState>) -> anyhow::Result<()> 
         .route("/api/v1/diagnostics", get(diagnostics))
         .route("/api/v1/quit", post(quit))
         .route("/api/v1/storage/free", post(storage_free))
+        .route("/api/v1/team/default-role", post(team_default_role))
         // WO6-UI: full ctl parity over HTTP (same svc impls as the gRPC ctl server)
         .route("/api/v1/projects", get(projects))
         .route("/api/v1/attach", post(attach))
@@ -634,6 +635,23 @@ async fn set_flag(
         )
             .into_response(),
     }
+}
+
+async fn team_default_role(
+    State(state): State<Arc<DaemonState>>,
+    body: Option<Json<serde_json::Value>>,
+) -> Json<serde_json::Value> {
+    let Some(Json(v)) = body else {
+        return Json(json!({"ok": false, "error": "body required: {project_id, role}"}));
+    };
+    Json(
+        service::actions::team_default_role(
+            &state,
+            v["project_id"].as_str().unwrap_or_default(),
+            v["role"].as_str().unwrap_or_default(),
+        )
+        .await,
+    )
 }
 
 async fn storage_free(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {

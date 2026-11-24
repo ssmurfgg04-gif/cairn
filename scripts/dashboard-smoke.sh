@@ -156,6 +156,15 @@ PY
 else
   chk fail "owner bootstrap" "team endpoint returned no device"
 fi
+# review #5: the newcomer role is explicit and owner-configurable
+PID=$(curl -sf "$B/api/v1/team" | jget "projects[0].project_id")
+R=$(curl -sf -X POST "$B/api/v1/team/default-role" -H 'Content-Type: application/json' -d "{\"project_id\":\"$PID\",\"role\":\"reviewer\"}")
+echo "$R" | grep -q '"ok":true' && chk ok "owner sets newcomer role" || chk fail "owner sets newcomer role" "$R"
+NR=$(curl -sf "$B/api/v1/team" | jget "projects[0].unlisted_role")
+[ "$NR" = reviewer ] && chk ok "team shows newcomer role" || chk fail "team shows newcomer role" "$NR"
+R=$(curl -sf -X POST "$B/api/v1/team/default-role" -H 'Content-Type: application/json' -d "{\"project_id\":\"$PID\",\"role\":\"owner\"}")
+echo "$R" | grep -q '"ok":false' && chk ok "newcomer role cannot be owner" || chk fail "newcomer role cannot be owner" "$R"
+curl -sf -X POST "$B/api/v1/team/default-role" -H 'Content-Type: application/json' -d "{\"project_id\":\"$PID\",\"role\":\"editor\"}" >/dev/null
 R=$(curl -sf -X POST "$B/api/v1/flags" -H 'Content-Type: application/json' -d '{"name":"normalize_containers","value":"false"}')
 echo "$R" | grep -q '"ok":true' && chk ok "flag flip endpoint" || chk fail "flag flip endpoint" "$R"
 

@@ -1913,3 +1913,7 @@ details.fold.adv[open] summary::after { transform: rotate(225deg); }
 /* #37 empty Files states */
 .files-empty { padding: 48px 16px !important; text-align: center; }
 .files-empty p { margin: 0 0 14px; color: var(--text-2); }
+
+/* #5 newcomer role */
+.team-newcomers { display: flex; align-items: center; gap: 8px; margin: 10px 0 4px; font-size: 13px; flex-wrap: wrap; }
+.team-newcomers .input { min-width: 260px; }

@@ -15,8 +15,9 @@
 //! serialized. Device ids (not names) are the keys: a device's role
 //! travels with the machine, and renaming a human never changes access.
 //!
-//! Fail-open policy for the UNLISTED case: a device absent from the file
-//! is `Editor` by default (the two-person-barnstorm default cairn was
+//! Policy for the UNLISTED case: a device absent from the file gets
+//! `MemberFile::unlisted_role` (owner-configurable, review #5), else
+//! `Editor` by default (the two-person-barnstorm default cairn was
 //! built for). Adding members makes the studio stricter, not looser —
 //! `Owner` adds the people who should have less than full access.
 
@@ -253,6 +254,12 @@ pub struct Member {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemberFile {
     pub members: BTreeMap<String, Member>,
+    /// The role an UNLISTED device gets (review #5: explicit and
+    /// owner-configurable). `None` keeps the historical barnstorm default,
+    /// `Editor`; an owner can set `reviewer` to make newcomers comment-only
+    /// (a fail-closed pending state) until they are added by name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unlisted_role: Option<Role>,
 }
 
 pub const SCHEMA: &str = "cairn-members/v1";
@@ -266,13 +273,18 @@ impl MemberFile {
         serde_json::from_slice(bytes).map_err(|e| format!("parse members: {e}"))
     }
 
-    /// The role a device plays in this project. Unlisted devices are
-    /// `Editor` (the fail-open barnstorm default; see module doc).
+    /// The role a device plays in this project. Unlisted devices get
+    /// [`unlisted_default`](Self::unlisted_default).
     pub fn role_of(&self, device_id: &str) -> Role {
         self.members
             .get(device_id)
-            .map(|m| m.role)
-            .unwrap_or(Role::Editor)
+            .map_or_else(|| self.unlisted_default(), |m| m.role)
+    }
+
+    /// What a device that is not on the roster gets: the owner's explicit
+    /// choice, else `Editor` (the barnstorm default; see module doc).
+    pub fn unlisted_default(&self) -> Role {
+        self.unlisted_role.unwrap_or(Role::Editor)
     }
 
     /// Enforcement helper: is `device_id` allowed to `perm`? (Unlisted
@@ -425,5 +437,34 @@ mod tests {
     #[test]
     fn corrupt_members_fail_closed() {
         assert!(MemberFile::from_json(b"{ nope").is_err());
+    }
+
+    #[test]
+    fn unlisted_default_is_explicit_and_configurable() {
+        let mut f = MemberFile::default();
+        assert_eq!(
+            f.role_of("stranger"),
+            Role::Editor,
+            "historical default kept"
+        );
+        f.unlisted_role = Some(Role::Reviewer);
+        assert_eq!(
+            f.role_of("stranger"),
+            Role::Reviewer,
+            "owner can make newcomers comment-only"
+        );
+        assert!(!f.permits("stranger", Permission::WriteFiles));
+        assert!(f.permits("stranger", Permission::Comment));
+        f.upsert("dev-a", "Alice", Role::Editor, "owner", 1);
+        assert_eq!(
+            f.role_of("dev-a"),
+            Role::Editor,
+            "named members are unaffected"
+        );
+        // round-trip keeps the setting; old files without the field still parse
+        let back = MemberFile::from_json(&f.to_json().unwrap()).unwrap();
+        assert_eq!(back.unlisted_role, Some(Role::Reviewer));
+        let old = MemberFile::from_json(br#"{"members":{}}"#).unwrap();
+        assert_eq!(old.unlisted_role, None);
     }
 }

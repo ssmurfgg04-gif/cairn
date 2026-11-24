@@ -99,7 +99,7 @@ pub fn load(root: &Path) -> anyhow::Result<MemberFile> {
     }
 }
 
-fn save(root: &Path, f: &MemberFile) -> anyhow::Result<()> {
+pub(crate) fn save(root: &Path, f: &MemberFile) -> anyhow::Result<()> {
     let json = f.to_json().map_err(anyhow::Error::msg)?;
     cairn_proxy::pipeline::atomic_write(&members_path(root), &json).map_err(anyhow::Error::msg)
 }

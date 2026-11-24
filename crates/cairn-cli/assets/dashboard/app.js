@@ -384,6 +384,10 @@ const STR = {
   "free.busy": { en: "Freeing space…", "de-DE": "Speicher wird freigegeben…", "ja-JP": "空き容量を確保中…", "zh-CN": "正在释放空间…" },
   "free.done": { en: "Freed {n}.", "de-DE": "{n} freigegeben.", "ja-JP": "{n} を解放しました。", "zh-CN": "已释放 {n}。" },
   "free.nothing": { en: "Nothing to clear right now: everything local is in use or kept on purpose.", "de-DE": "Gerade gibt es nichts zu entfernen: alles Lokale wird genutzt oder bewusst behalten.", "ja-JP": "現在削除できるものはありません。ローカルのデータはすべて使用中か、意図的に保持されています。", "zh-CN": "目前没有可清除的内容：本地内容都在使用中或被特意保留。" },
+  "team.newcomers": { en: "New computers that join get", "de-DE": "Neu beitretende Rechner erhalten", "ja-JP": "新しく参加したパソコンの役割", "zh-CN": "新加入的电脑获得" },
+  "team.newEditor": { en: "Editor (can change files)", "de-DE": "Editor (kann Dateien ändern)", "ja-JP": "編集者（ファイルを変更可）", "zh-CN": "编辑者（可修改文件）" },
+  "team.newReviewer": { en: "Reviewer (comment only until you add them)", "de-DE": "Reviewer (nur kommentieren, bis du sie hinzufügst)", "ja-JP": "レビュアー（追加するまでコメントのみ）", "zh-CN": "审阅者（在你添加前只能评论）" },
+  "team.newSaved": { en: "Saved. New computers now get: {r}.", "de-DE": "Gespeichert. Neue Rechner erhalten jetzt: {r}.", "ja-JP": "保存しました。新しいパソコンの役割：{r}", "zh-CN": "已保存。新电脑现在获得：{r}。" },
   "ctx.project": { en: "Project", "de-DE": "Projekt", "ja-JP": "プロジェクト", "zh-CN": "项目" },
   "files.showing": { en: "Showing {n} of {total} files", "de-DE": "{n} von {total} Dateien angezeigt", "ja-JP": "{total} 件中 {n} 件のファイルを表示中", "zh-CN": "显示 {total} 个文件中的 {n} 个" },
   "btn.showMore": { en: "Show more", "de-DE": "Mehr anzeigen", "ja-JP": "さらに表示", "zh-CN": "显示更多" },
@@ -2838,6 +2842,22 @@ function renderTeam(r) {
       `<span>${esc(t("team.thisComputer"))}${mine && mine.name ? ` · ${esc(mine.name)}` : ""}</span>` +
       `<span class="mono dim" title="${esc(p.my_device)}">${esc(shortDevice(p.my_device))}</span>`;
     card.appendChild(me);
+
+    // #5: what an unlisted (newly joined) computer gets is explicit and,
+    // for owners, changeable. Others see it read-only.
+    const nc = document.createElement("label");
+    nc.className = "team-newcomers";
+    const isOwner = String(p.my_role).toLowerCase() === "owner";
+    nc.innerHTML = `<span>${esc(t("team.newcomers"))}</span> <select class="input" ${isOwner ? "" : "disabled"}>` +
+      `<option value="editor">${esc(t("team.newEditor"))}</option><option value="reviewer">${esc(t("team.newReviewer"))}</option></select>`;
+    const sel = nc.querySelector("select");
+    sel.value = p.unlisted_role === "reviewer" ? "reviewer" : "editor";
+    sel.addEventListener("change", async () => {
+      const r = await postJSON("/api/v1/team/default-role", { project_id: p.project_id, role: sel.value }).catch((e) => ({ ok: false, error: String(e) }));
+      if (r && r.ok) toast(t("team.newSaved", { r: sel.options[sel.selectedIndex].text }));
+      else { toast(t("toast.denied", { e: humanError(r) }), true); sel.value = p.unlisted_role === "reviewer" ? "reviewer" : "editor"; }
+    });
+    card.appendChild(nc);
 
     const table = document.createElement("table");
     table.className = "table";

@@ -789,6 +789,9 @@ pub async fn team(state: &DaemonState, project: &str) -> serde_json::Value {
             "pending_outbox": pending,
             "my_device": device,
             "my_role": my_role,
+            "unlisted_role": crate::members::load(&root)
+                .map(|f| f.unlisted_default().as_str().to_string())
+                .unwrap_or_else(|_| "editor".into()),
             "members": members,
             "join_code": if join_code.is_empty() { serde_json::Value::Null } else { json!(join_code) },
             "signal": if signal.is_empty() { serde_json::Value::Null } else { json!(signal) },
