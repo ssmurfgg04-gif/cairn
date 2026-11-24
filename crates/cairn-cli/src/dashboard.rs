@@ -52,6 +52,7 @@ pub async fn serve(addr: String, state: Arc<DaemonState>) -> anyhow::Result<()> 
         .route("/api/v1/activity", get(activity))
         .route("/api/v1/flags", get(flags).post(set_flag))
         .route("/api/v1/doctor", get(doctor))
+        .route("/api/v1/diagnostics", get(diagnostics))
         // WO6-UI: full ctl parity over HTTP (same svc impls as the gRPC ctl server)
         .route("/api/v1/projects", get(projects))
         .route("/api/v1/attach", post(attach))
@@ -631,6 +632,10 @@ async fn set_flag(
         )
             .into_response(),
     }
+}
+
+async fn diagnostics(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
+    Json(service::views::diagnostics(&state).await)
 }
 
 async fn doctor(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {

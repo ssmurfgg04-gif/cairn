@@ -184,6 +184,20 @@ def main():
             got = (team.get("projects") or [{}])[0].get("project_id")
             check(got == project2, "People shows the selected project, not the first one", got)
 
+            # #93 Send diagnostics: a file, redacted, with the support refs
+            pg.evaluate("showView('settings')")
+            with pg.expect_download(timeout=20000) as dl:
+                pg.evaluate("document.getElementById('btn-diagnostics').click()")
+            bundle = json.loads(Path(dl.value.path()).read_text())
+            check(bundle.get("kind") == "cairn-diagnostics" and bundle.get("doctor"), "diagnostics file downloads with the doctor report")
+            check(msg["ref"] in json.dumps(bundle["console"]["recent_errors"]), "diagnostics carry the failed action's ref")
+            check(token not in json.dumps(bundle), "diagnostics never contain the dashboard token")
+
+            # #85 low-disk warning surfaces on Home
+            pg.evaluate("showView('dashboard'); LOW_DISK = {free_bytes: 3 * 1024 ** 3, total_bytes: 1024 ** 4}; renderHomeStatus();")
+            issues = pg.locator("#hs-issues").inner_text()
+            check("almost out of space" in issues, "Home warns when the disk is nearly full", issues)
+
             check(not errors, "no uncaught page errors", errors[:3])
 
             # #57 stale token: restart the daemon behind the open page

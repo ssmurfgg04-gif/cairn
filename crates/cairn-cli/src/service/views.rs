@@ -812,6 +812,124 @@ pub async fn live_snapshot(state: &DaemonState) -> serde_json::Value {
 /// GET /api/v1/doctor — the 5s-fresh cached doctor report (round 27: the
 /// dashboard polls this at 15s; the status RPC shares the same cache, so
 /// neither starves the ctl thread).
+/// Redact anything secret-shaped from text bound for a diagnostics file:
+/// long alphanumeric runs that contain a digit (tokens, keys, join codes,
+/// link tokens, uuids) and the value after `token`/`secret`/`password`/
+/// `code`/`authorization` keys (`k=v`, `k: v`, `"k":"v"`). Paths, words
+/// and messages survive.
+pub fn redact_secrets(text: &str) -> String {
+    const R: &str = "[redacted]";
+    const KEYS: [&str; 5] = ["token", "secret", "password", "code", "authorization"];
+    let is_word = |c: char| c.is_ascii_alphanumeric() || c == '-' || c == '_';
+    // pass 1: secret-shaped runs
+    let mut out = String::with_capacity(text.len());
+    let mut run = String::new();
+    let flush = |run: &mut String, out: &mut String| {
+        let secretish = run.len() >= 20 && run.chars().any(|c| c.is_ascii_digit());
+        out.push_str(if secretish { R } else { run.as_str() });
+        run.clear();
+    };
+    for c in text.chars() {
+        if is_word(c) {
+            run.push(c);
+        } else {
+            flush(&mut run, &mut out);
+            out.push(c);
+        }
+    }
+    flush(&mut run, &mut out);
+    // pass 2: values after secret keys (ASCII lowering keeps byte offsets)
+    let mut res = String::with_capacity(out.len());
+    let lower = out.to_ascii_lowercase();
+    let mut i = 0;
+    'scan: while i < out.len() {
+        for key in KEYS {
+            if lower[i..].starts_with(key)
+                && (i == 0 || !is_word(out[..i].chars().last().unwrap_or(' ')))
+            {
+                let mut j = i + key.len();
+                let rest = &out[j..];
+                let skip = rest.len() - rest.trim_start_matches(['"', '\'']).len();
+                j += skip;
+                let rest = &out[j..];
+                if rest.starts_with('=') || rest.starts_with(':') {
+                    j += 1;
+                    let rest = &out[j..];
+                    j += rest.len() - rest.trim_start_matches([' ', '"', '\'']).len();
+                    let val_end = out[j..]
+                        .find(|c: char| {
+                            c == '"' || c == '\'' || c == '&' || c == ',' || c.is_whitespace()
+                        })
+                        .map_or(out.len(), |e| j + e);
+                    if val_end > j {
+                        res.push_str(&out[i..j]);
+                        res.push_str(R);
+                        i = val_end;
+                        continue 'scan;
+                    }
+                }
+            }
+        }
+        let c = out[i..].chars().next().unwrap();
+        res.push(c);
+        i += c.len_utf8();
+    }
+    res
+}
+
+/// #93 Send diagnostics: one JSON bundle a user can attach to a support
+/// message — version, platform, uptime, per-project health, the doctor
+/// report, flags, and the tail of `<home>/daemon.log` (the tray's log
+/// file, ADR-0029). Everything secret-shaped is redacted; nothing leaves
+/// the machine unless the user sends the file themselves.
+pub async fn diagnostics(state: &DaemonState) -> serde_json::Value {
+    let projects: Vec<serde_json::Value> = state
+        .projects
+        .list()
+        .await
+        .into_iter()
+        .map(|rt| json!({"project_id": rt.project_id, "root": rt.workspace.display().to_string()}))
+        .collect();
+    let mut views = Vec::new();
+    for p in &projects {
+        let pid = p["project_id"].as_str().unwrap_or_default();
+        if let Some((_, _, synced, pending)) = state.projects.view_of(pid).await {
+            views.push(
+                json!({"project_id": pid, "files_synced": synced, "pending_outbox": pending}),
+            );
+        }
+    }
+    let log_tail = std::fs::read(state.home.join("daemon.log")).ok().map(|b| {
+        let text = String::from_utf8_lossy(&b[b.len().saturating_sub(64 * 1024)..]).into_owned();
+        let lines: Vec<&str> = text.lines().collect();
+        redact_secrets(&lines[lines.len().saturating_sub(300)..].join("\n"))
+    });
+    let flags: Vec<serde_json::Value> = state
+        .flags
+        .read()
+        .await
+        .iter()
+        .map(|(k, v)| json!({"name": k, "value": v}))
+        .collect();
+    json!({
+        "ok": true,
+        "kind": "cairn-diagnostics",
+        "schema": 1,
+        "generated_at_ms": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis() as u64),
+        "version": env!("CARGO_PKG_VERSION"),
+        "os": std::env::consts::OS,
+        "arch": std::env::consts::ARCH,
+        "uptime_s": state.started.elapsed().as_secs(),
+        "projects": projects,
+        "project_views": views,
+        "flags": flags,
+        "doctor": doctor(state).await,
+        "daemon_log_tail": log_tail,
+    })
+}
+
 pub async fn doctor(state: &DaemonState) -> serde_json::Value {
     let report = state.cached_doctor().await;
     json!({
@@ -1008,5 +1126,35 @@ mod tests {
         // limit is clamped to the ceiling
         let out = files_page(&state, "p1", "", 0, Some(1_000_000)).await;
         assert_eq!(out["limit"], json!(FILES_PAGE_MAX));
+    }
+
+    #[test]
+    fn diagnostics_redaction_removes_secrets_keeps_context() {
+        let input = concat!(
+            r#"{"level":"WARN","message":"link minted","token":"abcDEF1234567890xyzQ","path":"cuts/hero.mov"}"#,
+            "\nGET /r/7f3a9c2e1b4d5f6a7b8c9d0e1f2a3b4c/session?t=deadbeefcafe0011223344\n",
+            "join code: 4821-9931 secret=hunter2 Authorization: Bearer xyz\n",
+            "plain message with words only and a short id 12ab\n",
+        );
+        let out = redact_secrets(input);
+        for leaked in [
+            "abcDEF1234567890xyzQ",
+            "7f3a9c2e1b4d5f6a7b8c9d0e1f2a3b4c",
+            "deadbeefcafe0011223344",
+            "4821-9931",
+            "hunter2",
+            "Bearer",
+        ] {
+            assert!(!out.contains(leaked), "leaked {leaked}: {out}");
+        }
+        for kept in [
+            "link minted",
+            "cuts/hero.mov",
+            "plain message with words only",
+            "12ab",
+            "/session",
+        ] {
+            assert!(out.contains(kept), "lost context {kept}: {out}");
+        }
     }
 }

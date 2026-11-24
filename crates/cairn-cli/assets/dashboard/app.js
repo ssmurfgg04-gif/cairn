@@ -339,6 +339,12 @@ const STR = {
   "toast.copied": { en: "copied", "de-DE": "kopiert", "ja-JP": "コピーしました", "zh-CN": "已复制" },
   "toast.denied": { en: "Cairn couldn't do that: {e}", "de-DE": "Cairn konnte das nicht ausführen: {e}", "ja-JP": "実行できませんでした: {e}", "zh-CN": "无法完成该操作：{e}" },
   "toast.failed": { en: "That didn't work: {e}", "de-DE": "Das hat nicht geklappt: {e}", "ja-JP": "うまくいきませんでした: {e}", "zh-CN": "操作失败：{e}" },
+  "diag.btn": { en: "Send diagnostics", "de-DE": "Diagnose senden", "ja-JP": "診断情報を送信", "zh-CN": "发送诊断信息" },
+  "diag.note": { en: "Saves one file with Cairn's health report and recent problems (passwords, links and codes removed). Attach it when you contact support. Nothing is uploaded.", "de-DE": "Speichert eine Datei mit Cairns Zustandsbericht und den letzten Problemen (Passwörter, Links und Codes entfernt). Hänge sie an, wenn du den Support kontaktierst. Es wird nichts hochgeladen.", "ja-JP": "Cairn の状態レポートと最近の問題を 1 つのファイルに保存します（パスワード、リンク、コードは削除されます）。サポートに連絡する際に添付してください。何もアップロードされません。", "zh-CN": "将 Cairn 的健康报告和最近的问题保存为一个文件（已移除密码、链接和代码）。联系支持时请附上该文件。不会上传任何内容。" },
+  "diag.saved": { en: "Diagnostics saved. Attach the file when you contact support.", "de-DE": "Diagnose gespeichert. Hänge die Datei an, wenn du den Support kontaktierst.", "ja-JP": "診断情報を保存しました。サポートに連絡する際にファイルを添付してください。", "zh-CN": "诊断信息已保存。联系支持时请附上该文件。" },
+  "diag.busy": { en: "Collecting…", "de-DE": "Wird gesammelt…", "ja-JP": "収集中…", "zh-CN": "正在收集…" },
+  "home.issue.diskLow": { en: "This computer is almost out of space ({free} free). Cairn may pause syncing.", "de-DE": "Auf diesem Computer ist kaum noch Platz ({free} frei). Cairn pausiert eventuell die Synchronisierung.", "ja-JP": "このコンピューターの空き容量が残りわずかです（空き {free}）。同期が一時停止する場合があります。", "zh-CN": "此电脑磁盘空间即将用尽（剩余 {free}）。Cairn 可能会暂停同步。" },
+  "home.issue.diskCta": { en: "See storage", "de-DE": "Speicher ansehen", "ja-JP": "ストレージを見る", "zh-CN": "查看存储" },
   "ctx.project": { en: "Project", "de-DE": "Projekt", "ja-JP": "プロジェクト", "zh-CN": "项目" },
   "files.showing": { en: "Showing {n} of {total} files", "de-DE": "{n} von {total} Dateien angezeigt", "ja-JP": "{total} 件中 {n} 件のファイルを表示中", "zh-CN": "显示 {total} 个文件中的 {n} 个" },
   "btn.showMore": { en: "Show more", "de-DE": "Mehr anzeigen", "ja-JP": "さらに表示", "zh-CN": "显示更多" },
@@ -1126,6 +1132,7 @@ function renderHomeStatus(st0) {
     if ((FOOT.conflicts ?? 0) > 0) issues.push({ key: FOOT.conflicts === 1 ? "home.issue.conflict.one" : "home.issue.conflict", n: FOOT.conflicts, view: "files", cta: "home.issue.conflictCta" });
     const badProjects = PROJECTS.filter((p) => p.state === "error").length;
     if (badProjects > 0) issues.push({ key: badProjects === 1 ? "home.issue.projects.one" : "home.issue.projects", n: badProjects, view: "files", cta: "home.issue.projectsCta" });
+    if (LOW_DISK) issues.unshift({ key: "home.issue.diskLow", vars: { free: fmtBytes(LOW_DISK.free_bytes) }, view: "settings", cta: "home.issue.diskCta" });
   }
 
   const titleEl = $("hs-title"), subEl = $("hs-sub"), icEl = $("hs-ic");
@@ -1157,7 +1164,7 @@ function renderHomeStatus(st0) {
     li.className = "hs-issue";
     const text = document.createElement("span");
     text.className = "hs-issue-text";
-    text.textContent = t(iss.key, iss.n ? { n: iss.n } : {});
+    text.textContent = t(iss.key, iss.vars || (iss.n ? { n: iss.n } : {}));
     li.appendChild(text);
     const link = document.createElement("button");
     link.type = "button";
@@ -1405,6 +1412,18 @@ async function refreshStatus() {
 
 /* ============================== storage ============================== */
 
+/* #85: warn BEFORE the disk is critically full, on Home (not only in
+   Settings): under 10% free, or under 10 GiB, on any volume Cairn uses. */
+let LOW_DISK = null;
+function lowDiskOf(vols) {
+  let worst = null;
+  for (const v of vols) {
+    if (!v || !Number.isFinite(v.free_bytes) || !Number.isFinite(v.total_bytes) || v.total_bytes <= 0) continue;
+    const low = v.free_bytes < 10 * 1024 ** 3 || v.free_bytes / v.total_bytes < 0.10;
+    if (low && (!worst || v.free_bytes < worst.free_bytes)) worst = v;
+  }
+  return worst;
+}
 async function refreshStorage() {
   try {
     const r = await getJSON("/api/v1/storage");
@@ -1422,6 +1441,9 @@ async function refreshStorage() {
     // warning (and matched the reconnecting pill); color only appears
     // past 90%, red past 95% - usage is only a problem at the edge.
     const vols = Array.isArray(r.volumes) ? r.volumes : [];
+    const wasLow = !!LOW_DISK;
+    LOW_DISK = lowDiskOf([...vols, r.disk]);
+    if (wasLow !== !!LOW_DISK) renderHomeStatus();
     const workspace = vols.find((v) => v.label !== "store") || vols[0] || r.disk;
     const store = r.disk;
     if (store && Number.isFinite(store.free_bytes) && Number.isFinite(store.total_bytes)) {
@@ -3317,6 +3339,41 @@ function toggleHelp(force) {
 }
 $("help-close").addEventListener("click", () => toggleHelp(false));
 $("foot-help").addEventListener("click", () => toggleHelp(true));
+
+/* #93 Send diagnostics: the daemon's redacted bundle + what only the page
+   knows (recent errors with their support refs, browser, language, view),
+   saved as one file. Nothing is uploaded; the user decides who gets it. */
+async function doDiagnostics(btn) {
+  const b = busy(btn, t("diag.busy"));
+  try {
+    const server = await getJSON("/api/v1/diagnostics");
+    const bundle = {
+      ...server,
+      console: {
+        user_agent: navigator.userAgent,
+        language: LANG,
+        view: ACTIVE_VIEW,
+        projects_seen: PROJECTS.length,
+        recent_errors: RECENT_ERRORS.slice(-50),
+      },
+    };
+    const stamp = new Date().toISOString().replace(/[:T]/g, "-").slice(0, 16);
+    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `cairn-diagnostics-${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    toast(t("diag.saved"));
+  } catch (e) {
+    toast(t("toast.failed", { e: humanError(e) }), true);
+  } finally {
+    done(b);
+  }
+}
+if ($("btn-diagnostics")) $("btn-diagnostics").addEventListener("click", (ev) => doDiagnostics(ev.currentTarget));
 
 /* #83: one delegated listener for file-row keyboard navigation */
 if ($("files-body")) $("files-body").addEventListener("keydown", filesKeyNav);
