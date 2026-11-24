@@ -247,10 +247,14 @@ def main():
                 const out = [];
                 window.Notification = class { constructor(title, o) { out.push(o.body); } static get permission() { return "granted"; } };
                 localStorage.setItem("cairn.notify", "1");
+                // set the trigger state HERE: the storage poll resets LOW_DISK
+                // on machines whose disk is not actually full (CI runners)
+                LOW_DISK = { free_bytes: 3 * 1024 ** 3, total_bytes: 1024 ** 4 };
                 Object.defineProperty(document, "hidden", { configurable: true, get: () => false });
                 paintState();                       // foreground: nothing
                 const fg = out.length;
                 Object.defineProperty(document, "hidden", { configurable: true, get: () => true });
+                LOW_DISK = { free_bytes: 3 * 1024 ** 3, total_bytes: 1024 ** 4 };
                 paintState(); paintState(); paintState();  // background, same state x3
                 return { fg, bg: out.slice() };
             }""")
