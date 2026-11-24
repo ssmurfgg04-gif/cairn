@@ -307,6 +307,7 @@
           </div>
         </div>
         <div class="files-summary" id="files-summary"></div>
+        <p class="sr-only" id="files-keys-hint" data-i18n="a11y.filesKeys">File list. Use the up and down arrow keys to move between files, Enter to open, and the menu key for more actions.</p>
         <div class="files-table" id="files-table">
           <table class="table">
             <thead><tr>
@@ -315,7 +316,7 @@
               <th data-i18n="th.sync">status</th>
               <th class="th-actions"><span class="sr-only" data-i18n="th.actions">actions</span></th>
             </tr></thead>
-            <tbody id="files-body">
+            <tbody id="files-body" aria-describedby="files-keys-hint">
               <tr><td colspan="4" class="empty" data-i18n="empty.files">No files yet - add a project folder and drop media in.</td></tr>
             </tbody>
           </table>

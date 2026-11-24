@@ -813,8 +813,23 @@ fn main() -> anyhow::Result<()> {
             // ring explicitly (workspace-standard, THIRD_PARTY.md) before any
             // TLS-capable code runs
             let _ = rustls::crypto::ring::default_provider().install_default();
+            let cli = Cli::parse();
+            // #93/#94: with RUST_LOG unset the filter used to be ERROR-only,
+            // so the long-running processes wrote nothing a support person
+            // could match a dashboard "ref" against. Daemon/server default to
+            // `warn`; one-shot CLI commands stay quiet. RUST_LOG still wins.
+            let default_level = match cli.cmd {
+                Cmd::Daemon { .. } | Cmd::Server { .. } => "warn",
+                _ => "error",
+            };
+            // an exported-but-empty RUST_LOG counts as unset
+            let filter = std::env::var("RUST_LOG")
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+                .and_then(|v| tracing_subscriber::EnvFilter::try_new(v).ok())
+                .unwrap_or_else(|| tracing_subscriber::EnvFilter::new(default_level));
             tracing_subscriber::fmt()
-                .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+                .with_env_filter(filter)
                 .json()
                 .flatten_event(true)
                 .with_current_span(true)
@@ -832,7 +847,6 @@ fn main() -> anyhow::Result<()> {
                 .with_writer(std::io::stderr)
                 .try_init()
                 .ok();
-            let cli = Cli::parse();
             let home = std::path::PathBuf::from(cli.home.clone().unwrap_or_else(default_home));
             // Thread budget (ADR-0025, PostHog pattern): the rayon CPU lane is
             // installed at full core width, tokio I/O workers at half (the

@@ -415,7 +415,28 @@ pub async fn markers_export(
 /// minus its rehash fallback: a fingerprint MISS answers "stale" — the
 /// honest "cannot prove current without hashing" — and the status endpoint
 /// or `cairn proxy status --verify` settles the doubt).
+#[cfg(test)]
 pub async fn files(state: &DaemonState, project: &str, needle: &str) -> serde_json::Value {
+    files_page(state, project, needle, 0, None).await
+}
+
+/// Hard ceiling on one page (#34): a 200k-file project must never
+/// serialize every row into one response or one DOM.
+pub const FILES_PAGE_MAX: usize = 5000;
+
+/// GET /api/v1/files with server-side paging (#34). The summary counts
+/// cover EVERY matching row; `files` is the sorted window
+/// `[offset, offset+limit)`. `total` / `next_offset` let the console say
+/// "showing 500 of 12,400" and fetch more on demand instead of silently
+/// truncating. `limit = None` keeps the legacy all-rows answer for
+/// in-process callers.
+pub async fn files_page(
+    state: &DaemonState,
+    project: &str,
+    needle: &str,
+    offset: usize,
+    limit: Option<usize>,
+) -> serde_json::Value {
     let needle = needle.to_lowercase();
     let Some(store) = open_store(state.home.as_path()) else {
         return json!({"ok": false, "error": "store unavailable"});
@@ -525,7 +546,24 @@ pub async fn files(state: &DaemonState, project: &str, needle: &str) -> serde_js
     summary.insert("conflict".into(), json!(conflict_n));
     summary.insert("pinned".into(), json!(pins.len()));
     summary.insert("merge_offers".into(), json!(merge_offers_n));
-    json!({"ok": true, "project": project, "summary": summary, "files": rows_out})
+    let total = rows_out.len();
+    let limit = limit
+        .map(|l| l.clamp(1, FILES_PAGE_MAX))
+        .unwrap_or(total.max(1));
+    let start = offset.min(total);
+    let end = start.saturating_add(limit).min(total);
+    let next_offset = (end < total).then_some(end);
+    let page: Vec<serde_json::Value> = rows_out.drain(start..end).collect();
+    json!({
+        "ok": true,
+        "project": project,
+        "summary": summary,
+        "files": page,
+        "total": total,
+        "offset": start,
+        "limit": limit,
+        "next_offset": next_offset,
+    })
 }
 
 /// GET /api/v1/team — members, the acting device's role, the swarm join
@@ -900,5 +938,68 @@ mod tests {
         let other = files(&state, "p2", "").await;
         assert_eq!(other["files"].as_array().unwrap().len(), 0);
         assert_eq!(other["summary"]["merge_offers"], json!(0));
+    }
+
+    /// #34: paging returns a sorted window while the summary still counts
+    /// every matching row, and `next_offset` walks to the end exactly once.
+    #[tokio::test]
+    async fn files_are_paged_server_side() {
+        let home = tempfile::tempdir().unwrap();
+        {
+            let store = open_store(home.path()).unwrap();
+            for i in 0..25 {
+                store
+                    .put_file(&cairn_store::FileRow {
+                        path: format!("clip{i:02}.mov"),
+                        project_id: "p1".into(),
+                        manifest_hash: Some("aa11".into()),
+                        size: 10,
+                        mode: "file".into(),
+                        mtime: 1,
+                        local_state: "synced".into(),
+                    })
+                    .unwrap();
+            }
+        }
+        let state = DaemonState {
+            home: home.path().to_path_buf(),
+            started: std::time::Instant::now(),
+            flags: tokio::sync::RwLock::new(Vec::new()),
+            recall_jobs: std::sync::Arc::new(tokio::sync::RwLock::new(
+                std::collections::HashMap::new(),
+            )),
+            projects: std::sync::Arc::new(crate::projects::ProjectManager::new()),
+            doctor_cache: tokio::sync::RwLock::new(None),
+        };
+        let mut seen = Vec::new();
+        let mut offset = 0usize;
+        let mut pages = 0;
+        loop {
+            let out = files_page(&state, "p1", "", offset, Some(10)).await;
+            assert_eq!(out["total"], json!(25));
+            assert_eq!(out["summary"]["files"], json!(25), "summary spans all rows");
+            for r in out["files"].as_array().unwrap() {
+                seen.push(r["path"].as_str().unwrap().to_owned());
+            }
+            pages += 1;
+            match out["next_offset"].as_u64() {
+                Some(n) => offset = n as usize,
+                None => break,
+            }
+        }
+        assert_eq!(pages, 3);
+        let mut sorted = seen.clone();
+        sorted.sort();
+        assert_eq!(seen, sorted, "pages are in path order");
+        sorted.dedup();
+        assert_eq!(sorted.len(), 25, "no row repeated or skipped");
+
+        // past-the-end offset is an empty page, not an error
+        let out = files_page(&state, "p1", "", 999, Some(10)).await;
+        assert_eq!(out["files"].as_array().unwrap().len(), 0);
+        assert_eq!(out["next_offset"], json!(null));
+        // limit is clamped to the ceiling
+        let out = files_page(&state, "p1", "", 0, Some(1_000_000)).await;
+        assert_eq!(out["limit"], json!(FILES_PAGE_MAX));
     }
 }

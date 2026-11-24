@@ -120,6 +120,8 @@ pub async fn serve(addr: String, state: Arc<DaemonState>) -> anyhow::Result<()> 
             token.clone(),
             security_gate,
         ))
+        // #94: outermost, so even gate denials carry a support reference.
+        .layer(axum::middleware::from_fn(request_id))
         .with_state(state);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!(%addr, "dashboard listening (loopback only)");
@@ -260,12 +262,87 @@ async fn security_gate(
             })
             .unwrap_or_default();
         if !token_eq(&provided, &expected) {
-            return deny("forbidden: missing or bad dashboard token");
+            // #57: a distinct machine code so an open page whose daemon
+            // restarted (new per-launch token) can reload itself instead of
+            // failing every call with a raw 403.
+            return (
+                axum::http::StatusCode::FORBIDDEN,
+                Json(json!({
+                    "ok": false,
+                    "code": "STALE_TOKEN",
+                    "error": "forbidden: missing or bad dashboard token",
+                })),
+            )
+                .into_response();
         }
     }
 
     req.extensions_mut().insert(DashToken(expected));
     next.run(req).await
+}
+
+/// #94 correlation IDs: every dashboard response carries a short
+/// `x-cairn-request-id`, and every failed `/api` call is logged with it, so
+/// "it said ref 3f9a2c1b" in a support message maps to one daemon.log line.
+/// A client-supplied id (hex, <= 32 chars) is honored so retries keep one id.
+async fn request_id(
+    req: axum::http::Request<axum::body::Body>,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    let rid = req
+        .headers()
+        .get("x-cairn-request-id")
+        .and_then(|v| v.to_str().ok())
+        .filter(|v| !v.is_empty() && v.len() <= 32 && v.bytes().all(|b| b.is_ascii_hexdigit()))
+        .map(str::to_owned)
+        .unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string()[..12].to_owned());
+    let method = req.method().clone();
+    let path = req.uri().path().to_owned();
+    let mut res = next.run(req).await;
+    let status = res.status();
+    let is_api = path.starts_with("/api/");
+    if is_api && (status.is_client_error() || status.is_server_error()) {
+        tracing::warn!(request_id = %rid, %method, %path, status = status.as_u16(), "dashboard api error");
+    }
+    // Service failures mostly answer 200 + {"ok":false}. For small JSON
+    // bodies (never the SSE stream or downloads: those are not JSON or have
+    // no exact size), stamp the id into the error body and log it.
+    let small_json = is_api
+        && res
+            .headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|ct| ct.starts_with("application/json"))
+        && axum::body::HttpBody::size_hint(res.body())
+            .exact()
+            .is_some_and(|n| n <= 64 * 1024);
+    if small_json {
+        let (mut parts, body) = res.into_parts();
+        let bytes = axum::body::to_bytes(body, 64 * 1024)
+            .await
+            .unwrap_or_default();
+        let mut out = bytes.clone();
+        if let Ok(serde_json::Value::Object(mut obj)) = serde_json::from_slice(&bytes) {
+            if obj.get("ok") == Some(&serde_json::Value::Bool(false)) {
+                let err = obj
+                    .get("error")
+                    .and_then(|e| e.as_str())
+                    .unwrap_or("")
+                    .to_owned();
+                tracing::warn!(request_id = %rid, %method, %path, error = %err, "dashboard action failed");
+                obj.insert("request_id".into(), serde_json::Value::String(rid.clone()));
+                if let Ok(v) = serde_json::to_vec(&obj) {
+                    out = v.into();
+                }
+            }
+        }
+        parts.headers.remove(axum::http::header::CONTENT_LENGTH);
+        res = axum::response::Response::from_parts(parts, axum::body::Body::from(out));
+    }
+    if let Ok(v) = axum::http::HeaderValue::from_str(&rid) {
+        res.headers_mut().insert("x-cairn-request-id", v);
+    }
+    res
 }
 
 async fn css() -> impl axum::response::IntoResponse {
@@ -566,7 +643,9 @@ async fn files(
 ) -> Json<serde_json::Value> {
     let project = q.get("project").cloned().unwrap_or_default();
     let needle = q.get("q").cloned().unwrap_or_default();
-    Json(service::views::files(&state, &project, &needle).await)
+    let offset = q.get("offset").and_then(|v| v.parse().ok()).unwrap_or(0);
+    let limit = q.get("limit").and_then(|v| v.parse().ok());
+    Json(service::views::files_page(&state, &project, &needle, offset, limit).await)
 }
 
 async fn state_records(
@@ -1082,5 +1161,76 @@ mod security_gate_tests {
         assert!(!token_eq(t, "0123456789abcdef0123456789abcdeX"));
         assert!(!token_eq(t, "short"));
         assert!(!token_eq(t, ""));
+    }
+}
+
+#[cfg(test)]
+mod request_id_tests {
+    use axum::{body::Body, http::Request, routing::get, Json, Router};
+    use serde_json::json;
+    use tower::ServiceExt;
+
+    fn app() -> Router {
+        Router::new()
+            .route(
+                "/api/v1/ok",
+                get(|| async { Json(json!({"ok": true, "n": 1})) }),
+            )
+            .route(
+                "/api/v1/fail",
+                get(|| async { Json(json!({"ok": false, "error": "permission denied"})) }),
+            )
+            .route("/", get(|| async { "page" }))
+            .layer(axum::middleware::from_fn(super::request_id))
+    }
+
+    async fn call(uri: &str, rid: Option<&str>) -> (String, serde_json::Value) {
+        let mut req = Request::builder().uri(uri);
+        if let Some(r) = rid {
+            req = req.header("x-cairn-request-id", r);
+        }
+        let res = app()
+            .oneshot(req.body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        let id = res.headers()["x-cairn-request-id"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        (
+            id,
+            serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null),
+        )
+    }
+
+    #[tokio::test]
+    async fn every_response_carries_an_id_and_failures_embed_it() {
+        let (id, body) = call("/api/v1/fail", None).await;
+        assert_eq!(id.len(), 12);
+        assert_eq!(body["request_id"], id, "ok:false bodies carry the same ref");
+        assert_eq!(
+            body["error"], "permission denied",
+            "original error preserved"
+        );
+
+        let (id, body) = call("/api/v1/ok", None).await;
+        assert!(!id.is_empty());
+        assert!(
+            body.get("request_id").is_none(),
+            "success bodies are untouched"
+        );
+        assert_eq!(body["n"], 1);
+    }
+
+    #[tokio::test]
+    async fn client_ids_are_honored_only_when_safe() {
+        let (id, _) = call("/api/v1/ok", Some("abc123")).await;
+        assert_eq!(id, "abc123");
+        let (id, _) = call("/api/v1/ok", Some("not hex; <script>")).await;
+        assert_ne!(id, "not hex; <script>");
+        assert_eq!(id.len(), 12);
     }
 }

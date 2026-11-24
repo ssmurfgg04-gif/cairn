@@ -339,6 +339,19 @@ const STR = {
   "toast.copied": { en: "copied", "de-DE": "kopiert", "ja-JP": "コピーしました", "zh-CN": "已复制" },
   "toast.denied": { en: "Cairn couldn't do that: {e}", "de-DE": "Cairn konnte das nicht ausführen: {e}", "ja-JP": "実行できませんでした: {e}", "zh-CN": "无法完成该操作：{e}" },
   "toast.failed": { en: "That didn't work: {e}", "de-DE": "Das hat nicht geklappt: {e}", "ja-JP": "うまくいきませんでした: {e}", "zh-CN": "操作失败：{e}" },
+  "files.showing": { en: "Showing {n} of {total} files", "de-DE": "{n} von {total} Dateien angezeigt", "ja-JP": "{total} 件中 {n} 件のファイルを表示中", "zh-CN": "显示 {total} 个文件中的 {n} 个" },
+  "btn.showMore": { en: "Show more", "de-DE": "Mehr anzeigen", "ja-JP": "さらに表示", "zh-CN": "显示更多" },
+  "a11y.filesKeys": { en: "File list. Use the up and down arrow keys to move between files, Enter to open, and the menu key for more actions.", "de-DE": "Dateiliste. Mit den Pfeiltasten nach oben und unten zwischen Dateien wechseln, mit Eingabe öffnen und mit der Menütaste weitere Aktionen aufrufen.", "ja-JP": "ファイル一覧。上下の矢印キーで移動し、Enter で開き、メニューキーでその他の操作を表示します。", "zh-CN": "文件列表。使用上下方向键在文件之间移动，按回车键打开，按菜单键查看更多操作。" },
+  "err.permission": { en: "You don't have permission for this. Ask the project owner to change your role.", "de-DE": "Dafür fehlt dir die Berechtigung. Bitte den Projekteigentümer, deine Rolle zu ändern.", "ja-JP": "この操作の権限がありません。プロジェクトのオーナーに役割の変更を依頼してください。", "zh-CN": "你没有执行此操作的权限。请联系项目所有者更改你的角色。" },
+  "err.notFound": { en: "That file or project isn't here any more. Refresh the page and try again.", "de-DE": "Diese Datei oder dieses Projekt gibt es nicht mehr. Seite neu laden und erneut versuchen.", "ja-JP": "そのファイルまたはプロジェクトは見つかりません。ページを再読み込みしてもう一度お試しください。", "zh-CN": "该文件或项目已不存在。请刷新页面后重试。" },
+  "err.disk": { en: "This computer is out of space. Free up some disk space, then try again.", "de-DE": "Auf diesem Computer ist kein Speicherplatz mehr frei. Bitte Platz schaffen und erneut versuchen.", "ja-JP": "このコンピューターの空き容量が不足しています。容量を空けてからもう一度お試しください。", "zh-CN": "此电脑磁盘空间不足。请释放一些空间后重试。" },
+  "err.offline": { en: "Cairn can't reach your team's server right now. Your work is safe and will sync when you're back online.", "de-DE": "Cairn erreicht den Server deines Teams gerade nicht. Deine Arbeit ist sicher und wird synchronisiert, sobald du wieder online bist.", "ja-JP": "現在チームのサーバーに接続できません。作業内容は安全で、オンラインに戻ると同期されます。", "zh-CN": "Cairn 暂时无法连接团队服务器。你的工作是安全的，恢复联网后会自动同步。" },
+  "err.busy": { en: "Cairn is already working on that. Wait a moment, then try again.", "de-DE": "Cairn arbeitet bereits daran. Kurz warten und dann erneut versuchen.", "ja-JP": "すでに処理中です。少し待ってからもう一度お試しください。", "zh-CN": "Cairn 正在处理该操作。请稍候再试。" },
+  "err.path": { en: "That location is outside this project, so Cairn won't touch it.", "de-DE": "Dieser Ort liegt außerhalb des Projekts, daher rührt Cairn ihn nicht an.", "ja-JP": "その場所はこのプロジェクトの外にあるため、操作できません。", "zh-CN": "该位置不在此项目内，Cairn 不会对其进行操作。" },
+  "err.input": { en: "Something about that request wasn't complete. Check the form and try again.", "de-DE": "Bei dieser Anfrage fehlte etwas. Bitte die Eingaben prüfen und erneut versuchen.", "ja-JP": "入力内容が不完全です。内容を確認してもう一度お試しください。", "zh-CN": "请求信息不完整。请检查后重试。" },
+  "err.generic": { en: "Something went wrong. Try again; if it keeps happening, use Send diagnostics in Settings.", "de-DE": "Etwas ist schiefgelaufen. Erneut versuchen; wenn es wieder passiert, unter Einstellungen „Diagnose senden“ nutzen.", "ja-JP": "問題が発生しました。もう一度お試しください。繰り返し発生する場合は、設定の「診断情報を送信」を使ってください。", "zh-CN": "出现了问题。请重试；如果反复出现，请在设置中使用“发送诊断信息”。" },
+  "err.ref": { en: "ref {id}", "de-DE": "Ref. {id}", "ja-JP": "参照 {id}", "zh-CN": "编号 {id}" },
+  "err.restarted": { en: "Cairn restarted in the background. Reloading this page…", "de-DE": "Cairn wurde im Hintergrund neu gestartet. Seite wird neu geladen…", "ja-JP": "Cairn がバックグラウンドで再起動しました。ページを再読み込みしています…", "zh-CN": "Cairn 已在后台重启。正在重新加载页面…" },
   "toast.sharedLink": { en: "project link copied - teammates with access can open it", "de-DE": "Projekt-Link kopiert - Teammates mit Zugang können ihn öffnen", "ja-JP": "プロジェクトリンクをコピーしました - アクセス権のあるチームメイトが開けます", "zh-CN": "项目链接已复制 - 有权限的队友可打开" },
   "toast.recallFirst": { en: "This file isn't on this computer yet - choose Make available first.", "de-DE": "Diese Datei ist noch nicht auf diesem Rechner - erst \"Verfügbar machen\" wählen.", "ja-JP": "このファイルはまだこのパソコンにありません - 先に「利用可能にする」を選んでください。", "zh-CN": "此文件还不在这台电脑上 - 请先选择「设为可用」。" },
   "confirm.detach": { en: "Remove {p} from Cairn?", "de-DE": "{p} aus Cairn entfernen?", "ja-JP": "{p} を Cairn から取り外しますか？", "zh-CN": "从 Cairn 移除 {p} 吗？" },
@@ -680,10 +693,71 @@ async function fetchWithTimeout(url, opts, ms) {
   }
 }
 
+/* #73/#74/#94: users see plain, action-oriented sentences; the raw backend
+   text and the request's support ref are kept (RECENT_ERRORS) for Send
+   diagnostics instead of being thrown in the user's face. */
+const RECENT_ERRORS = [];
+function noteError(raw, rid, where) {
+  RECENT_ERRORS.push({ at: new Date().toISOString(), where: where || "", raw: String(raw || ""), ref: rid || "" });
+  if (RECENT_ERRORS.length > 50) RECENT_ERRORS.shift();
+}
+const ERR_RULES = [
+  [/permission|forbidden|rbac|not allowed|role|unauthori[sz]ed|owner only/i, "err.permission"],
+  [/no space|enospc|disk full|quota|out of space/i, "err.disk"],
+  [/traversal|outside (the )?(project|root)|escapes|symlink|invalid path|bad path/i, "err.path"],
+  [/not found|no such|unknown (project|file|path|version)|does not exist|missing project/i, "err.notFound"],
+  [/in.progress|already running|busy|try again later|rate.limit|429/i, "err.busy"],
+  [/unreachable|unavailable|connection|connect|refused|offline|timed? ?out|dns|network|tls/i, "err.offline"],
+  [/required|invalid|malformed|bad request|expected|must be/i, "err.input"],
+];
+function humanError(x) {
+  let raw = "", rid = "";
+  if (x && typeof x === "object" && !(x instanceof Error)) { raw = x.error || x.message || ""; rid = x.request_id || x._rid || ""; }
+  else if (x instanceof Error) { raw = x.message; rid = x.rid || ""; }
+  else raw = String(x || "");
+  if (raw === "timeout") return t("toast.timeout");
+  let key = "err.generic";
+  for (const [re, k] of ERR_RULES) if (re.test(raw)) { key = k; break; }
+  const ref = rid ? ` (${t("err.ref", { id: rid })})` : "";
+  return t(key) + ref;
+}
+
+/* #57: the dashboard token is per daemon launch. If the daemon restarted
+   behind an open page, every call 403s with STALE_TOKEN; reload ONCE to
+   pick up the fresh token (a 60s guard stops any reload loop). */
+let RELOADING = false;
+function recoverStaleToken() {
+  if (RELOADING) return;
+  let last = 0;
+  try { last = Number(sessionStorage.getItem("cairn.reloadAt") || 0); } catch (_) { /* storage blocked */ }
+  if (Date.now() - last < 60000) return;
+  RELOADING = true;
+  try { sessionStorage.setItem("cairn.reloadAt", String(Date.now())); } catch (_) { /* storage blocked */ }
+  toast(t("err.restarted"));
+  window.setTimeout(() => location.reload(), 900);
+}
+async function readBody(res, url) {
+  const rid = res.headers.get("x-cairn-request-id") || "";
+  let body = null;
+  try { body = await res.json(); } catch (_) { body = null; }
+  if (res.status === 403 && body && body.code === "STALE_TOKEN") recoverStaleToken();
+  if (body && typeof body === "object" && !Array.isArray(body)) {
+    if (rid && !body.request_id) body._rid = rid;
+    if (body.ok === false) noteError(body.error, body.request_id || rid, url);
+  }
+  return { body, rid };
+}
+
 async function getJSON(url) {
   const res = await fetchWithTimeout(url, { headers: { Accept: "application/json", ...authHeaders() } });
-  if (!res.ok) throw new Error(`${url}: ${res.status}`);
-  return res.json();
+  const { body, rid } = await readBody(res, url);
+  if (!res.ok) {
+    const err = new Error((body && body.error) || `HTTP ${res.status}`);
+    err.rid = (body && body.request_id) || rid;
+    noteError(err.message, err.rid, url);
+    throw err;
+  }
+  return body;
 }
 
 async function postJSON(url, body) {
@@ -692,7 +766,9 @@ async function postJSON(url, body) {
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(body || {}),
   });
-  return res.json();
+  const out = await readBody(res, url);
+  if (out.body === null) return { ok: false, error: `HTTP ${res.status}`, _rid: out.rid };
+  return out.body;
 }
 
 /* #43: busy(btn, label) / done(btn) - a mutating button disables
@@ -949,6 +1025,9 @@ const FOOT = {
 };
 let LAST_FILES = null;
 let FILES_KEY = null;
+/* #34: the console asks for a window of rows, growing it on demand */
+const FILES_PAGE = 500;
+let FILES_LIMIT = FILES_PAGE;
 let LAST_REVIEW = [];
 let LAST_LOCKS = [];
 let LAST_ACTIVITY = [];
@@ -1105,7 +1184,7 @@ function renderHomeStatus(st0) {
         if (r && r.ok === true) toast(t("toast.openedFolder"));
         else showView("files");
       } catch (e) {
-        toast(e && e.message === "timeout" ? t("toast.timeout") : t("toast.failed", { e: String(e) }), true);
+        toast(t("toast.failed", { e: humanError(e) }), true);
       } finally {
         done(b || openBtn);
       }
@@ -1200,9 +1279,9 @@ $("ob-browse").addEventListener("click", async (ev) => {
       const b = busy(browseBtn, t("busy.attach"));
       try {
         const r = await postJSON("/api/v1/attach", { path });
-        if (r && r.ok === false) toast(t("toast.denied", { e: r.error }), true);
+        if (r && r.ok === false) toast(t("toast.denied", { e: humanError(r) }), true);
         else { toast(t("toast.attached")); refreshAll(); }
-      } catch (e) { toast(t("toast.failed", { e: String(e) }), true); }
+      } catch (e) { toast(t("toast.failed", { e: humanError(e) }), true); }
       finally { done(b || browseBtn); }
     }
   } else {
@@ -1658,11 +1737,11 @@ async function doDetachFlow(pid, btn) {
   const b = busy(btn, t("busy.working"));
   try {
     const r = await postJSON("/api/v1/detach", { project_id: pid });
-    if (r && r.ok === false) toast(t("toast.denied", { e: r.error }), true);
+    if (r && r.ok === false) toast(t("toast.denied", { e: humanError(r) }), true);
     else toast(t("toast.detached"));
     refreshAll();
   } catch (e) {
-    toast(e && e.message === "timeout" ? t("toast.timeout") : t("toast.failed", { e: String(e) }), true);
+    toast(t("toast.failed", { e: humanError(e) }), true);
   } finally {
     done(b || btn);
   }
@@ -1865,7 +1944,7 @@ function renderFiles(r) {
   const files = (r && r.files) || [];
   renderIfChanged(
     "files-body",
-    `${project}::${sigOf(files, (f) => `${f.path}:${f.size ?? 0}:${f.state ?? ""}:${f.pinned ? 1 : 0}:${f.placeholder ? 1 : 0}:${f.merge_available ? 1 : 0}:${f.proxy_state ?? ""}:${PROXY_PENDING.has(f.path) ? 1 : 0}`)}`,
+    `${project}::${r && r.total}::${sigOf(files, (f) => `${f.path}:${f.size ?? 0}:${f.state ?? ""}:${f.pinned ? 1 : 0}:${f.placeholder ? 1 : 0}:${f.merge_available ? 1 : 0}:${f.proxy_state ?? ""}:${PROXY_PENDING.has(f.path) ? 1 : 0}`)}`,
     () => renderFilesInner(r, project),
   );
   if (sum) {
@@ -1880,6 +1959,12 @@ function renderFiles(r) {
 function renderFilesInner(r, project) {
   const body = $("files-body");
   if (!body) return;
+  // #83: the 2s refresh re-renders while files sync; keep the keyboard
+  // user's place (focused row + scroll) instead of dumping focus to <body>
+  const focusedRow = document.activeElement && document.activeElement.closest && document.activeElement.closest("#files-body tr.file-row");
+  const keepPath = focusedRow && focusedRow._file ? focusedRow._file.path : null;
+  const scroller = $("files-table");
+  const keepScroll = scroller ? scroller.scrollTop : 0;
   body.innerHTML = "";
   if (!r || r.ok !== true || !r.files || r.files.length === 0) {
     body.innerHTML = `<tr><td colspan="4" class="empty">${esc(t("empty.files"))}</td></tr>`;
@@ -1894,7 +1979,7 @@ function renderFilesInner(r, project) {
   FOOT.conflicts = Number(s.conflict) || 0;
   paintState();
 
-  for (const f of r.files.slice(0, 300)) {
+  for (const f of r.files) {
     const [dir, base] = splitPath(f.path);
     const [cls, key] = stFor(f);
     const tr = document.createElement("tr");
@@ -1959,7 +2044,67 @@ function renderFilesInner(r, project) {
     if (mergeChip) mergeChip.addEventListener("click", () => mergeDialog(project, f.path));
 
     tr.append(tdName, tdSize, tdState, tdAct);
+    // #83: rows are keyboard-reachable (roving tabindex; see filesKeyNav)
+    tr.tabIndex = body.children.length === 0 ? 0 : -1;
+    tr.className = "file-row";
+    tr._file = f;
+    tr._dots = dots;
+    tr.setAttribute("aria-label", `${base} · ${t(key)}`);
     body.appendChild(tr);
+  }
+  // #34: never silently truncate - say how many and offer the rest
+  if (r.next_offset !== null && r.next_offset !== undefined) {
+    const tr = document.createElement("tr");
+    tr.className = "files-more";
+    const td = document.createElement("td");
+    td.colSpan = 4;
+    td.innerHTML = `<span class="files-more-count">${esc(t("files.showing", { n: r.files.length.toLocaleString(), total: Number(r.total || 0).toLocaleString() }))}</span> <button type="button" class="btn btn-ghost">${esc(t("btn.showMore"))}</button>`;
+    const more = td.querySelector("button");
+    more.addEventListener("click", () => {
+      busy(more, t("btn.showMore"));
+      FILES_LIMIT += FILES_PAGE;
+      RENDER_SIGS.delete("files-body");
+      refreshFiles();
+    });
+    tr.appendChild(td);
+    body.appendChild(tr);
+  }
+  if (keepPath) {
+    const rows = body.querySelectorAll("tr.file-row");
+    const again = [...rows].find((row) => row._file && row._file.path === keepPath);
+    if (again) {
+      rows.forEach((row) => { row.tabIndex = -1; });
+      again.tabIndex = 0;
+      again.focus({ preventScroll: true });
+    }
+  }
+  if (scroller) scroller.scrollTop = keepScroll;
+}
+
+/* #83: arrow keys move between file rows; Enter opens; the context-menu
+   key (or Shift+F10) opens the row's ••• menu. One listener on tbody. */
+function filesKeyNav(ev) {
+  const row = ev.target && ev.target.closest && ev.target.closest("tr.file-row");
+  if (!row || ev.target !== row) return;
+  const rows = [...$("files-body").querySelectorAll("tr.file-row")];
+  const i = rows.indexOf(row);
+  const go = (j) => {
+    const next = rows[Math.max(0, Math.min(rows.length - 1, j))];
+    if (!next) return;
+    row.tabIndex = -1;
+    next.tabIndex = 0;
+    next.focus();
+  };
+  if (ev.key === "ArrowDown") { ev.preventDefault(); go(i + 1); }
+  else if (ev.key === "ArrowUp") { ev.preventDefault(); go(i - 1); }
+  else if (ev.key === "Home") { ev.preventDefault(); go(0); }
+  else if (ev.key === "End") { ev.preventDefault(); go(rows.length - 1); }
+  else if (ev.key === "PageDown") { ev.preventDefault(); go(i + 10); }
+  else if (ev.key === "PageUp") { ev.preventDefault(); go(i - 10); }
+  else if (ev.key === "Enter") { ev.preventDefault(); doFileOpen(selectedProject(), row._file.path); }
+  else if (ev.key === "ContextMenu" || (ev.shiftKey && ev.key === "F10")) {
+    ev.preventDefault();
+    openMenu(row._dots, fileRowMenuItems(row._file, selectedProject()));
   }
 }
 
@@ -1990,6 +2135,7 @@ async function refreshFiles() {
   const key = `${project}::${filter}`;
   if (FILES_KEY !== key) {
     FILES_KEY = key;
+    FILES_LIMIT = FILES_PAGE;
     // the skeleton is NOT a signature state: invalidate so the real
     // rows always land, even when the recovered data matches the old
     // signature (otherwise the skeleton could freeze on screen)
@@ -1998,7 +2144,7 @@ async function refreshFiles() {
   }
   const q = filter ? `&q=${encodeURIComponent(filter)}` : "";
   try {
-    LAST_FILES = await getJSON(`/api/v1/files?project=${encodeURIComponent(project)}${q}`);
+    LAST_FILES = await getJSON(`/api/v1/files?project=${encodeURIComponent(project)}${q}&limit=${FILES_LIMIT}`);
     renderFiles(LAST_FILES);
   } catch {
     if (!LAST_FILES || LAST_FILES.ok !== true) {
@@ -2016,10 +2162,10 @@ async function doFilePin(project, path, pinned, btn) {
   const b = busy(btn, t("busy.working"));
   try {
     const r = await postJSON(url, { project_id: project, path });
-    if (r && r.ok === false) toast(t("toast.denied", { e: r.error }), true);
+    if (r && r.ok === false) toast(t("toast.denied", { e: humanError(r) }), true);
     else toast(pinned ? t("toast.unpinned") : t("toast.pinned"));
   } catch (e) {
-    toast(e && e.message === "timeout" ? t("toast.timeout") : t("toast.failed", { e: String(e) }), true);
+    toast(t("toast.failed", { e: humanError(e) }), true);
   } finally {
     done(b || btn);
   }
@@ -2052,10 +2198,10 @@ async function doFileOpen(project, path, btn) {
   const b = busy(btn, t("busy.working"));
   try {
     const r = await postJSON("/api/v1/file/open", { project_id: project, path });
-    if (r && r.ok === false) toast(t("toast.denied", { e: r.error }), true);
+    if (r && r.ok === false) toast(t("toast.denied", { e: humanError(r) }), true);
     else toast(t("toast.openedFolder"));
   } catch (e) {
-    toast(e && e.message === "timeout" ? t("toast.timeout") : t("toast.failed", { e: String(e) }), true);
+    toast(t("toast.failed", { e: humanError(e) }), true);
   } finally {
     done(b || btn);
   }
@@ -2088,14 +2234,14 @@ async function doFileDuplicate(project, path, btn) {
   const b = busy(btn, t("busy.duplicate"));
   try {
     const r = await postJSON("/api/v1/file/duplicate", { project_id: project, path });
-    if (r && r.ok === false) toast(t("toast.denied", { e: r.error }), true);
+    if (r && r.ok === false) toast(t("toast.denied", { e: humanError(r) }), true);
     else {
       toast(t("toast.duplicated"));
       refreshFiles();
       refreshAssetsPanel();
     }
   } catch (e) {
-    toast(e && e.message === "timeout" ? t("toast.timeout") : t("toast.failed", { e: String(e) }), true);
+    toast(t("toast.failed", { e: humanError(e) }), true);
   } finally {
     done(b || btn);
   }
@@ -2128,13 +2274,13 @@ async function doMergeDecline(project, path, btn) {
   const b = busy(btn, t("busy.working"));
   try {
     const r = await postJSON("/api/v1/merge/offer/decline", { project_id: project, path });
-    if (r && r.ok === false) toast(t("toast.denied", { e: r.error }), true);
+    if (r && r.ok === false) toast(t("toast.denied", { e: humanError(r) }), true);
     else {
       toast(t("toast.mergeDeclined"));
       refreshFiles();
     }
   } catch (e) {
-    toast(e && e.message === "timeout" ? t("toast.timeout") : t("toast.failed", { e: String(e) }), true);
+    toast(t("toast.failed", { e: humanError(e) }), true);
   } finally {
     done(b || btn);
   }
@@ -2729,9 +2875,9 @@ function renderSnapshots(snapshots) {
             ? t("toast.restoredCkpt", { n: r.restored_files, b: fmtBytes(r.bytes), v: r.checkpoint_version })
             : t("toast.restored", { n: r.restored_files, b: fmtBytes(r.bytes) }));
         }
-        else toast(t("toast.failed", { e: r.error }), true);
+        else toast(t("toast.failed", { e: humanError(r) }), true);
       } catch (e) {
-        toast(e && e.message === "timeout" ? t("toast.timeout") : t("toast.failed", { e: String(e) }), true);
+        toast(t("toast.failed", { e: humanError(e) }), true);
       } finally {
         done(b || btn);
       }
@@ -2764,9 +2910,9 @@ async function doSnapshot(ev) {
       $("snapshot-label").value = "";
       toast(t("toast.versionCreated"));
       refreshSnapshots();
-    } else toast(t("toast.failed", { e: r.error }), true);
+    } else toast(t("toast.failed", { e: humanError(r) }), true);
   } catch (e) {
-    toast(e && e.message === "timeout" ? t("toast.timeout") : t("toast.failed", { e: String(e) }), true);
+    toast(t("toast.failed", { e: humanError(e) }), true);
   } finally { done(b || btn); }
 }
 
@@ -2816,9 +2962,9 @@ async function doRecall(project, path, btn) {
       renderRecallJobs();
       toast(t("toast.recallStarted"));
       openPanel("panel-recall");
-    } else toast(t("toast.failed", { e: r.error }), true);
+    } else toast(t("toast.failed", { e: humanError(r) }), true);
   } catch (e) {
-    toast(e && e.message === "timeout" ? t("toast.timeout") : t("toast.failed", { e: String(e) }), true);
+    toast(t("toast.failed", { e: humanError(e) }), true);
   } finally { done(b || btn); }
 }
 
@@ -2872,7 +3018,7 @@ function renderFlagsInner(flags) {
       try {
         const r = await postJSON("/api/v1/flags", { name: btn.dataset.name, value: btn.dataset.next });
         if (r && r.ok === false) {
-          toast(t("toast.denied", { e: r.error }), true);
+          toast(t("toast.denied", { e: humanError(r) }), true);
           return;
         }
         // the explanation lands WITH the action, naming what it just did
@@ -2882,7 +3028,7 @@ function renderFlagsInner(flags) {
         else if (!flippedTo) toast(t("flags.off", { name: btn.dataset.name }));
         // refreshAll() repaints the grid with the new state
       } catch (e) {
-        toast(e && e.message === "timeout" ? t("toast.timeout") : t("toast.failed", { e: String(e) }), true);
+        toast(t("toast.failed", { e: humanError(e) }), true);
       } finally {
         done(b || btn);
       }
@@ -3090,10 +3236,32 @@ document.addEventListener("click", (ev) => {
 
 const PANELS = ["panel-add", "panel-history", "panel-recall"];
 
+/* #75: every dialog surface (side panels, help overlay) traps Tab while
+   open, closes on Escape (global handler), and hands focus back to the
+   control that opened it. One shared trap so behaviour never drifts. */
+let DIALOG_OPENER = null;
+let DIALOG_CARD = null;
+function dialogTrap(ev) {
+  if (ev.key === "Tab" && DIALOG_CARD && !DIALOG_CARD.hidden) trapTab(DIALOG_CARD, ev);
+}
+function holdFocus(card) {
+  if (!DIALOG_CARD) DIALOG_OPENER = document.activeElement;
+  DIALOG_CARD = card;
+  document.addEventListener("keydown", dialogTrap, true);
+}
+function releaseFocus() {
+  document.removeEventListener("keydown", dialogTrap, true);
+  const opener = DIALOG_OPENER;
+  DIALOG_CARD = null;
+  DIALOG_OPENER = null;
+  if (opener && opener.focus && document.contains(opener)) opener.focus();
+}
+
 function openPanel(id) {
-  closePanels();
   const panel = $(id);
   if (!panel) return;
+  for (const pid of PANELS) if (pid !== id) $(pid).hidden = true;
+  holdFocus(panel);
   $("scrim").hidden = false;
   panel.hidden = false;
   const first = panel.querySelector("input, button.panel-close");
@@ -3101,8 +3269,10 @@ function openPanel(id) {
 }
 
 function closePanels() {
+  const wasOpen = PANELS.some((id) => !$(id).hidden);
   $("scrim").hidden = true;
   for (const id of PANELS) $(id).hidden = true;
+  if (wasOpen) releaseFocus();
 }
 
 document.querySelectorAll(".panel [data-close]").forEach((b) => {
@@ -3121,10 +3291,20 @@ $("btn-recall-open").addEventListener("click", () => openPanel("panel-recall"));
 
 function toggleHelp(force) {
   const ov = $("help-overlay");
-  ov.hidden = force !== undefined ? !force : !ov.hidden;
+  const show = force !== undefined ? !!force : ov.hidden;
+  if (show === !ov.hidden) return;
+  ov.hidden = !show;
+  if (show) {
+    holdFocus(ov);
+    const f = ov.querySelector("button, [href], input");
+    if (f) f.focus();
+  } else releaseFocus();
 }
 $("help-close").addEventListener("click", () => toggleHelp(false));
 $("foot-help").addEventListener("click", () => toggleHelp(true));
+
+/* #83: one delegated listener for file-row keyboard navigation */
+if ($("files-body")) $("files-body").addEventListener("keydown", filesKeyNav);
 
 /* ============================== keyboard ============================== */
 
@@ -3134,7 +3314,7 @@ document.addEventListener("keydown", (ev) => {
   const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
   if (ev.key === "Escape") {
     closePanels();
-    $("help-overlay").hidden = true;
+    toggleHelp(false);
     $("search-drop").hidden = true;
     setLangOpen(false);
     return;
@@ -3206,7 +3386,7 @@ async function attachFlow(root, project, btn) {
   const b = busy(btn, t("busy.attach"));
   try {
     const r = await postJSON("/api/v1/attach", { root_path: root, project_id: project });
-    if (!r.ok) toast(t("toast.failed", { e: r.error }), true);
+    if (!r.ok) toast(t("toast.failed", { e: humanError(r) }), true);
     else {
       toast(t("toast.attached"));
       for (const id of ["attach-root", "attach-project", "ob-root"]) {
@@ -3216,7 +3396,7 @@ async function attachFlow(root, project, btn) {
       closePanels();
     }
   } catch (e) {
-    toast(e && e.message === "timeout" ? t("toast.timeout") : t("toast.failed", { e: String(e) }), true);
+    toast(t("toast.failed", { e: humanError(e) }), true);
   } finally { done(b || btn); }
   refreshAll();
 }
@@ -3495,7 +3675,7 @@ document.getElementById("connect-regenerate")?.addEventListener("click", async (
   const b = busy(btn, t("busy.generatingCode"));
   try {
     const r = await postJSON("/api/v1/team/regenerate", {});
-    toast(r.ok ? t("connect.generated", { c: r.join_code || r.code }) : t("toast.failed", { e: r.error || "unknown" }), !r.ok);
+    toast(r.ok ? t("connect.generated", { c: r.join_code || r.code }) : t("toast.failed", { e: humanError(r) }), !r.ok);
     refreshConnect();
   } catch (e) { toast(e && e.message === "timeout" ? t("toast.timeout") : t("toast.failed", { e }), true); }
   finally { done(b || btn); }
@@ -3511,7 +3691,7 @@ document.getElementById("connect-join")?.addEventListener("click", async (ev) =>
     // honest-join (review #3): the backend records intent and returns the
     // real next step - the enroll + login commands. Saying "Joined!" there
     // was a UX lie; show the saved + next-step truth instead.
-    const joinedMsg = r.ok ? t("connect.joined") + " " + (r.next || "") : t("connect.joinFailed", { e: r.error || "unknown" });
+    const joinedMsg = r.ok ? t("connect.joined") + " " + (r.next || "") : t("connect.joinFailed", { e: humanError(r) });
     if (out) out.textContent = joinedMsg;
     toast(joinedMsg, !r.ok);
     if (r.ok) refreshAll();
@@ -3546,7 +3726,7 @@ document.getElementById("review-link-create")?.addEventListener("click", async (
           `<p class="note" style="margin:6px 0 0">${esc(t("review.linkAnyone"))}</p>`;
         refreshReviewPage();
       } else {
-        out.textContent = t("toast.failed", { e: r.error });
+        out.textContent = t("toast.failed", { e: humanError(r) });
       }
     }
   } catch (e) { toast(e && e.message === "timeout" ? t("toast.timeout") : t("toast.failed", { e }), true); }
@@ -3564,7 +3744,7 @@ document.getElementById("review-publish")?.addEventListener("click", async (ev) 
     // and owns the truth (a guessed fps is a wrong timecode for every
     // reviewer downstream)
     const r = await postJSON("/api/v1/review/publish", { project_id: project, media });
-    toast(r.ok ? t("review.published", { n: r.version }) : t("toast.failed", { e: r.error }), !r.ok);
+    toast(r.ok ? t("review.published", { n: r.version }) : t("toast.failed", { e: humanError(r) }), !r.ok);
     if (r.ok) refreshReviewPage();
   } catch (e) { toast(e && e.message === "timeout" ? t("toast.timeout") : t("toast.failed", { e }), true); }
   finally { done(b || btn); }
@@ -3576,7 +3756,7 @@ document.getElementById("review-links")?.addEventListener("click", async (ev) =>
   const b = busy(btn, t("busy.working"));
   try {
     const r = await postJSON("/api/v1/review/revoke", { token: btn.dataset.revoke });
-    toast(r.ok ? t("review.revoked") : t("toast.failed", { e: r.error }), !r.ok);
+    toast(r.ok ? t("review.revoked") : t("toast.failed", { e: humanError(r) }), !r.ok);
     if (r.ok) refreshReviewPage();
   } catch (e) { toast(e && e.message === "timeout" ? t("toast.timeout") : t("toast.failed", { e }), true); }
   finally { done(b || btn); }
@@ -3599,7 +3779,7 @@ document.getElementById("merge-run")?.addEventListener("click", async (ev) => {
     const [baseText, o, th] = await Promise.all([read(base), read(ours), read(theirs)]);
     const r = await postJSON("/api/v1/tl-merge", { base_otio: baseText, ours_otio: o, theirs_otio: th, semantic: !!semantic });
     if (out) out.textContent = JSON.stringify(r, null, 2);
-    toast(r.ok ? t("merge.outcome", { o: r.outcome || r.policy || "done" }) : t("toast.failed", { e: r.error }), !r.ok);
+    toast(r.ok ? t("merge.outcome", { o: r.outcome || r.policy || "done" }) : t("toast.failed", { e: humanError(r) }), !r.ok);
   } catch (e) {
     if (out) out.textContent = `cairn tl-merge --base ${base.name} --ours ${ours.name} --theirs ${theirs.name}${semantic ? " --semantic" : ""}\n\n${t("merge.fallback", { e })}`;
   } finally { done(b || btn); }
