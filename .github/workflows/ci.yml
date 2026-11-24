@@ -27,9 +27,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd # v2
-        with:
-          command: check
+      # the cargo-deny Docker action cannot honor rust-toolchain.toml's pin;
+      # run the binary on the runner's own (pinned) toolchain instead
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
+        with: { toolchain: stable }
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # cargo-deny
+        with: { tool: cargo-deny }
+      - run: cargo deny check
 
   fmt:
     runs-on: ubuntu-latest
