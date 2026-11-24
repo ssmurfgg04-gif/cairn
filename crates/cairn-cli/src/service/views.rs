@@ -837,9 +837,15 @@ pub async fn search(state: &DaemonState, needle: &str) -> serde_json::Value {
         }
     }
     if let Some(store) = open_store(state.home.as_path()) {
-        // file paths (first 40 hits across attached projects)
+        // file paths across ALL attached projects (#82): a fair share per
+        // project so one big project cannot crowd out the rest, 40 total
+        let per_project = (40 / attached.len().max(1)).max(8);
         let mut file_hits = 0;
         for (pid, _root, _display) in &attached {
+            if file_hits >= 40 {
+                break;
+            }
+            let mut this_project = 0;
             for row in store.list_files(pid) {
                 if row.mode != "file" {
                     continue;
@@ -853,7 +859,8 @@ pub async fn search(state: &DaemonState, needle: &str) -> serde_json::Value {
                         "target": "#files",
                     }));
                     file_hits += 1;
-                    if file_hits >= 40 {
+                    this_project += 1;
+                    if file_hits >= 40 || this_project >= per_project {
                         break;
                     }
                 }

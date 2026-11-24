@@ -378,6 +378,12 @@ const STR = {
   "files.clearFilter": { en: "Clear search", "de-DE": "Suche löschen", "ja-JP": "検索をクリア", "zh-CN": "清除搜索" },
   "files.openFolder": { en: "Open folder", "de-DE": "Ordner öffnen", "ja-JP": "フォルダーを開く", "zh-CN": "打开文件夹" },
   "state.recovered": { en: "Back to normal. Cairn reconnected and caught up on its own.", "de-DE": "Wieder normal. Cairn hat sich selbst neu verbunden und aufgeholt.", "ja-JP": "通常に戻りました。Cairn が自動で再接続して追いつきました。", "zh-CN": "已恢复正常。Cairn 已自动重新连接并完成同步。" },
+  "free.btn": { en: "Free up space", "de-DE": "Speicher freigeben", "ja-JP": "空き容量を増やす", "zh-CN": "释放空间" },
+  "free.title": { en: "Free up space on this computer?", "de-DE": "Speicher auf diesem Rechner freigeben?", "ja-JP": "このパソコンの空き容量を増やしますか？", "zh-CN": "释放这台电脑上的空间？" },
+  "free.body": { en: "Cairn removes its local copies of file pieces you haven't used in the last hour. Files you marked Keep on this computer are never touched. Everything stays safe on your team's server and downloads again when you open it.", "de-DE": "Cairn entfernt lokale Kopien von Dateiteilen, die du in der letzten Stunde nicht genutzt hast. Dateien mit „Auf diesem Rechner behalten“ bleiben unberührt. Alles bleibt sicher auf dem Server deines Teams und wird beim Öffnen wieder geladen.", "ja-JP": "過去 1 時間使っていないファイルのローカルコピーを削除します。「このパソコンに保持」に設定したファイルは削除されません。すべてチームのサーバーに安全に保存され、開くと再びダウンロードされます。", "zh-CN": "Cairn 会删除最近一小时未使用的文件片段的本地副本。标记为“保留在此电脑上”的文件不会被删除。所有内容都安全保存在团队服务器上，打开时会重新下载。" },
+  "free.busy": { en: "Freeing space…", "de-DE": "Speicher wird freigegeben…", "ja-JP": "空き容量を確保中…", "zh-CN": "正在释放空间…" },
+  "free.done": { en: "Freed {n}.", "de-DE": "{n} freigegeben.", "ja-JP": "{n} を解放しました。", "zh-CN": "已释放 {n}。" },
+  "free.nothing": { en: "Nothing to clear right now: everything local is in use or kept on purpose.", "de-DE": "Gerade gibt es nichts zu entfernen: alles Lokale wird genutzt oder bewusst behalten.", "ja-JP": "現在削除できるものはありません。ローカルのデータはすべて使用中か、意図的に保持されています。", "zh-CN": "目前没有可清除的内容：本地内容都在使用中或被特意保留。" },
   "ctx.project": { en: "Project", "de-DE": "Projekt", "ja-JP": "プロジェクト", "zh-CN": "项目" },
   "files.showing": { en: "Showing {n} of {total} files", "de-DE": "{n} von {total} Dateien angezeigt", "ja-JP": "{total} 件中 {n} 件のファイルを表示中", "zh-CN": "显示 {total} 个文件中的 {n} 个" },
   "btn.showMore": { en: "Show more", "de-DE": "Mehr anzeigen", "ja-JP": "さらに表示", "zh-CN": "显示更多" },
@@ -1175,7 +1181,7 @@ function renderHomeStatus(st0) {
     if ((FOOT.conflicts ?? 0) > 0) issues.push({ key: FOOT.conflicts === 1 ? "home.issue.conflict.one" : "home.issue.conflict", n: FOOT.conflicts, view: "files", cta: "home.issue.conflictCta" });
     const badProjects = PROJECTS.filter((p) => p.state === "error").length;
     if (badProjects > 0) issues.push({ key: badProjects === 1 ? "home.issue.projects.one" : "home.issue.projects", n: badProjects, view: "files", cta: "home.issue.projectsCta" });
-    if (LOW_DISK) issues.unshift({ key: "home.issue.diskLow", vars: { free: fmtBytes(LOW_DISK.free_bytes) }, view: "settings", cta: "home.issue.diskCta" });
+    if (LOW_DISK) issues.unshift({ key: "home.issue.diskLow", vars: { free: fmtBytes(LOW_DISK.free_bytes) }, cta: "free.btn", act: () => doFreeSpace(null) });
   }
 
   const titleEl = $("hs-title"), subEl = $("hs-sub"), icEl = $("hs-ic");
@@ -3328,12 +3334,14 @@ async function runSearch(q) {
           $("search-input").value = "";
           const view = TARGET_MAP[s.target] || (s.kind === "file" || s.kind === "project" ? "files" : "dashboard");
           showView(view);
+          // #82: a hit from another project switches the shared project
+          // context first, so the file is actually in the list you land on
+          const known = PROJECTS.some((p) => p.project_id === s.project);
           if (s.kind === "file" && $("files-filter")) {
             $("files-filter").value = s.label;
-            refreshFiles();
+            if (known) setProjectContext(s.project); else refreshFiles();
           } else if (s.kind === "project" && $("files-project")) {
-            if (PROJECTS.some((p) => p.project_id === s.project)) $("files-project").value = s.project;
-            refreshFiles();
+            if (known) setProjectContext(s.project); else refreshFiles();
           }
         });
         drop.appendChild(row);
@@ -3461,6 +3469,26 @@ if ($("notify-toggle")) {
   nt.checked = notifyEnabled();
   nt.addEventListener("change", () => setNotify(nt.checked, nt));
 }
+
+/* #86: Free up space, on demand, with the same protections as the
+   automatic sweep (Keep-on-this-computer files and anything used in the
+   last hour are never cleared) and a confirm that says exactly that. */
+async function doFreeSpace(btn) {
+  const ok = await confirmDialog({ title: t("free.title"), body: t("free.body"), okLabel: t("free.btn"), danger: false });
+  if (!ok) return;
+  const b = busy(btn, t("free.busy"));
+  try {
+    const r = await postJSON("/api/v1/storage/free", {});
+    if (r && r.ok) toast(r.freed_bytes > 0 ? t("free.done", { n: fmtBytes(r.freed_bytes) }) : t("free.nothing"));
+    else toast(t("toast.failed", { e: humanError(r) }), true);
+    refreshStorage();
+  } catch (e) {
+    toast(t("toast.failed", { e: humanError(e) }), true);
+  } finally {
+    done(b);
+  }
+}
+if ($("btn-free-space")) $("btn-free-space").addEventListener("click", (ev) => doFreeSpace(ev.currentTarget));
 
 /* #93 Send diagnostics: the daemon's redacted bundle + what only the page
    knows (recent errors with their support refs, browser, language, view),

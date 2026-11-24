@@ -54,6 +54,7 @@ pub async fn serve(addr: String, state: Arc<DaemonState>) -> anyhow::Result<()> 
         .route("/api/v1/doctor", get(doctor))
         .route("/api/v1/diagnostics", get(diagnostics))
         .route("/api/v1/quit", post(quit))
+        .route("/api/v1/storage/free", post(storage_free))
         // WO6-UI: full ctl parity over HTTP (same svc impls as the gRPC ctl server)
         .route("/api/v1/projects", get(projects))
         .route("/api/v1/attach", post(attach))
@@ -633,6 +634,10 @@ async fn set_flag(
         )
             .into_response(),
     }
+}
+
+async fn storage_free(State(state): State<Arc<DaemonState>>) -> Json<serde_json::Value> {
+    Json(service::actions::storage_free(&state).await)
 }
 
 /// #58 POST /api/v1/quit — stop syncing and exit the daemon (token-gated

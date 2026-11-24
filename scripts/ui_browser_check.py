@@ -198,6 +198,16 @@ def main():
             issues = pg.locator("#hs-issues").inner_text()
             check("almost out of space" in issues, "Home warns when the disk is nearly full", issues)
 
+            # #86 Free up space: confirm explains, then the sweep answers honestly
+            pg.evaluate("showView('settings')")
+            pg.click("#btn-free-space")
+            pg.wait_for_selector("#modal-confirm:not([hidden])", timeout=5000)
+            body = pg.locator("#modal-body").inner_text()
+            check("never touched" in body, "Free up space says what it will and won't clear", body)
+            pg.click("#modal-ok")
+            pg.wait_for_function("document.querySelector('.toast') && /Freed|Nothing to clear/.test(document.querySelector('.toast').textContent)", timeout=15000)
+            check(True, "Free up space runs and reports the result")
+
             # #105 notifications: opt-in, background-only, no repeats
             sent = pg.evaluate("""() => {
                 const out = [];
