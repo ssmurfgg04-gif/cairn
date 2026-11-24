@@ -1268,6 +1268,36 @@ pub fn merge_offer_decline(state: &Arc<DaemonState>, project: &str, path: &str) 
     }
 }
 
+/// #86 POST /api/v1/storage/free: "Free up space" now, instead of waiting
+/// for the periodic sweep. Same engine and the same protections as the
+/// daemon loop (cairn_store::eviction::evict_sweep): pinned ("Keep on this
+/// computer") files are never touched, chunks used in the last hour are
+/// age-guarded, and evicted chunks stay on the server and come back on
+/// open. Aims for 10 points more free disk than now (at least 25%, at most
+/// 90%). Runs off the async runtime (a sweep can stat many chunks).
+pub async fn storage_free(state: &Arc<DaemonState>) -> Json {
+    let home = state.home.clone();
+    let joined = tokio::task::spawn_blocking(move || {
+        let store = open_store(home.as_path()).ok_or_else(|| "store unavailable".to_string())?;
+        let space = cairn_store::eviction::disk_space(store.root()).map_err(|e| e.to_string())?;
+        let now_pct = space.free.saturating_mul(100) / space.total.max(1);
+        let target = (now_pct + 10).clamp(25, 90);
+        cairn_store::eviction::evict_sweep(&store, target, 3600).map_err(|e| e.to_string())
+    })
+    .await;
+    crate::service::views::invalidate_view("storage:");
+    match joined {
+        Ok(Ok(r)) => json!({
+            "ok": true,
+            "freed_bytes": r.freed_bytes,
+            "evicted_chunks": r.evicted_chunks,
+            "needed": r.needed,
+        }),
+        Ok(Err(e)) => json!({"ok": false, "error": e}),
+        Err(e) => json!({"ok": false, "error": format!("free-space task failed: {e}")}),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1807,35 +1837,5 @@ mod tests {
             !msg.is_empty(),
             "the error names the checkpoint failure, not a silent restore"
         );
-    }
-}
-
-/// #86 POST /api/v1/storage/free: "Free up space" now, instead of waiting
-/// for the periodic sweep. Same engine and the same protections as the
-/// daemon loop (cairn_store::eviction::evict_sweep): pinned ("Keep on this
-/// computer") files are never touched, chunks used in the last hour are
-/// age-guarded, and evicted chunks stay on the server and come back on
-/// open. Aims for 10 points more free disk than now (at least 25%, at most
-/// 90%). Runs off the async runtime (a sweep can stat many chunks).
-pub async fn storage_free(state: &Arc<DaemonState>) -> Json {
-    let home = state.home.clone();
-    let joined = tokio::task::spawn_blocking(move || {
-        let store = open_store(home.as_path()).ok_or_else(|| "store unavailable".to_string())?;
-        let space = cairn_store::eviction::disk_space(store.root()).map_err(|e| e.to_string())?;
-        let now_pct = space.free.saturating_mul(100) / space.total.max(1);
-        let target = (now_pct + 10).clamp(25, 90);
-        cairn_store::eviction::evict_sweep(&store, target, 3600).map_err(|e| e.to_string())
-    })
-    .await;
-    crate::service::views::invalidate_view("storage:");
-    match joined {
-        Ok(Ok(r)) => json!({
-            "ok": true,
-            "freed_bytes": r.freed_bytes,
-            "evicted_chunks": r.evicted_chunks,
-            "needed": r.needed,
-        }),
-        Ok(Err(e)) => json!({"ok": false, "error": e}),
-        Err(e) => json!({"ok": false, "error": format!("free-space task failed: {e}")}),
     }
 }
