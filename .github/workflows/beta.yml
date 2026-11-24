@@ -36,11 +36,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 70
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
+        with: { toolchain: stable }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with: { prefix-key: beta-core }
-      - uses: taiki-e/install-action@nextest
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # nextest
+        with: { tool: nextest }
       - run: cargo nextest run -p cairn-core -p cairn-x
       - run: cargo clippy -p cairn-core -p cairn-x --all-targets -- -D warnings
 
@@ -48,44 +50,52 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 70
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
+        with: { toolchain: stable }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with: { prefix-key: beta-store }
-      - uses: taiki-e/install-action@nextest
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # nextest
+        with: { tool: nextest }
       - run: cargo nextest run -p cairn-store
 
   linux-sync:
     runs-on: ubuntu-latest
     timeout-minutes: 70
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
+        with: { toolchain: stable }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with: { prefix-key: beta-sync }
-      - uses: taiki-e/install-action@nextest
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # nextest
+        with: { tool: nextest }
       - run: cargo nextest run -p cairn-sync
 
   linux-p2p:
     runs-on: ubuntu-latest
     timeout-minutes: 70
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
+        with: { toolchain: stable }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with: { prefix-key: beta-p2p }
-      - uses: taiki-e/install-action@nextest
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # nextest
+        with: { tool: nextest }
       - run: cargo nextest run -p cairn-p2p
 
   linux-tl:
     runs-on: ubuntu-latest
     timeout-minutes: 70
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
+        with: { toolchain: stable }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with: { prefix-key: beta-tl }
-      - uses: taiki-e/install-action@nextest
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # nextest
+        with: { tool: nextest }
       # the merge contract (115 unit tests, the no-competitor claim)
       - run: cargo nextest run -p cairn-tl
 
@@ -93,22 +103,26 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 70
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
+        with: { toolchain: stable }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with: { prefix-key: beta-server }
-      - uses: taiki-e/install-action@nextest
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # nextest
+        with: { tool: nextest }
       - run: cargo nextest run -p cairn-server
 
   linux-cli:
     runs-on: ubuntu-latest
     timeout-minutes: 70
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
+        with: { toolchain: stable }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with: { prefix-key: beta-cli }
-      - uses: taiki-e/install-action@nextest
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # nextest
+        with: { tool: nextest }
       # the rbac/self-heal/detach tests live here (round 27)
       - run: cargo nextest run -p cairn-cli
 
@@ -116,22 +130,26 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 70
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
+        with: { toolchain: stable }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with: { prefix-key: beta-proxy }
-      - uses: taiki-e/install-action@nextest
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # nextest
+        with: { tool: nextest }
       - run: cargo nextest run -p cairn-proxy -p cairn-review
 
   linux-fs:
     runs-on: ubuntu-latest
     timeout-minutes: 70
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
+        with: { toolchain: stable }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with: { prefix-key: beta-fs }
-      - uses: taiki-e/install-action@nextest
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # nextest
+        with: { tool: nextest }
       - run: cargo nextest run -p cairn-fs-linux --features fuse
       - run: cargo build -p cairn-fs-linux --features fuse --bin cairn-fuse
 
@@ -139,9 +157,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 70
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
+        with: { toolchain: stable }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with: { prefix-key: beta-sim }
       # 200-schedule sweep (the 1,000-schedule leg stays nightly in ci.yml)
       - run: cargo test -p cairn-sim --release
@@ -154,11 +173,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 70
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with: { targets: x86_64-pc-windows-msvc }
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
+        with: { toolchain: stable, targets: x86_64-pc-windows-msvc }
       - run: rustup target add x86_64-pc-windows-msvc
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with: { prefix-key: beta-cross }
       # cairn-fs-win pulls blake3 (C build script: needs MSVC's lib.exe,
       # absent on a linux host) — it compiles on the windows-* shards
@@ -169,10 +188,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 70
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with: { components: "clippy, rustfmt" }
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
+        with: { toolchain: stable, components: "clippy, rustfmt" }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with: { prefix-key: beta-lint }
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
@@ -181,9 +200,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 70
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
+        with: { toolchain: stable }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with: { prefix-key: beta-acceptance }
       - run: cargo build --release -p cairn-cli
       - name: WO1 AttachRoot acceptance (500 MiB, kill -9, convergence)
@@ -196,11 +216,13 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 70
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
+        with: { toolchain: stable }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with: { prefix-key: beta-win-cli }
-      - uses: taiki-e/install-action@nextest
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # nextest
+        with: { tool: nextest }
       - name: CLI + daemon tests (rbac fail-open, self-dedup, self-heal)
         run: cargo nextest run -p cairn-cli
 
@@ -208,11 +230,13 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 70
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
+        with: { toolchain: stable }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with: { prefix-key: beta-win-fs }
-      - uses: taiki-e/install-action@nextest
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # nextest
+        with: { tool: nextest }
       - name: CfAPI non-interactive surface
         run: cargo nextest run -p cairn-fs-win
 
@@ -220,33 +244,39 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 70
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
+        with: { toolchain: stable }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with: { prefix-key: beta-win-tl }
-      - uses: taiki-e/install-action@nextest
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # nextest
+        with: { tool: nextest }
       - run: cargo nextest run -p cairn-tl -p cairn-review -p cairn-proxy
 
   windows-store-sync:
     runs-on: windows-latest
     timeout-minutes: 70
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
+        with: { toolchain: stable }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with: { prefix-key: beta-win-store }
-      - uses: taiki-e/install-action@nextest
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # nextest
+        with: { tool: nextest }
       - run: cargo nextest run -p cairn-store -p cairn-sync -p cairn-p2p
 
   windows-server:
     runs-on: windows-latest
     timeout-minutes: 70
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
+        with: { toolchain: stable }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with: { prefix-key: beta-win-server }
-      - uses: taiki-e/install-action@nextest
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # nextest
+        with: { tool: nextest }
       - run: cargo nextest run -p cairn-server -p cairn-core
 
   windows-nle:
@@ -255,14 +285,15 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 70
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
+        with: { toolchain: stable }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with: { prefix-key: beta-win-nle }
       - run: cargo build --release -p cairn-cli
       # W3 needs headless Blender; mirror nle-matrix.yml's pinned bpy setup
       # (bpy 5.2.1 wheels ship for CPython 3.13 only).
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.13"
       - name: Install bpy
@@ -279,9 +310,10 @@ jobs:
       run:
         working-directory: crates/cairn-app
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
+        with: { toolchain: stable }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           workspaces: crates/cairn-app
           prefix-key: beta-tauri
@@ -294,9 +326,10 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 70
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
+        with: { toolchain: stable }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with: { prefix-key: beta-win-install }
       - run: cargo build --release -p cairn-cli
       - name: installer gate (local artifact, no launch)

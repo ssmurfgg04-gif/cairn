@@ -20,6 +20,9 @@ on:
 
 permissions:
   contents: write
+  # #71: build provenance (Sigstore-backed) for every shipped binary
+  id-token: write
+  attestations: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -29,9 +32,10 @@ jobs:
   windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
+        with: { toolchain: stable }
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
 
       # ⚠ RUSTFLAGS *replaces* .cargo/config.toml's rustflags (cargo's
       # documented precedence). The workspace enables tokio's io-uring
@@ -95,6 +99,28 @@ jobs:
           "$ah  cairn-window-$ver-setup.exe" | Out-File "cairn-window-$ver-setup.exe.sha256" -NoNewline -Encoding ascii
           Write-Host "packaged cairn-window-$ver-setup.exe ($((Get-Item "cairn-window-$ver-setup.exe").Length / 1MB -as [int])) MiB, sha256 $ah"
 
+      # #70 SBOM: CycloneDX bill of materials for the shipped engine, attached
+      # to the release so studios can run their own vulnerability scans.
+      - name: SBOM (CycloneDX)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $ver = "${{ github.ref_name }}"
+          cargo install cargo-cyclonedx --locked --quiet
+          cargo cyclonedx --manifest-path crates/cairn-cli/Cargo.toml --format json --override-filename "cairn-sbom"
+          Copy-Item "crates/cairn-cli/cairn-sbom.json" "cairn-sbom-$ver.cdx.json"
+
+      # #71 provenance: `gh attestation verify <file> -R <owner>/cairn`
+      # proves a downloaded binary was built by this workflow from this tag.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: |
+            cairn-windows-*.exe
+            cairn-tray-windows-*.exe
+            cairn-window-*-setup.exe
+            cairn-sbom-*.cdx.json
+
       - name: Publish to GitHub Releases
         env:
           GH_TOKEN: ${{ github.token }}
@@ -105,9 +131,9 @@ jobs:
           $existing = gh release view "$ver" --json id -q .id 2>$null
           if ($existing) {
             # re-run of the job against an existing release: refresh the assets
-            gh release upload "$ver" "cairn-windows-$ver.exe" "cairn-windows-$ver.exe.sha256" "cairn-tray-windows-$ver.exe" "cairn-tray-windows-$ver.exe.sha256" "cairn-window-$ver-setup.exe" "cairn-window-$ver-setup.exe.sha256" --clobber
+            gh release upload "$ver" "cairn-windows-$ver.exe" "cairn-windows-$ver.exe.sha256" "cairn-tray-windows-$ver.exe" "cairn-tray-windows-$ver.exe.sha256" "cairn-window-$ver-setup.exe" "cairn-window-$ver-setup.exe.sha256" "cairn-sbom-$ver.cdx.json" --clobber
           } else {
-            gh release create "$ver" "cairn-windows-$ver.exe" "cairn-windows-$ver.exe.sha256" "cairn-tray-windows-$ver.exe" "cairn-tray-windows-$ver.exe.sha256" "cairn-window-$ver-setup.exe" "cairn-window-$ver-setup.exe.sha256" `
+            gh release create "$ver" "cairn-windows-$ver.exe" "cairn-windows-$ver.exe.sha256" "cairn-tray-windows-$ver.exe" "cairn-tray-windows-$ver.exe.sha256" "cairn-window-$ver-setup.exe" "cairn-window-$ver-setup.exe.sha256" "cairn-sbom-$ver.cdx.json" `
               --title "cairn $ver" --generate-notes
           }
           Write-Host "release $ver published (engine + tray + window)"
@@ -121,7 +147,7 @@ jobs:
     needs: windows
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Run the installer against the published release (Windows PowerShell 5.1)
         shell: powershell
         env:

@@ -1,4 +1,5 @@
 [package]
+publish = false
 name = "cairn-cli"
 version.workspace = true
 edition.workspace = true
@@ -55,5 +56,6 @@ cairn-server = { path = "../cairn-server" }
 prost = { workspace = true }
 tokio-stream = "0.1"
 sqlx = { workspace = true }
+tower = { version = "0.5", features = ["util"] }
 
 

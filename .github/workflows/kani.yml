@@ -74,8 +74,9 @@ jobs:
           - proof_symmetry_shard_kind_09
           - proof_symmetry_shard_kind_10
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # stable
+        with: { toolchain: stable }
       - name: Install Kani
         run: |
           cargo install --locked kani-verifier

@@ -20,7 +20,7 @@ jobs:
   install:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       # A dispatch run before the first release exists would otherwise fail on
       # the API lookup for a reason that is not an installer bug. Releases
