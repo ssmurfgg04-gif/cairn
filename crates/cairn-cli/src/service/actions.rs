@@ -1181,6 +1181,7 @@ pub async fn compress(
     // async-runtime worker or the whole console stalls mid-encode. Response
     // contract unchanged.
     let encode_full = out_full.clone();
+    let _slot = crate::service::media_slot().await; // #48 bounded media jobs
     let joined = tokio::task::spawn_blocking(move || {
         std::process::Command::new("ffmpeg")
             .arg("-y")

@@ -1056,6 +1056,11 @@ pub async fn diagnostics(state: &DaemonState) -> serde_json::Value {
         "os": std::env::consts::OS,
         "arch": std::env::consts::ARCH,
         "uptime_s": state.started.elapsed().as_secs(),
+        "media_jobs": {
+            "running": crate::service::media_jobs().0,
+            "waiting": crate::service::media_jobs().1,
+            "slots": crate::service::MEDIA_JOB_SLOTS,
+        },
         "projects": projects,
         "project_views": views,
         "flags": flags,

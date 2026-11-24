@@ -131,6 +131,7 @@ async fn run_generation(
     let profile = cairn_proxy::model::ProxyProfile::default();
     let transcoder = cairn_proxy::transcode::FfmpegTranscoder;
     let now = super::now_ms_i64();
+    let _slot = super::media_slot().await; // #48 bounded media jobs
     let joined = tokio::task::spawn_blocking(move || {
         cairn_proxy::pipeline::generate(&root, &media_rel, &profile, &transcoder, now)
     })

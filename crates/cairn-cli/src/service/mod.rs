@@ -278,3 +278,51 @@ mod tests {
         assert!(p.is_dir());
     }
 }
+
+/// #48 one bounded queue for heavy media jobs (ffmpeg compress, proxy
+/// generation): at most `MEDIA_JOB_SLOTS` run at once, the rest wait in
+/// FIFO order (tokio's semaphore is fair). A burst of clicks no longer
+/// starts N parallel encodes that starve the editor's own machine.
+/// Waveforms keep their own admission gate (review #92).
+pub const MEDIA_JOB_SLOTS: usize = 2;
+static MEDIA_JOBS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(MEDIA_JOB_SLOTS);
+static MEDIA_WAITING: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Wait for a media-job slot; hold the permit for the job's lifetime.
+pub async fn media_slot() -> tokio::sync::SemaphorePermit<'static> {
+    use std::sync::atomic::Ordering;
+    MEDIA_WAITING.fetch_add(1, Ordering::SeqCst);
+    let permit = MEDIA_JOBS
+        .acquire()
+        .await
+        .expect("media job semaphore is never closed");
+    MEDIA_WAITING.fetch_sub(1, Ordering::SeqCst);
+    permit
+}
+
+/// (running, waiting) — surfaced in diagnostics.
+pub fn media_jobs() -> (usize, usize) {
+    let running = MEDIA_JOB_SLOTS - MEDIA_JOBS.available_permits();
+    (
+        running,
+        MEDIA_WAITING.load(std::sync::atomic::Ordering::SeqCst),
+    )
+}
+
+#[cfg(test)]
+mod media_job_tests {
+    #[tokio::test]
+    async fn media_jobs_are_bounded() {
+        let a = super::media_slot().await;
+        let b = super::media_slot().await;
+        assert_eq!(super::media_jobs().0, 2);
+        let third = tokio::spawn(async { super::media_slot().await });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert_eq!(super::media_jobs(), (2, 1), "the third job waits");
+        drop(a);
+        let c = third.await.unwrap();
+        assert_eq!(super::media_jobs(), (2, 0), "it runs when a slot frees");
+        drop((b, c));
+        assert_eq!(super::media_jobs(), (0, 0));
+    }
+}
